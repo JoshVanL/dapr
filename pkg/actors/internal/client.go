@@ -15,9 +15,12 @@ package internal
 
 import (
 	"context"
+	"strings"
 	"sync"
 
+	diag "github.com/dapr/dapr/pkg/diagnostics"
 	v1pb "github.com/dapr/dapr/pkg/proto/placement/v1"
+	"github.com/dapr/dapr/pkg/runtime/security"
 
 	"google.golang.org/grpc"
 )
@@ -27,8 +30,9 @@ import (
 // properly handle stream closing by draining the renamining events until receives an error.
 // and broadcasts connection results based on new connections and disconnects.
 type placementClient struct {
-	// getGrpcOpts are the options that should be used to connect to the placement service
-	getGrpcOpts func() ([]grpc.DialOption, error)
+	// opts are the options that should be used to connect to the placement
+	// service
+	opts []grpc.DialOption
 
 	// recvLock prevents concurrent access to the Recv() method.
 	recvLock *sync.Mutex
@@ -54,12 +58,7 @@ type placementClient struct {
 // connectToServer initializes a new connection to the target server and if it succeeds replace the current
 // stream with the connected stream.
 func (c *placementClient) connectToServer(serverAddr string) error {
-	opts, err := c.getGrpcOpts()
-	if err != nil {
-		return err
-	}
-
-	conn, err := grpc.Dial(serverAddr, opts...)
+	conn, err := grpc.Dial(serverAddr, c.opts...)
 	if err != nil {
 		if conn != nil {
 			conn.Close()
@@ -165,9 +164,22 @@ func (c *placementClient) send(host *v1pb.Host) error {
 }
 
 // newPlacementClient creates a new placement client for the given dial opts.
-func newPlacementClient(optionGetter func() ([]grpc.DialOption, error)) *placementClient {
+func newPlacementClient(servers []string, auth security.Authenticator) *placementClient {
+	var opts []grpc.DialOption
+	opts = append(opts, auth.GRPCDialOption("cluster.local"))
+	if diag.DefaultGRPCMonitoring.IsEnabled() {
+		opts = append(
+			opts,
+			grpc.WithUnaryInterceptor(diag.DefaultGRPCMonitoring.UnaryClientInterceptor()))
+	}
+	if len(servers) == 1 && strings.HasPrefix(servers[0], "dns:///") {
+		// In Kubernetes environment, dapr-placement headless service resolves multiple IP addresses.
+		// With round robin load balancer, Dapr can find the leader automatically.
+		opts = append(opts, grpc.WithDefaultServiceConfig(grpcServiceConfig))
+	}
+
 	return &placementClient{
-		getGrpcOpts:         optionGetter,
+		opts:                opts,
 		streamConnAlive:     false,
 		streamConnectedCond: sync.NewCond(&sync.Mutex{}),
 		recvLock:            &sync.Mutex{},

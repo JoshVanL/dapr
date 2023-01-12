@@ -36,3 +36,7 @@ var (
 func ServiceAddress(svc Service, namespace string, clusterDomain string) string {
 	return fmt.Sprintf("%s.%s.svc.%s:%d", svc.name, namespace, clusterDomain, svc.port)
 }
+
+func ServiceAddressTODO(svc Service, namespace string) string {
+	return fmt.Sprintf("%s.%s.svc:%d", svc.name, namespace, svc.port)
+}

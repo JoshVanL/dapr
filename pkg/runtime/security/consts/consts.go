@@ -21,3 +21,12 @@ const (
 	// APITokenHeader is header name for http/gRPC calls to hold the token.
 	APITokenHeader = "dapr-api-token"
 )
+
+const (
+	// RootCertFilename is the filename that holds the root certificate.
+	RootCertFilename = "ca.crt"
+	// IssuerCertFilename is the filename that holds the issuer certificate.
+	IssuerCertFilename = "issuer.crt"
+	// IssuerKeyFilename is the filename that holds the issuer key.
+	IssuerKeyFilename = "issuer.key"
+)

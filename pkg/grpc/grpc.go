@@ -198,25 +198,12 @@ func (g *Manager) connectRemote(
 	}
 
 	if g.auth != nil {
-		signedCert := g.auth.GetCurrentSignedCert()
-		var cert tls.Certificate
-		cert, err = tls.X509KeyPair(signedCert.WorkloadCert, signedCert.PrivateKeyPem)
-		if err != nil {
-			return nil, fmt.Errorf("error loading x509 Key Pair: %w", err)
-		}
-
 		var serverName string
 		if id != "cluster.local" {
 			serverName = id + "." + namespace + ".svc.cluster.local"
 		}
 
-		//nolint:gosec
-		ta := credentials.NewTLS(&tls.Config{
-			ServerName:   serverName,
-			Certificates: []tls.Certificate{cert},
-			RootCAs:      signedCert.TrustChain,
-		})
-		opts = append(opts, grpc.WithTransportCredentials(ta))
+		opts = append(opts, g.auth.GRPCDialOption(serverName))
 	} else {
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	}

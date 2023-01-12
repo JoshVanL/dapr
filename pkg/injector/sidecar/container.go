@@ -36,8 +36,6 @@ import (
 type ContainerConfig struct {
 	AppID                        string
 	Annotations                  Annotations
-	CertChain                    string
-	CertKey                      string
 	ControlPlaneAddress          string
 	DaprSidecarImage             string
 	Identity                     string
@@ -48,11 +46,12 @@ type ContainerConfig struct {
 	PlacementServiceAddress      string
 	SentryAddress                string
 	Tolerations                  []corev1.Toleration
-	TrustAnchors                 string
 	VolumeMounts                 []corev1.VolumeMount
 	ComponentsSocketsVolumeMount *corev1.VolumeMount
 	RunAsNonRoot                 bool
 	ReadOnlyRootFilesystem       bool
+	TrustAnchors                 []byte
+	SentryTrustDomain            string
 }
 
 var (
@@ -295,21 +294,15 @@ func GetSidecarContainer(cfg ContainerConfig) (*corev1.Container, error) {
 	container.Env = append(container.Env,
 		corev1.EnvVar{
 			Name:  sentryConsts.TrustAnchorsEnvVar,
-			Value: cfg.TrustAnchors,
-		},
-		corev1.EnvVar{
-			Name:  sentryConsts.CertChainEnvVar,
-			Value: cfg.CertChain,
-		},
-		corev1.EnvVar{
-			Name:  sentryConsts.CertKeyEnvVar,
-			Value: cfg.CertKey,
+			Value: string(cfg.TrustAnchors),
 		},
 		corev1.EnvVar{
 			Name:  "SENTRY_LOCAL_IDENTITY",
 			Value: cfg.Identity,
 		},
 	)
+
+	container.Args = append(container.Args, "--sentry-trust-domain="+cfg.SentryTrustDomain)
 
 	if cfg.MTLSEnabled {
 		container.Args = append(container.Args, "--enable-mtls")

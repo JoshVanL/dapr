@@ -15,7 +15,6 @@ package operator
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -30,11 +29,9 @@ import (
 	resiliencyapi "github.com/dapr/dapr/pkg/apis/resiliency/v1alpha1"
 	subscriptionsapiV1alpha1 "github.com/dapr/dapr/pkg/apis/subscriptions/v1alpha1"
 	subscriptionsapiV2alpha1 "github.com/dapr/dapr/pkg/apis/subscriptions/v2alpha1"
-	"github.com/dapr/dapr/pkg/credentials"
 	"github.com/dapr/dapr/pkg/health"
 	"github.com/dapr/dapr/pkg/operator/api"
 	"github.com/dapr/dapr/pkg/operator/handlers"
-	"github.com/dapr/kit/fswatcher"
 	"github.com/dapr/kit/logger"
 )
 
@@ -52,20 +49,19 @@ type Operator interface {
 // Options contains the options for `NewOperator`.
 type Options struct {
 	Config                    string
-	CertChainPath             string
 	LeaderElection            bool
 	WatchdogEnabled           bool
 	WatchdogInterval          time.Duration
 	WatchdogMaxRestartsPerMin int
+	SentryTrustDomain         string
 }
 
 type operator struct {
 	daprHandler *handlers.DaprHandler
 	apiServer   api.Server
 
-	configName    string
-	certChainPath string
-	config        *Config
+	configName string
+	config     *Config
 
 	mgr    ctrl.Manager
 	client client.Client
@@ -124,13 +120,12 @@ func NewOperator(opts Options) Operator {
 	}
 
 	o := &operator{
-		daprHandler:   daprHandler,
-		mgr:           mgr,
-		client:        mgrClient,
-		configName:    opts.Config,
-		certChainPath: opts.CertChainPath,
+		daprHandler: daprHandler,
+		mgr:         mgr,
+		client:      mgrClient,
+		configName:  opts.Config,
 	}
-	o.apiServer = api.NewAPIServer(o.client)
+	o.apiServer = api.NewAPIServer(o.client, opts.SentryTrustDomain)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	componentInformer, err := mgr.GetCache().GetInformer(ctx, &componentsapi.Component{})
@@ -155,7 +150,6 @@ func (o *operator) prepareConfig() {
 	if err != nil {
 		log.Fatalf("Unable to load configuration, config: %s, err: %s", o.configName, err)
 	}
-	o.config.Credentials = credentials.NewTLSCredentials(o.certChainPath)
 }
 
 func (o *operator) syncComponent(obj interface{}) {
@@ -164,41 +158,6 @@ func (o *operator) syncComponent(obj interface{}) {
 		log.Debugf("Observed component to be synced, %s/%s", c.Namespace, c.Name)
 		o.apiServer.OnComponentUpdated(c)
 	}
-}
-
-func (o *operator) loadCertChain(ctx context.Context) (certChain *credentials.CertChain) {
-	log.Info("Getting TLS certificates")
-
-	watchCtx, watchCancel := context.WithTimeout(ctx, time.Minute)
-	fsevent := make(chan struct{})
-	go func() {
-		log.Infof("Starting watch for certs on filesystem: %s", o.config.Credentials.Path())
-		err := fswatcher.Watch(watchCtx, o.config.Credentials.Path(), fsevent)
-		// Watch always returns an error, which is context.Canceled if everything went well
-		if err != nil && !errors.Is(err, context.Canceled) {
-			log.Fatalf("Error starting watch on filesystem: %s", err)
-		}
-		close(fsevent)
-		if watchCtx.Err() == context.DeadlineExceeded {
-			log.Fatal("Timeout while waiting to load TLS certificates")
-		}
-	}()
-
-	for {
-		chain, err := credentials.LoadFromDisk(o.config.Credentials.RootCertPath(), o.config.Credentials.CertPath(), o.config.Credentials.KeyPath())
-		if err == nil {
-			log.Info("TLS certificates loaded successfully")
-			certChain = chain
-			break
-		}
-		log.Infof("TLS certificate not found; waiting for disk changes. err=%v", err)
-		<-fsevent
-		log.Debug("Watcher found activity on filesystem")
-	}
-
-	watchCancel()
-
-	return certChain
 }
 
 func (o *operator) Run(ctx context.Context) {
@@ -216,9 +175,6 @@ func (o *operator) Run(ctx context.Context) {
 	}
 	o.prepareConfig()
 
-	// load certs from disk
-	certChain := o.loadCertChain(ctx)
-
 	// start healthz server
 	healthzServer := health.NewServer(log)
 	go func() {
@@ -230,7 +186,7 @@ func (o *operator) Run(ctx context.Context) {
 	}()
 
 	// blocking call
-	o.apiServer.Run(ctx, certChain, func() {
+	o.apiServer.Run(ctx, func() {
 		healthzServer.Ready()
 		log.Infof("Dapr Operator started")
 	})

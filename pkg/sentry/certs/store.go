@@ -8,7 +8,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/dapr/dapr/pkg/credentials"
+	securityconsts "github.com/dapr/dapr/pkg/runtime/security/consts"
 	"github.com/dapr/dapr/pkg/sentry/config"
 	"github.com/dapr/dapr/pkg/sentry/consts"
 	"github.com/dapr/dapr/pkg/sentry/kubernetes"
@@ -35,9 +35,9 @@ func storeKubernetes(rootCertPem, issuerCertPem, issuerCertKey []byte) error {
 	namespace := getNamespace()
 	secret := &v1.Secret{
 		Data: map[string][]byte{
-			credentials.RootCertFilename:   rootCertPem,
-			credentials.IssuerCertFilename: issuerCertPem,
-			credentials.IssuerKeyFilename:  issuerCertKey,
+			securityconsts.RootCertFilename:   rootCertPem,
+			securityconsts.IssuerCertFilename: issuerCertPem,
+			securityconsts.IssuerKeyFilename:  issuerCertKey,
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      consts.TrustBundleK8sSecretName,

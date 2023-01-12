@@ -68,13 +68,13 @@ func (s *server) Run(port int, trustBundler ca.TrustRootBundler) error {
 }
 
 func (s *server) tlsServerOption(trustBundler ca.TrustRootBundler) grpc.ServerOption {
-	cp := trustBundler.GetTrustAnchors()
+	//cp := trustBundler.GetTrustAnchors()
 
 	//nolint:gosec
 	config := &tls.Config{
-		ClientCAs: cp,
+		//ClientCAs: cp,
 		// Require cert verification
-		ClientAuth: tls.RequireAndVerifyClientCert,
+		//ClientAuth: tls.RequireAndVerifyClientCert,
 		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 			if s.certificate == nil || needsRefresh(s.certificate, serverCertExpiryBuffer) {
 				cert, err := s.getServerCertificate()
@@ -168,11 +168,6 @@ func (s *server) SignCertificate(ctx context.Context, req *sentryv1pb.SignCertif
 	issuerCert := s.certAuth.GetCACertBundle().GetIssuerCertPem()
 	rootCert := s.certAuth.GetCACertBundle().GetRootCertPem()
 
-	certPem = append(certPem, issuerCert...)
-	if len(rootCert) > 0 {
-		certPem = append(certPem, rootCert...)
-	}
-
 	if len(certPem) == 0 {
 		err = errors.New("insufficient data in certificate signing request, no certs signed")
 		log.Error(err)
@@ -186,8 +181,11 @@ func (s *server) SignCertificate(ctx context.Context, req *sentryv1pb.SignCertif
 	}
 
 	resp := &sentryv1pb.SignCertificateResponse{
-		WorkloadCertificate:    certPem,
-		TrustChainCertificates: [][]byte{issuerCert, rootCert},
+		WorkloadCertificate: append(append(certPem, '\n'), issuerCert...),
+		// TODO: This field is mostly superfluous since the trust anchor is already
+		// known by the client since it made the request, but is required by the
+		// API.
+		TrustChainCertificates: [][]byte{rootCert},
 		ValidUntil:             expiry,
 	}
 

@@ -43,7 +43,6 @@ import (
 	"github.com/dapr/dapr/pkg/channel"
 	"github.com/dapr/dapr/pkg/concurrency"
 	configuration "github.com/dapr/dapr/pkg/config"
-	daprCredentials "github.com/dapr/dapr/pkg/credentials"
 	diag "github.com/dapr/dapr/pkg/diagnostics"
 	diagUtils "github.com/dapr/dapr/pkg/diagnostics/utils"
 	"github.com/dapr/dapr/pkg/health"
@@ -53,6 +52,7 @@ import (
 	internalv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 	"github.com/dapr/dapr/pkg/resiliency"
 	"github.com/dapr/dapr/pkg/retry"
+	"github.com/dapr/dapr/pkg/runtime/security"
 )
 
 const (
@@ -71,7 +71,7 @@ var (
 //nolint:interfacebloat
 type Actors interface {
 	Call(ctx context.Context, req *invokev1.InvokeMethodRequest) (*invokev1.InvokeMethodResponse, error)
-	Init() error
+	Init(auth security.Authenticator) error
 	Stop()
 	GetState(ctx context.Context, req *GetStateRequest) (*StateResponse, error)
 	TransactionalStateOperation(ctx context.Context, req *TransactionalRequest) error
@@ -106,7 +106,6 @@ type actorsRuntime struct {
 	evaluationLock         *sync.RWMutex
 	evaluationChan         chan struct{}
 	appHealthy             *atomic.Bool
-	certChain              *daprCredentials.CertChain
 	tracingSpec            configuration.TracingSpec
 	resiliency             resiliency.Provider
 	storeName              string
@@ -150,7 +149,6 @@ type ActorsOpts struct {
 	AppChannel          channel.AppChannel
 	GRPCConnectionFn    GRPCConnectionFn
 	Config              Config
-	CertChain           *daprCredentials.CertChain
 	TracingSpec         configuration.TracingSpec
 	Resiliency          resiliency.Provider
 	IsResiliencyEnabled bool
@@ -174,7 +172,6 @@ func NewActors(opts ActorsOpts) Actors {
 		appChannel:             opts.AppChannel,
 		grpcConnectionFn:       opts.GRPCConnectionFn,
 		config:                 opts.Config,
-		certChain:              opts.CertChain,
 		tracingSpec:            opts.TracingSpec,
 		resiliency:             opts.Resiliency,
 		storeName:              opts.StateStoreName,
@@ -194,7 +191,7 @@ func NewActors(opts ActorsOpts) Actors {
 	}
 }
 
-func (a *actorsRuntime) Init() error {
+func (a *actorsRuntime) Init(auth security.Authenticator) error {
 	if len(a.config.PlacementAddresses) == 0 {
 		return errors.New("actors: couldn't connect to placement service: address is empty")
 	}
@@ -220,7 +217,7 @@ func (a *actorsRuntime) Init() error {
 	appHealthFn := func() bool { return a.appHealthy.Load() }
 
 	a.placement = internal.NewActorPlacement(
-		a.config.PlacementAddresses, a.certChain,
+		a.config.PlacementAddresses, auth,
 		a.config.AppID, hostname, a.config.HostedActorTypes,
 		appHealthFn,
 		afterTableUpdateFn)

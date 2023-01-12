@@ -161,6 +161,15 @@ func GenerateCSRCertificate(csr *x509.CertificateRequest, subject string, identi
 			},
 		}
 
+		if identityBundle.ID == identityBundle.Namespace+":dapr-operator" {
+			fmt.Printf("HERE!!!\n")
+			rv = append(rv, asn1.RawValue{
+				Bytes: []byte(fmt.Sprintf("dapr-sidecar-injector.%s.svc", identityBundle.Namespace)),
+				Class: asn1.ClassContextSpecific,
+				Tag:   2,
+			})
+		}
+
 		b, err := asn1.Marshal(rv)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal asn1 raw value for spiffe id: %w", err)

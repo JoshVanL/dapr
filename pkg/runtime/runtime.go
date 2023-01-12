@@ -301,6 +301,7 @@ func NewDaprRuntime(runtimeConfig *Config, globalConfig *config.Configuration, a
 		appHealthReady:             nil,
 		appHealthLock:              &sync.Mutex{},
 		bulkSubLock:                &sync.Mutex{},
+		authenticator:              runtimeConfig.Authenticator,
 	}
 
 	rt.componentAuthorizers = []ComponentAuthorizer{rt.namespaceComponentAuthorizer}
@@ -313,7 +314,7 @@ func NewDaprRuntime(runtimeConfig *Config, globalConfig *config.Configuration, a
 }
 
 // Run performs initialization of the runtime with the runtime and global configurations.
-func (a *DaprRuntime) Run(opts ...Option) error {
+func (a *DaprRuntime) Run(ctx context.Context, opts ...Option) error {
 	start := time.Now()
 	log.Infof("%s mode configured", a.runtimeConfig.Mode)
 	log.Infof("app id: %s", a.runtimeConfig.ID)
@@ -323,7 +324,7 @@ func (a *DaprRuntime) Run(opts ...Option) error {
 		opt(&o)
 	}
 
-	if err := a.initRuntime(&o); err != nil {
+	if err := a.initRuntime(ctx, &o); err != nil {
 		return err
 	}
 
@@ -348,9 +349,9 @@ func (a *DaprRuntime) getPodName() string {
 	return os.Getenv("POD_NAME")
 }
 
-func (a *DaprRuntime) getOperatorClient() (operatorv1pb.OperatorClient, error) {
+func (a *DaprRuntime) getOperatorClient(ctx context.Context) (operatorv1pb.OperatorClient, error) {
 	if a.runtimeConfig.Mode == modes.KubernetesMode {
-		client, _, err := client.GetOperatorClient(a.runtimeConfig.Kubernetes.ControlPlaneAddress, security.TLSServerName, a.runtimeConfig.CertChain)
+		client, _, err := client.GetOperatorClient(ctx, a.runtimeConfig.Kubernetes.ControlPlaneAddress, "cluster.local", a.authenticator)
 		if err != nil {
 			return nil, fmt.Errorf("error creating operator client: %w", err)
 		}
@@ -426,7 +427,7 @@ func (a *DaprRuntime) setupTracing(hostAddress string, tpStore tracerProviderSto
 	return nil
 }
 
-func (a *DaprRuntime) initRuntime(opts *runtimeOpts) error {
+func (a *DaprRuntime) initRuntime(ctx context.Context, opts *runtimeOpts) error {
 	a.namespace = a.getNamespace()
 
 	// Initialize metrics only if MetricSpec is enabled.
@@ -436,12 +437,9 @@ func (a *DaprRuntime) initRuntime(opts *runtimeOpts) error {
 		}
 	}
 
-	err := a.establishSecurity(a.runtimeConfig.SentryServiceAddress)
-	if err != nil {
-		return err
-	}
 	a.podName = a.getPodName()
-	a.operatorClient, err = a.getOperatorClient()
+	var err error
+	a.operatorClient, err = a.getOperatorClient(ctx)
 	if err != nil {
 		return err
 	}
@@ -556,7 +554,7 @@ func (a *DaprRuntime) initRuntime(opts *runtimeOpts) error {
 	}
 
 	a.appHealthReady = func() {
-		a.appHealthReadyInit(opts)
+		a.appHealthReadyInit(ctx, opts)
 	}
 	if a.runtimeConfig.AppHealthCheck != nil && a.appChannel != nil {
 		// We can't just pass "a.appChannel.HealthProbe" because appChannel may be re-created
@@ -581,14 +579,14 @@ func (a *DaprRuntime) initRuntime(opts *runtimeOpts) error {
 }
 
 // appHealthReadyInit completes the initialization phase and is invoked after the app is healthy
-func (a *DaprRuntime) appHealthReadyInit(opts *runtimeOpts) {
+func (a *DaprRuntime) appHealthReadyInit(ctx context.Context, opts *runtimeOpts) {
 	var err error
 
 	// Load app configuration (for actors) and init actors
 	a.loadAppConfiguration()
 
 	if len(a.runtimeConfig.PlacementAddresses) != 0 {
-		err = a.initActors()
+		err = a.initActors(ctx)
 		if err != nil {
 			log.Warnf(err.Error())
 		} else {
@@ -2362,7 +2360,7 @@ func extractCloudEventProperty(cloudEvent map[string]interface{}, property strin
 	return ""
 }
 
-func (a *DaprRuntime) initActors() error {
+func (a *DaprRuntime) initActors(ctx context.Context) error {
 	err := actors.ValidateHostEnvironment(a.runtimeConfig.mtlsEnabled, a.runtimeConfig.Mode, a.namespace)
 	if err != nil {
 		return NewInitError(InitFailure, "actors", err)
@@ -2385,13 +2383,12 @@ func (a *DaprRuntime) initActors() error {
 		AppChannel:          a.appChannel,
 		GRPCConnectionFn:    a.grpc.GetGRPCConnection,
 		Config:              actorConfig,
-		CertChain:           a.runtimeConfig.CertChain,
 		TracingSpec:         a.globalConfig.Spec.TracingSpec,
 		Resiliency:          a.resiliency,
 		IsResiliencyEnabled: a.globalConfig.IsFeatureEnabled(config.Resiliency),
 		StateStoreName:      a.actorStateStoreName,
 	})
-	err = act.Init()
+	err = act.Init(a.authenticator)
 	if err == nil {
 		a.actor = act
 		return nil
@@ -3030,29 +3027,6 @@ func featureTypeToString(features interface{}) []string {
 		}
 	}
 	return featureStr
-}
-
-func (a *DaprRuntime) establishSecurity(sentryAddress string) error {
-	if !a.runtimeConfig.mtlsEnabled {
-		log.Info("mTLS is disabled. Skipping certificate request and tls validation")
-		return nil
-	}
-	if sentryAddress == "" {
-		return errors.New("sentryAddress cannot be empty")
-	}
-	log.Info("mTLS enabled. creating sidecar authenticator")
-
-	auth, err := security.GetSidecarAuthenticator(sentryAddress, a.runtimeConfig.CertChain)
-	if err != nil {
-		return err
-	}
-	a.authenticator = auth
-	a.grpc.SetAuthenticator(auth)
-
-	log.Info("authenticator created")
-
-	diag.DefaultMonitoring.MTLSInitCompleted()
-	return nil
 }
 
 func componentDependency(compCategory components.Category, name string) string {

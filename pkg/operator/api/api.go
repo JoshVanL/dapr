@@ -19,6 +19,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -36,8 +38,10 @@ import (
 	configurationapi "github.com/dapr/dapr/pkg/apis/configuration/v1alpha1"
 	resiliencyapi "github.com/dapr/dapr/pkg/apis/resiliency/v1alpha1"
 	subscriptionsapiV2alpha1 "github.com/dapr/dapr/pkg/apis/subscriptions/v2alpha1"
-	daprCredentials "github.com/dapr/dapr/pkg/credentials"
+	"github.com/dapr/dapr/pkg/injector/sidecar"
 	operatorv1pb "github.com/dapr/dapr/pkg/proto/operator/v1"
+	"github.com/dapr/dapr/pkg/runtime/security"
+	securityconsts "github.com/dapr/dapr/pkg/runtime/security/consts"
 	"github.com/dapr/kit/logger"
 )
 
@@ -53,7 +57,7 @@ var log = logger.NewLogger("dapr.operator.api")
 
 // Server runs the Dapr API server for components and configurations.
 type Server interface {
-	Run(ctx context.Context, certChain *daprCredentials.CertChain, onReady func())
+	Run(ctx context.Context, onReady func())
 	OnComponentUpdated(component *componentsapi.Component)
 }
 
@@ -62,26 +66,39 @@ type apiServer struct {
 	Client client.Client
 	// notify all dapr runtime
 	connLock          sync.Mutex
+	sentryTrustDomain string
 	allConnUpdateChan map[string]chan *componentsapi.Component
 }
 
 // NewAPIServer returns a new API server.
-func NewAPIServer(client client.Client) Server {
+func NewAPIServer(client client.Client, sentryTrustDomain string) Server {
 	return &apiServer{
 		Client:            client,
 		allConnUpdateChan: make(map[string]chan *componentsapi.Component),
+		sentryTrustDomain: sentryTrustDomain,
 	}
 }
 
 // Run starts a new gRPC server.
-func (a *apiServer) Run(ctx context.Context, certChain *daprCredentials.CertChain, onReady func()) {
+func (a *apiServer) Run(ctx context.Context, onReady func()) {
 	log.Infof("starting gRPC server on port %d", serverPort)
 
-	opts, err := daprCredentials.GetServerOptions(certChain)
+	trustAnchors, err := os.ReadFile(filepath.Join("/var/run/dapr/credentials", securityconsts.RootCertFilename))
 	if err != nil {
-		log.Fatalf("error creating gRPC options: %v", err)
+		log.Fatalf("failed to read trust anchor: %s", err)
 	}
-	s := grpc.NewServer(opts...)
+	auth, err := security.NewAuthenticator(ctx, security.Options{
+		SentryAddress:     sidecar.ServiceAddressTODO(sidecar.ServiceSentry, os.Getenv("NAMESPACE")),
+		SentryTrustDomain: a.sentryTrustDomain,
+		TrustAnchors:      trustAnchors,
+		Namespace:         os.Getenv("NAMESPACE"),
+		AppID:             os.Getenv("NAMESPACE") + ":dapr-operator",
+	})
+	if err != nil {
+		log.Fatalf("error creating authenticator: %s", err)
+	}
+
+	s := grpc.NewServer(auth.GRPCServerOption())
 	operatorv1pb.RegisterOperatorServer(s, a)
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%v", serverPort))

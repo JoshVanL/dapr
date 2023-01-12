@@ -14,7 +14,6 @@ limitations under the License.
 package injector
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 
@@ -27,6 +26,7 @@ import (
 	"github.com/dapr/dapr/pkg/injector/annotations"
 	"github.com/dapr/dapr/pkg/injector/components"
 	"github.com/dapr/dapr/pkg/injector/sidecar"
+	"github.com/dapr/dapr/pkg/runtime/security"
 	"github.com/dapr/dapr/pkg/validation"
 )
 
@@ -37,6 +37,7 @@ const (
 
 func (i *injector) getPodPatchOperations(ar *v1.AdmissionReview,
 	namespace, image, imagePullPolicy string, kubeClient kubernetes.Interface, daprClient scheme.Interface,
+	auth security.Authenticator,
 ) (patchOps []sidecar.PatchOperation, err error) {
 	req := ar.Request
 	var pod corev1.Pod
@@ -72,8 +73,6 @@ func (i *injector) getPodPatchOperations(ar *v1.AdmissionReview,
 	sentryAddress := sidecar.ServiceAddress(sidecar.ServiceSentry, namespace, i.config.KubeClusterDomain)
 	apiSvcAddress := sidecar.ServiceAddress(sidecar.ServiceAPI, namespace, i.config.KubeClusterDomain)
 
-	trustAnchors, certChain, certKey := sidecar.GetTrustAnchorsAndCertChain(context.TODO(), kubeClient, namespace)
-
 	// Get all volume mounts
 	volumeMounts := sidecar.GetVolumeMounts(pod)
 	socketVolumeMount := sidecar.GetUnixDomainSocketVolumeMount(&pod)
@@ -101,8 +100,6 @@ func (i *injector) getPodPatchOperations(ar *v1.AdmissionReview,
 	sidecarContainer, err := sidecar.GetSidecarContainer(sidecar.ContainerConfig{
 		AppID:                        appID,
 		Annotations:                  an,
-		CertChain:                    certChain,
-		CertKey:                      certKey,
 		ControlPlaneAddress:          apiSvcAddress,
 		DaprSidecarImage:             image,
 		Identity:                     req.Namespace + ":" + pod.Spec.ServiceAccountName,
@@ -113,7 +110,8 @@ func (i *injector) getPodPatchOperations(ar *v1.AdmissionReview,
 		PlacementServiceAddress:      placementAddress,
 		SentryAddress:                sentryAddress,
 		Tolerations:                  pod.Spec.Tolerations,
-		TrustAnchors:                 trustAnchors,
+		TrustAnchors:                 auth.TrustAnchors(),
+		SentryTrustDomain:            auth.SentryTrustDomain(),
 		VolumeMounts:                 volumeMounts,
 		ComponentsSocketsVolumeMount: componentsSocketVolumeMount,
 		RunAsNonRoot:                 i.config.GetRunAsNonRoot(),

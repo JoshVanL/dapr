@@ -17,23 +17,28 @@ import (
 	"flag"
 	"path/filepath"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/homedir"
 
 	"github.com/dapr/dapr/pkg/buildinfo"
 	scheme "github.com/dapr/dapr/pkg/client/clientset/versioned"
-	"github.com/dapr/dapr/pkg/credentials"
 	"github.com/dapr/dapr/pkg/health"
 	"github.com/dapr/dapr/pkg/injector"
 	"github.com/dapr/dapr/pkg/injector/monitoring"
+	"github.com/dapr/dapr/pkg/injector/sidecar"
 	"github.com/dapr/dapr/pkg/metrics"
+	"github.com/dapr/dapr/pkg/runtime/security"
+	securityconsts "github.com/dapr/dapr/pkg/runtime/security/consts"
+	"github.com/dapr/dapr/pkg/sentry/consts"
 	"github.com/dapr/dapr/pkg/signals"
 	"github.com/dapr/dapr/utils"
 	"github.com/dapr/kit/logger"
 )
 
 var (
-	log         = logger.NewLogger("dapr.injector")
-	healthzPort int
+	log               = logger.NewLogger("dapr.injector")
+	healthzPort       int
+	sentryTrustDomain string
 )
 
 func main() {
@@ -62,7 +67,22 @@ func main() {
 		log.Fatalf("failed to get authentication uids from services accounts: %s", err)
 	}
 
-	inj := injector.NewInjector(uids, cfg, daprClient, kubeClient)
+	secret, err := kubeClient.CoreV1().Secrets(cfg.Namespace).Get(ctx, consts.TrustBundleK8sSecretName, metav1.GetOptions{})
+	if err != nil {
+		log.Fatalf("failed to get trust bundle secret: %s", err)
+	}
+	auth, err := security.NewAuthenticator(ctx, security.Options{
+		SentryAddress:     sidecar.ServiceAddress(sidecar.ServiceSentry, cfg.Namespace, cfg.KubeClusterDomain),
+		SentryTrustDomain: sentryTrustDomain,
+		TrustAnchors:      secret.Data[securityconsts.RootCertFilename],
+		Namespace:         cfg.Namespace,
+		AppID:             cfg.Namespace + ":dapr-operator",
+	})
+	if err != nil {
+		log.Fatalf("failed to create authenticator: %s", err)
+	}
+
+	inj := injector.NewInjector(uids, cfg, daprClient, auth, kubeClient)
 
 	// Blocking call
 	inj.Run(ctx, func() {
@@ -86,10 +106,7 @@ func init() {
 	}
 
 	flag.IntVar(&healthzPort, "healthz-port", 8080, "The port used for health checks")
-
-	flag.StringVar(&credentials.RootCertFilename, "issuer-ca-secret-key", credentials.RootCertFilename, "Certificate Authority certificate secret key")
-	flag.StringVar(&credentials.IssuerCertFilename, "issuer-certificate-secret-key", credentials.IssuerCertFilename, "Issuer certificate secret key")
-	flag.StringVar(&credentials.IssuerKeyFilename, "issuer-key-secret-key", credentials.IssuerKeyFilename, "Issuer private key secret key")
+	flag.StringVar(&sentryTrustDomain, "sentry-trust-domain", "cluster.local", "The trust domain for the sentry CA")
 
 	flag.Parse()
 

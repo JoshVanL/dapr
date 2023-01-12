@@ -25,10 +25,10 @@ import (
 
 	"github.com/dapr/kit/logger"
 
-	daprCredentials "github.com/dapr/dapr/pkg/credentials"
 	diag "github.com/dapr/dapr/pkg/diagnostics"
 	"github.com/dapr/dapr/pkg/placement/hashing"
 	v1pb "github.com/dapr/dapr/pkg/proto/placement/v1"
+	"github.com/dapr/dapr/pkg/runtime/security"
 )
 
 var log = logger.NewLogger("dapr.runtime.actor.internal.placement")
@@ -89,7 +89,7 @@ type ActorPlacement struct {
 
 // NewActorPlacement initializes ActorPlacement for the actor service.
 func NewActorPlacement(
-	serverAddr []string, clientCert *daprCredentials.CertChain,
+	serverAddr []string, auth security.Authenticator,
 	appID, runtimeHostName string, actorTypes []string,
 	appHealthFn func() bool,
 	afterTableUpdateFn func(),
@@ -101,7 +101,7 @@ func NewActorPlacement(
 		runtimeHostName: runtimeHostName,
 		serverAddr:      servers,
 
-		client: newPlacementClient(getGrpcOptsGetter(servers, clientCert)),
+		client: newPlacementClient(serverAddr, auth),
 
 		placementTableLock: &sync.RWMutex{},
 		placementTables:    &hashing.ConsistentHashTables{Entries: make(map[string]*hashing.Consistent)},
@@ -270,12 +270,7 @@ func (p *ActorPlacement) establishStreamConn() (established bool) {
 
 		log.Debugf("try to connect to placement service: %s", serverAddr)
 
-		err := p.client.connectToServer(serverAddr)
-		if err == errEstablishingTLSConn {
-			return false
-		}
-
-		if err != nil {
+		if err := p.client.connectToServer(serverAddr); err != nil {
 			log.Debugf("error connecting to placement service: %v", err)
 			p.serverIndex.Store((p.serverIndex.Load() + 1) % int32(len(p.serverAddr)))
 			time.Sleep(placementReconnectInterval)

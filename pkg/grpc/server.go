@@ -26,7 +26,6 @@ import (
 
 	grpcMiddleware "github.com/grpc-ecosystem/go-grpc-middleware"
 	grpcGo "google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 
 	"github.com/dapr/dapr/pkg/config"
@@ -63,7 +62,6 @@ type server struct {
 	authenticator      auth.Authenticator
 	servers            []*grpcGo.Server
 	renewMutex         *sync.Mutex
-	signedCert         *auth.SignedCertificate
 	tlsCert            tls.Certificate
 	signedCertDuration time.Duration
 	kind               string
@@ -106,7 +104,6 @@ func NewInternalServer(api API, config ServerConfig, tracingSpec config.TracingS
 		tracingSpec:      tracingSpec,
 		metricSpec:       metricSpec,
 		authenticator:    authenticator,
-		renewMutex:       &sync.Mutex{},
 		kind:             internalServer,
 		logger:           internalServerLogger,
 		maxConnectionAge: getDefaultMaxAgeDuration(),
@@ -184,25 +181,6 @@ func (s *server) Close() error {
 	return nil
 }
 
-func (s *server) generateWorkloadCert() error {
-	s.logger.Info("sending workload csr request to sentry")
-	signedCert, err := s.authenticator.CreateSignedWorkloadCert(s.config.AppID, s.config.NameSpace, s.config.TrustDomain)
-	if err != nil {
-		return fmt.Errorf("error from authenticator CreateSignedWorkloadCert: %w", err)
-	}
-	s.logger.Info("certificate signed successfully")
-
-	tlsCert, err := tls.X509KeyPair(signedCert.WorkloadCert, signedCert.PrivateKeyPem)
-	if err != nil {
-		return fmt.Errorf("error creating x509 Key Pair: %w", err)
-	}
-
-	s.signedCert = signedCert
-	s.tlsCert = tlsCert
-	s.signedCertDuration = signedCert.Expiry.Sub(time.Now().UTC())
-	return nil
-}
-
 func (s *server) getMiddlewareOptions() []grpcGo.ServerOption {
 	intr := make([]grpcGo.UnaryServerInterceptor, 0, 6)
 	intrStream := make([]grpcGo.StreamServerInterceptor, 0, 3)
@@ -254,23 +232,7 @@ func (s *server) getGRPCServer() (*grpcGo.Server, error) {
 	}
 
 	if s.authenticator != nil {
-		err := s.generateWorkloadCert()
-		if err != nil {
-			return nil, err
-		}
-
-		//nolint:gosec
-		tlsConfig := tls.Config{
-			ClientCAs:  s.signedCert.TrustChain,
-			ClientAuth: tls.RequireAndVerifyClientCert,
-			GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
-				return &s.tlsCert, nil
-			},
-		}
-		ta := credentials.NewTLS(&tlsConfig)
-
-		opts = append(opts, grpcGo.Creds(ta))
-		go s.startWorkloadCertRotation()
+		opts = append(opts, s.authenticator.GRPCServerOption())
 	}
 
 	opts = append(opts,
@@ -284,38 +246,6 @@ func (s *server) getGRPCServer() (*grpcGo.Server, error) {
 	}
 
 	return grpcGo.NewServer(opts...), nil
-}
-
-func (s *server) startWorkloadCertRotation() {
-	s.logger.Infof("starting workload cert expiry watcher. current cert expires on: %s", s.signedCert.Expiry.String())
-
-	ticker := time.NewTicker(certWatchInterval)
-
-	for range ticker.C {
-		s.renewMutex.Lock()
-		renew := shouldRenewCert(s.signedCert.Expiry, s.signedCertDuration)
-		if renew {
-			s.logger.Info("renewing certificate: requesting new cert and restarting gRPC server")
-
-			err := s.generateWorkloadCert()
-			if err != nil {
-				s.logger.Errorf("error starting server: %s", err)
-				s.renewMutex.Unlock()
-				continue
-			}
-			diag.DefaultMonitoring.MTLSWorkLoadCertRotationCompleted()
-		}
-		s.renewMutex.Unlock()
-	}
-}
-
-func shouldRenewCert(certExpiryDate time.Time, certDuration time.Duration) bool {
-	expiresIn := certExpiryDate.Sub(time.Now())
-	expiresInSeconds := expiresIn.Seconds()
-	certDurationSeconds := certDuration.Seconds()
-
-	percentagePassed := 100 - ((expiresInSeconds / certDurationSeconds) * 100)
-	return percentagePassed >= renewWhenPercentagePassed
 }
 
 func (s *server) getGRPCAPILoggingInfo() grpcGo.UnaryServerInterceptor {

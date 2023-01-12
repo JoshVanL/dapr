@@ -33,6 +33,7 @@ import (
 	scheme "github.com/dapr/dapr/pkg/client/clientset/versioned"
 	"github.com/dapr/dapr/pkg/injector/monitoring"
 	"github.com/dapr/dapr/pkg/injector/sidecar"
+	"github.com/dapr/dapr/pkg/runtime/security"
 	"github.com/dapr/dapr/utils"
 	"github.com/dapr/kit/logger"
 )
@@ -64,6 +65,7 @@ type injector struct {
 	config       Config
 	deserializer runtime.Decoder
 	server       *http.Server
+	auth         security.Authenticator
 	kubeClient   kubernetes.Interface
 	daprClient   scheme.Interface
 	authUIDs     []string
@@ -99,7 +101,8 @@ func getAppIDFromRequest(req *v1.AdmissionRequest) string {
 }
 
 // NewInjector returns a new Injector instance with the given config.
-func NewInjector(authUIDs []string, config Config, daprClient scheme.Interface, kubeClient kubernetes.Interface) Injector {
+func NewInjector(authUIDs []string, config Config, daprClient scheme.Interface,
+	auth security.Authenticator, kubeClient kubernetes.Interface) Injector {
 	mux := http.NewServeMux()
 
 	i := &injector{
@@ -107,14 +110,15 @@ func NewInjector(authUIDs []string, config Config, daprClient scheme.Interface, 
 		deserializer: serializer.NewCodecFactory(
 			runtime.NewScheme(),
 		).UniversalDeserializer(),
-		//nolint:gosec
 		server: &http.Server{
-			Addr:    fmt.Sprintf(":%d", port),
-			Handler: mux,
+			Addr:      fmt.Sprintf(":%d", port),
+			Handler:   mux,
+			TLSConfig: auth.TLSServerConfig(),
 		},
 		kubeClient: kubeClient,
 		daprClient: daprClient,
 		authUIDs:   authUIDs,
+		auth:       auth,
 	}
 
 	mux.HandleFunc("/mutate", i.handleRequest)
@@ -190,7 +194,9 @@ func (i *injector) Run(ctx context.Context, onReady func()) {
 		onReady()
 	}
 
-	err = i.server.ServeTLS(ln, i.config.TLSCertFile, i.config.TLSKeyFile)
+	// Use empty strings for cert and key path to use the TLS config with
+	// instrumented the HTTP server with earlier.
+	err = i.server.ServeTLS(ln, "", "")
 	if err != http.ErrServerClosed {
 		log.Errorf("Sidecar injector error: %s", err)
 	}
@@ -239,7 +245,7 @@ func (i *injector) handleRequest(w http.ResponseWriter, r *http.Request) {
 		} else if ar.Request.Kind.Kind != "Pod" {
 			log.Errorf("invalid kind for review: %s", ar.Kind)
 		} else {
-			patchOps, err = i.getPodPatchOperations(&ar, i.config.Namespace, i.config.SidecarImage, i.config.SidecarImagePullPolicy, i.kubeClient, i.daprClient)
+			patchOps, err = i.getPodPatchOperations(&ar, i.config.Namespace, i.config.SidecarImage, i.config.SidecarImagePullPolicy, i.kubeClient, i.daprClient, i.auth)
 			if err == nil {
 				patchedSuccessfully = true
 			}

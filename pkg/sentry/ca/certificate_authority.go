@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dapr/dapr/pkg/credentials"
 	"github.com/dapr/dapr/pkg/sentry/certs"
 	"github.com/dapr/dapr/pkg/sentry/config"
 	"github.com/dapr/dapr/pkg/sentry/csr"
@@ -175,23 +174,28 @@ func (c *defaultCA) validateAndBuildTrustBundle() (*trustRootBundle, error) {
 
 	// certs exist on disk or getting created, load them when ready
 	if !shouldCreateCerts(c.config) {
-		err := detectCertificates(c.config.RootCertPath)
-		if err != nil {
+		if err := detectCertificates(c.config.RootCertPath); err != nil {
 			return nil, err
 		}
 
-		certChain, err := credentials.LoadFromDisk(c.config.RootCertPath, c.config.IssuerCertPath, c.config.IssuerKeyPath)
+		var err error
+		rootCertBytes, err = os.ReadFile(c.config.RootCertPath)
 		if err != nil {
-			return nil, fmt.Errorf("error loading cert chain from disk: %w", err)
+			return nil, fmt.Errorf("error reading root cert %q: %w", c.config.RootCertPath, err)
+		}
+		issuerCertBytes, err = os.ReadFile(c.config.IssuerCertPath)
+		if err != nil {
+			return nil, fmt.Errorf("error reading issuer cert %q: %w", c.config.IssuerCertPath, err)
+		}
+		issuerKeyBytes, err := os.ReadFile(c.config.IssuerKeyPath)
+		if err != nil {
+			return nil, fmt.Errorf("error reading issuer key %q: %w", c.config.IssuerKeyPath, err)
 		}
 
-		issuerCreds, err = certs.PEMCredentialsFromFiles(certChain.Cert, certChain.Key)
+		issuerCreds, err = certs.PEMCredentialsFromFiles(issuerCertBytes, issuerKeyBytes)
 		if err != nil {
 			return nil, fmt.Errorf("error reading PEM credentials: %w", err)
 		}
-
-		rootCertBytes = certChain.RootCA
-		issuerCertBytes = certChain.Cert
 	} else {
 		// create self signed root and issuer certs
 		log.Info("root and issuer certs not found: generating self signed CA")

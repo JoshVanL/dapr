@@ -24,9 +24,9 @@ import (
 	"k8s.io/client-go/util/homedir"
 
 	"github.com/dapr/dapr/pkg/buildinfo"
-	"github.com/dapr/dapr/pkg/credentials"
 	"github.com/dapr/dapr/pkg/health"
 	"github.com/dapr/dapr/pkg/metrics"
+	"github.com/dapr/dapr/pkg/runtime/security/consts"
 	"github.com/dapr/dapr/pkg/sentry"
 	"github.com/dapr/dapr/pkg/sentry/config"
 	"github.com/dapr/dapr/pkg/sentry/monitoring"
@@ -50,9 +50,9 @@ const (
 func main() {
 	configName := flag.String("config", defaultDaprSystemConfigName, "Path to config file, or name of a configuration object")
 	credsPath := flag.String("issuer-credentials", defaultCredentialsPath, "Path to the credentials directory holding the issuer data")
-	flag.StringVar(&credentials.RootCertFilename, "issuer-ca-filename", credentials.RootCertFilename, "Certificate Authority certificate filename")
-	flag.StringVar(&credentials.IssuerCertFilename, "issuer-certificate-filename", credentials.IssuerCertFilename, "Issuer certificate filename")
-	flag.StringVar(&credentials.IssuerKeyFilename, "issuer-key-filename", credentials.IssuerKeyFilename, "Issuer private key filename")
+	rootCertPath := flag.String("issuer-ca-filename", consts.RootCertFilename, "Certificate Authority certificate filename")
+	issuerCertPath := flag.String("issuer-certificate-filename", consts.IssuerCertFilename, "Issuer certificate filename")
+	issuerKeyPath := flag.String("issuer-key-filename", consts.IssuerKeyFilename, "Issuer private key filename")
 	trustDomain := flag.String("trust-domain", "localhost", "The CA trust domain")
 	tokenAudience := flag.String("token-audience", "", "Expected audience for tokens; multiple values can be separated by a comma")
 
@@ -92,10 +92,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	issuerCertPath := filepath.Join(*credsPath, credentials.IssuerCertFilename)
-	issuerKeyPath := filepath.Join(*credsPath, credentials.IssuerKeyFilename)
-	rootCertPath := filepath.Join(*credsPath, credentials.RootCertFilename)
-
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 
@@ -104,9 +100,9 @@ func main() {
 	if err != nil {
 		log.Warn(err)
 	}
-	config.IssuerCertPath = issuerCertPath
-	config.IssuerKeyPath = issuerKeyPath
-	config.RootCertPath = rootCertPath
+	config.IssuerCertPath = filepath.Join(*credsPath, *issuerCertPath)
+	config.IssuerKeyPath = filepath.Join(*credsPath, *issuerKeyPath)
+	config.RootCertPath = filepath.Join(*credsPath, *rootCertPath)
 	config.TrustDomain = *trustDomain
 	if *tokenAudience != "" {
 		config.TokenAudience = tokenAudience
