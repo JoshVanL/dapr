@@ -8,13 +8,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/dapr/dapr/pkg/apis/configuration/v1alpha1"
-	"github.com/dapr/dapr/pkg/credentials"
 )
 
 // Config returns an operator config options.
 type Config struct {
 	MTLSEnabled bool
-	Credentials credentials.TLSCredentials
 }
 
 // GetNamespace returns the namespace for Dapr.

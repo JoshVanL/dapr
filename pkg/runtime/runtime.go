@@ -74,8 +74,8 @@ import (
 	"github.com/dapr/dapr/pkg/operator/client"
 	"github.com/dapr/dapr/pkg/resiliency"
 	runtimePubsub "github.com/dapr/dapr/pkg/runtime/pubsub"
-	"github.com/dapr/dapr/pkg/runtime/security"
 	"github.com/dapr/dapr/pkg/scopes"
+	"github.com/dapr/dapr/pkg/security"
 	"github.com/dapr/dapr/utils"
 	"github.com/dapr/kit/logger"
 
@@ -192,7 +192,7 @@ type DaprRuntime struct {
 	hostAddress               string
 	actorStateStoreName       string
 	actorStateStoreLock       *sync.RWMutex
-	authenticator             security.Authenticator
+	security                  security.Interface
 	namespace                 string
 	podName                   string
 	daprHTTPAPI               http.API
@@ -299,6 +299,7 @@ func NewDaprRuntime(runtimeConfig *Config, globalConfig *config.Configuration, a
 		appHealthReady:             nil,
 		appHealthLock:              &sync.Mutex{},
 		bulkSubLock:                &sync.Mutex{},
+		security:                   runtimeConfig.Security,
 	}
 
 	rt.componentAuthorizers = []ComponentAuthorizer{rt.namespaceComponentAuthorizer}
@@ -348,7 +349,7 @@ func (a *DaprRuntime) getPodName() string {
 
 func (a *DaprRuntime) getOperatorClient() (operatorv1pb.OperatorClient, error) {
 	if a.runtimeConfig.Mode == modes.KubernetesMode {
-		client, _, err := client.GetOperatorClient(a.runtimeConfig.Kubernetes.ControlPlaneAddress, security.TLSServerName, a.runtimeConfig.CertChain)
+		client, _, err := client.GetOperatorClient(a.runtimeConfig.Kubernetes.ControlPlaneAddress, "cluster.local", a.runtimeConfig.Security)
 		if err != nil {
 			return nil, fmt.Errorf("error creating operator client: %w", err)
 		}
@@ -425,12 +426,9 @@ func (a *DaprRuntime) setupTracing(hostAddress string, tpStore tracerProviderSto
 }
 
 func (a *DaprRuntime) initRuntime(opts *runtimeOpts) error {
-	a.namespace = a.getNamespace()
+	var err error
 
-	err := a.establishSecurity(a.runtimeConfig.SentryServiceAddress)
-	if err != nil {
-		return err
-	}
+	a.namespace = a.getNamespace()
 	a.podName = a.getPodName()
 	a.operatorClient, err = a.getOperatorClient()
 	if err != nil {
@@ -987,6 +985,7 @@ func (a *DaprRuntime) initDirectMessaging(resolver nr.Resolver) {
 		Proxy:              a.proxy,
 		ReadBufferSize:     a.runtimeConfig.ReadBufferSize,
 		Resiliency:         a.resiliency,
+		ACL:                a.accessControlList,
 	})
 }
 
@@ -1438,7 +1437,7 @@ func (a *DaprRuntime) startHTTPServer(port int, publicPort *int, profilePort int
 func (a *DaprRuntime) startGRPCInternalServer(api grpc.API, port int) error {
 	// Since GRPCInteralServer is encrypted & authenticated, it is safe to listen on *
 	serverConf := a.getNewServerConfig([]string{""}, port)
-	server := grpc.NewInternalServer(api, serverConf, a.globalConfig.Spec.TracingSpec, a.globalConfig.Spec.MetricSpec, a.authenticator, a.proxy)
+	server := grpc.NewInternalServer(api, serverConf, a.globalConfig.Spec.TracingSpec, a.globalConfig.Spec.MetricSpec, a.security, a.proxy)
 	if err := server.StartNonBlocking(); err != nil {
 		return err
 	}
@@ -2377,8 +2376,8 @@ func (a *DaprRuntime) initActors() error {
 		AppChannel:       a.appChannel,
 		GRPCConnectionFn: a.grpc.GetGRPCConnection,
 		Config:           actorConfig,
-		CertChain:        a.runtimeConfig.CertChain,
 		TracingSpec:      a.globalConfig.Spec.TracingSpec,
+		Security:         a.security,
 		Resiliency:       a.resiliency,
 		StateStoreName:   a.actorStateStoreName,
 	})
@@ -3032,29 +3031,6 @@ func featureTypeToString(features interface{}) []string {
 		}
 	}
 	return featureStr
-}
-
-func (a *DaprRuntime) establishSecurity(sentryAddress string) error {
-	if !a.runtimeConfig.mtlsEnabled {
-		log.Info("mTLS is disabled. Skipping certificate request and tls validation")
-		return nil
-	}
-	if sentryAddress == "" {
-		return errors.New("sentryAddress cannot be empty")
-	}
-	log.Info("mTLS enabled. creating sidecar authenticator")
-
-	auth, err := security.GetSidecarAuthenticator(sentryAddress, a.runtimeConfig.CertChain)
-	if err != nil {
-		return err
-	}
-	a.authenticator = auth
-	a.grpc.SetAuthenticator(auth)
-
-	log.Info("authenticator created")
-
-	diag.DefaultMonitoring.MTLSInitCompleted()
-	return nil
 }
 
 func componentDependency(compCategory components.Category, name string) string {

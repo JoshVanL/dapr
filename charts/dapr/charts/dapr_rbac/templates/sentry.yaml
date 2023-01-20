@@ -22,6 +22,9 @@ rules:
   - apiGroups: ["dapr.io"]
     resources: ["configurations"]
     verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get"]
 ---
 kind: ClusterRoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
@@ -50,7 +53,7 @@ metadata:
     {{- end }}
 rules:
   - apiGroups: [""]
-    resources: ["secrets"]
+    resources: ["secrets", "configmaps"]
     verbs: ["get", "update"]
     resourceNames: ["dapr-trust-bundle"]
 ---

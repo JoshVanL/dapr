@@ -18,8 +18,8 @@ import (
 
 	"github.com/dapr/dapr/pkg/apphealth"
 	config "github.com/dapr/dapr/pkg/config/modes"
-	"github.com/dapr/dapr/pkg/credentials"
 	"github.com/dapr/dapr/pkg/modes"
+	"github.com/dapr/dapr/pkg/security"
 )
 
 // Protocol is a communications protocol.
@@ -73,7 +73,7 @@ type Config struct {
 	MaxConcurrency               int
 	mtlsEnabled                  bool
 	SentryServiceAddress         string
-	CertChain                    *credentials.CertChain
+	Security                     security.Interface
 	AppSSL                       bool
 	MaxRequestBodySize           int
 	UnixDomainSocket             string

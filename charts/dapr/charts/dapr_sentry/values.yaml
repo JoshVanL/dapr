@@ -15,7 +15,7 @@ tokenAudience: ""
 
 ports:
   protocol: TCP
-  port: 80
+  port: 443
   targetPort: 50001
 
 tls:
@@ -24,7 +24,6 @@ tls:
     keyPEM: ""
   root:
     certPEM: ""
-  trustDomain: cluster.local
 
 livenessProbe:
   initialDelaySeconds: 3

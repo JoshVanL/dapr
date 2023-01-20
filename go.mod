@@ -52,10 +52,15 @@ require (
 	go.temporal.io/sdk v1.19.0
 	go.uber.org/automaxprocs v1.5.1
 	go.uber.org/ratelimit v0.2.0
+	golang.org/x/exp v0.0.0-20230105000112-eab7a2c85304
 	golang.org/x/exp v0.0.0-20230113152452-c42ee1cf562e
 	golang.org/x/net v0.5.0
+	golang.org/x/net v0.5.0
+	golang.org/x/sync v0.1.0
 	golang.org/x/sync v0.1.0
 	google.golang.org/genproto v0.0.0-20221227171554-f9683d7f8bef
+	google.golang.org/genproto v0.0.0-20230109162033-3c3c17ce83e6
+	google.golang.org/grpc v1.51.0
 	google.golang.org/grpc v1.52.0
 	google.golang.org/protobuf v1.28.1
 	gopkg.in/yaml.v2 v2.4.0
@@ -68,6 +73,12 @@ require (
 	k8s.io/klog v1.0.0
 	k8s.io/metrics v0.25.3
 	sigs.k8s.io/controller-runtime v0.14.1
+)
+
+require (
+	github.com/Microsoft/go-winio v0.6.0 // indirect
+	github.com/spiffe/go-spiffe/v2 v2.1.2 // indirect
+	github.com/zeebo/errs v1.3.0 // indirect
 )
 
 require (
@@ -380,7 +391,7 @@ require (
 	golang.org/x/term v0.4.0 // indirect
 	golang.org/x/text v0.6.0 // indirect
 	golang.org/x/time v0.3.0 // indirect
-	golang.org/x/tools v0.2.0 // indirect
+	golang.org/x/tools v0.5.0 // indirect
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
 	gomodules.xyz/jsonpatch/v2 v2.2.0 // indirect
 	google.golang.org/api v0.107.0 // indirect
@@ -396,7 +407,7 @@ require (
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/ini.v1 v1.66.6 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0 // indirect
-	gopkg.in/square/go-jose.v2 v2.5.1 // indirect
+	gopkg.in/square/go-jose.v2 v2.6.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/component-base v0.26.0 // indirect
 	k8s.io/gengo v0.0.0-20220902162205-c0856e24416d // indirect

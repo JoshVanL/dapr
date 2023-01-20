@@ -20,6 +20,20 @@ data:
   {{ else if $existingSecret }}ca.crt: {{ index $existingSecret.data "ca.crt" }}
   {{end}}
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dapr-trust-bundle
+  labels:
+    app: dapr-sentry
+    {{- range $key, $value := .Values.global.k8sLabels }}
+    {{ $key }}: {{ tpl $value $ }}
+    {{- end }}
+data:
+  {{ if .Values.tls.root.certPEM }}ca.crt: {{ b64enc .Values.tls.root.certPEM | trim }}
+  {{ else if $existingSecret }}ca.crt: {{ index $existingSecret.data "ca.crt" }}
+  {{end}}
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -147,7 +161,7 @@ spec:
         - "--enable-metrics=false"
 {{- end }}
         - "--trust-domain"
-        - {{ .Values.tls.trustDomain }}
+        - {{ .Values.global.controlPlaneTrustDomain }}
 {{- if .Values.tokenAudience }}
         - "--token-audience"
         - {{ .Values.tokenAudience }}

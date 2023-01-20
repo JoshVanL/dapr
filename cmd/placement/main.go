@@ -15,7 +15,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"os"
 	"os/signal"
 	"strconv"
@@ -23,13 +22,12 @@ import (
 	"time"
 
 	"github.com/dapr/dapr/pkg/buildinfo"
-	"github.com/dapr/dapr/pkg/credentials"
 	"github.com/dapr/dapr/pkg/health"
 	"github.com/dapr/dapr/pkg/placement"
 	"github.com/dapr/dapr/pkg/placement/hashing"
 	"github.com/dapr/dapr/pkg/placement/monitoring"
 	"github.com/dapr/dapr/pkg/placement/raft"
-	"github.com/dapr/kit/fswatcher"
+	"github.com/dapr/dapr/pkg/security"
 	"github.com/dapr/kit/logger"
 )
 
@@ -67,16 +65,29 @@ func main() {
 		log.Fatalf("failed to start Raft Server: %v", err)
 	}
 
+	trustAnchor, err := os.ReadFile(cfg.trustAnchorsFile)
+	if err != nil {
+		log.Fatalf("failed to read trust anchors file: %v", err)
+	}
+
+	sec, err := security.New(context.TODO(), security.Options{
+		SentryAddress:           cfg.sentryAddress,
+		ControlPlaneTrustDomain: cfg.controlPlaneTrustDomain,
+		ControlPlaneNamespace:   security.CurrentNamespace(),
+		TrustAnchors:            trustAnchor,
+		AppID:                   "dapr-placement",
+		AppNamespace:            security.CurrentNamespace(),
+		MTLSEnabled:             cfg.tlsEnabled,
+	})
+	if err != nil {
+		log.Fatalf("failed to create security provider: %v", err)
+	}
+
 	// Start Placement gRPC server.
 	hashing.SetReplicationFactor(cfg.replicationFactor)
 	apiServer := placement.NewPlacementService(raftServer)
-	var certChain *credentials.CertChain
-	if cfg.tlsEnabled {
-		certChain = loadCertChains(cfg.certChainPath)
-	}
-
 	go apiServer.MonitorLeadership()
-	go apiServer.Run(strconv.Itoa(cfg.placementPort), certChain)
+	go apiServer.Run(strconv.Itoa(cfg.placementPort), sec)
 	log.Infof("placement service started on port %d", cfg.placementPort)
 
 	// Start Healthz endpoint.
@@ -114,36 +125,5 @@ func startHealthzServer(healthzPort int) {
 
 	if err := healthzServer.Run(context.Background(), healthzPort); err != nil {
 		log.Fatalf("failed to start healthz server: %s", err)
-	}
-}
-
-func loadCertChains(certChainPath string) *credentials.CertChain {
-	tlsCreds := credentials.NewTLSCredentials(certChainPath)
-
-	log.Info("mTLS enabled, getting tls certificates")
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-	fsevent := make(chan struct{})
-	go func() {
-		log.Infof("starting watch for certs on filesystem: %s", certChainPath)
-		err := fswatcher.Watch(ctx, tlsCreds.Path(), fsevent)
-		// Watch always returns an error, which is context.Canceled if everything went well
-		if err != nil && !errors.Is(err, context.Canceled) {
-			log.Fatalf("error starting watch on filesystem: %s", err)
-		}
-		close(fsevent)
-		if ctx.Err() == context.DeadlineExceeded {
-			log.Fatal("timeout while waiting to load tls certificates")
-		}
-	}()
-	for {
-		chain, err := credentials.LoadFromDisk(tlsCreds.RootCertPath(), tlsCreds.CertPath(), tlsCreds.KeyPath())
-		if err == nil {
-			log.Info("tls certificates loaded successfully")
-			return chain
-		}
-		log.Info("tls certificate not found; waiting for disk changes")
-		<-fsevent
-		log.Debug("watcher found activity on filesystem")
 	}
 }

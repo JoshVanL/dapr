@@ -28,9 +28,9 @@ import (
 
 	"github.com/dapr/kit/logger"
 
-	daprCredentials "github.com/dapr/dapr/pkg/credentials"
 	"github.com/dapr/dapr/pkg/placement/raft"
 	placementv1pb "github.com/dapr/dapr/pkg/proto/placement/v1"
+	"github.com/dapr/dapr/pkg/security"
 )
 
 var log = logger.NewLogger("dapr.placement")
@@ -137,17 +137,15 @@ func NewPlacementService(raftNode *raft.Server) *Service {
 }
 
 // Run starts the placement service gRPC server.
-func (p *Service) Run(port string, certChain *daprCredentials.CertChain) {
+func (p *Service) Run(port string, sec security.Interface) {
 	var err error
 	p.serverListener, err = net.Listen("tcp", fmt.Sprintf(":%s", port))
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}
 
-	opts, err := daprCredentials.GetServerOptions(certChain)
-	if err != nil {
-		log.Fatalf("error creating gRPC options: %s", err)
-	}
+	var opts []grpc.ServerOption
+	opts = append(opts, sec.GRPCServerOption())
 	grpcServer := grpc.NewServer(opts...)
 	placementv1pb.RegisterPlacementServer(grpcServer, p)
 	p.grpcServerLock.Lock()

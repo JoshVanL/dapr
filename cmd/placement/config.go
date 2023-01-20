@@ -19,7 +19,6 @@ import (
 
 	"github.com/dapr/kit/logger"
 
-	"github.com/dapr/dapr/pkg/credentials"
 	"github.com/dapr/dapr/pkg/metrics"
 	"github.com/dapr/dapr/pkg/placement/raft"
 )
@@ -43,7 +42,6 @@ type config struct {
 	// Placement server configurations
 	placementPort int
 	healthzPort   int
-	certChainPath string
 	tlsEnabled    bool
 
 	replicationFactor int
@@ -51,6 +49,10 @@ type config struct {
 	// Log and metrics configurations
 	loggerOptions   logger.Options
 	metricsExporter metrics.Exporter
+
+	controlPlaneTrustDomain string
+	sentryAddress           string
+	trustAnchorsFile        string
 }
 
 func newConfig() *config {
@@ -64,7 +66,6 @@ func newConfig() *config {
 
 		placementPort: defaultPlacementPort,
 		healthzPort:   defaultHealthzPort,
-		certChainPath: defaultCredentialsPath,
 		tlsEnabled:    false,
 	}
 
@@ -74,13 +75,18 @@ func newConfig() *config {
 	flag.StringVar(&cfg.raftLogStorePath, "raft-logstore-path", cfg.raftLogStorePath, "raft log store path.")
 	flag.IntVar(&cfg.placementPort, "port", cfg.placementPort, "sets the gRPC port for the placement service")
 	flag.IntVar(&cfg.healthzPort, "healthz-port", cfg.healthzPort, "sets the HTTP port for the healthz server")
-	flag.StringVar(&cfg.certChainPath, "certchain", cfg.certChainPath, "Path to the credentials directory holding the cert chain")
 	flag.BoolVar(&cfg.tlsEnabled, "tls-enabled", cfg.tlsEnabled, "Should TLS be enabled for the placement gRPC server")
 	flag.IntVar(&cfg.replicationFactor, "replicationFactor", defaultReplicationFactor, "sets the replication factor for actor distribution on vnodes")
 
-	flag.StringVar(&credentials.RootCertFilename, "issuer-ca-filename", credentials.RootCertFilename, "Certificate Authority certificate filename")
-	flag.StringVar(&credentials.IssuerCertFilename, "issuer-certificate-filename", credentials.IssuerCertFilename, "Issuer certificate filename")
-	flag.StringVar(&credentials.IssuerKeyFilename, "issuer-key-filename", credentials.IssuerKeyFilename, "Issuer private key filename")
+	// TODO: remove these flags in a future release. They now do nothing and are deprecated.
+	issCAKey := flag.String("issuer-ca-secret-key", "", "DEPRECATED: This flag does nothing and will be removed in a future release.")
+	issCertKey := flag.String("issuer-certificate-secret-key", "", "DEPRECATED: This flag does nothing and will be removed in a future release.")
+	issKey := flag.String("issuer-key-secret-key", "", "DEPRECATED: This flag does nothing and will be removed in a future release.")
+	certChain := flag.String("certchain", "", "DEPRECATED: This flag does nothing and will be removed in a future release.")
+
+	flag.StringVar(&cfg.controlPlaneTrustDomain, "control-plane-trust-domain", "cluster.local", "The trust domain of the control plane")
+	flag.StringVar(&cfg.sentryAddress, "sentry-address", "dapr-sentry.dapr-system.svc:443", "The address of the sentry service")
+	flag.StringVar(&cfg.trustAnchorsFile, "trust-anchors-file", "/var/run/dapr/sentry/trustAnchors", "The path to the trust anchor file")
 
 	cfg.loggerOptions = logger.DefaultOptions()
 	cfg.loggerOptions.AttachCmdFlags(flag.StringVar, flag.BoolVar)
@@ -89,6 +95,19 @@ func newConfig() *config {
 	cfg.metricsExporter.Options().AttachCmdFlags(flag.StringVar, flag.BoolVar)
 
 	flag.Parse()
+
+	if issCAKey != nil && len(*issCAKey) > 0 {
+		log.Warn("The flag issuer-ca-secret-key is deprecated and will be removed in a future release.")
+	}
+	if issCertKey != nil && len(*issCertKey) > 0 {
+		log.Warn("The flag issuer-certificate-secret-key is deprecated and will be removed in a future release.")
+	}
+	if issKey != nil && len(*issKey) > 0 {
+		log.Warn("The flag issuer-key-secret-key is deprecated and will be removed in a future release.")
+	}
+	if certChain != nil && len(*certChain) > 0 {
+		log.Warn("The flag certchain is deprecated and will be removed in a future release.")
+	}
 
 	cfg.raftPeers = parsePeersFromFlag(cfg.raftPeerString)
 	if cfg.raftLogStorePath != "" {

@@ -31,6 +31,7 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	"github.com/google/uuid"
 	"github.com/mitchellh/mapstructure"
+	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"github.com/valyala/fasthttp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -43,7 +44,6 @@ import (
 	"github.com/dapr/dapr/pkg/channel"
 	"github.com/dapr/dapr/pkg/concurrency"
 	configuration "github.com/dapr/dapr/pkg/config"
-	daprCredentials "github.com/dapr/dapr/pkg/credentials"
 	diag "github.com/dapr/dapr/pkg/diagnostics"
 	diagUtils "github.com/dapr/dapr/pkg/diagnostics/utils"
 	"github.com/dapr/dapr/pkg/health"
@@ -53,6 +53,7 @@ import (
 	internalv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 	"github.com/dapr/dapr/pkg/resiliency"
 	"github.com/dapr/dapr/pkg/retry"
+	"github.com/dapr/dapr/pkg/security"
 )
 
 const (
@@ -114,12 +115,12 @@ type actorsRuntime struct {
 	evaluationLock         *sync.RWMutex
 	evaluationChan         chan struct{}
 	appHealthy             *atomic.Bool
-	certChain              *daprCredentials.CertChain
 	tracingSpec            configuration.TracingSpec
 	resiliency             resiliency.Provider
 	storeName              string
 	internalActors         map[string]InternalActor
 	internalActorChannel   *internalActorChannel
+	sec                    security.Interface
 }
 
 // ActiveActorsCount contain actorType and count of actors each type has.
@@ -161,7 +162,7 @@ type ActorsOpts struct {
 	AppChannel       channel.AppChannel
 	GRPCConnectionFn GRPCConnectionFn
 	Config           Config
-	CertChain        *daprCredentials.CertChain
+	Security         security.Interface
 	TracingSpec      configuration.TracingSpec
 	Resiliency       resiliency.Provider
 	StateStoreName   string
@@ -188,7 +189,6 @@ func NewActors(opts ActorsOpts) Actors {
 		appChannel:             opts.AppChannel,
 		grpcConnectionFn:       opts.GRPCConnectionFn,
 		config:                 opts.Config,
-		certChain:              opts.CertChain,
 		tracingSpec:            opts.TracingSpec,
 		resiliency:             opts.Resiliency,
 		storeName:              opts.StateStoreName,
@@ -207,6 +207,7 @@ func NewActors(opts ActorsOpts) Actors {
 		appHealthy:             appHealthy,
 		internalActors:         opts.InternalActors,
 		internalActorChannel:   newInternalActorChannel(),
+		sec:                    opts.Security,
 	}
 }
 
@@ -246,12 +247,23 @@ func (a *actorsRuntime) Init() error {
 	}
 	appHealthFn := func() bool { return a.appHealthy.Load() }
 
+	placementID, err := spiffeid.FromPathf(
+		a.sec.ControlPlaneTrustDomain(),
+		"/ns/%s/dapr-placement",
+		a.sec.ControlPlaneNamespace(),
+	)
+	if err != nil {
+		return err
+	}
+
 	if a.placement == nil {
 		a.placement = internal.NewActorPlacement(
-			a.config.PlacementAddresses, a.certChain,
+			a.config.PlacementAddresses,
 			a.config.AppID, hostname, a.config.HostedActorTypes,
 			appHealthFn,
-			afterTableUpdateFn)
+			afterTableUpdateFn,
+			a.sec, placementID,
+		)
 	}
 
 	go a.placement.Start()

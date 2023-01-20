@@ -15,17 +15,18 @@ package main
 
 import (
 	"flag"
+	"os"
 	"path/filepath"
 
 	"k8s.io/client-go/util/homedir"
 
 	"github.com/dapr/dapr/pkg/buildinfo"
 	scheme "github.com/dapr/dapr/pkg/client/clientset/versioned"
-	"github.com/dapr/dapr/pkg/credentials"
 	"github.com/dapr/dapr/pkg/health"
 	"github.com/dapr/dapr/pkg/injector"
 	"github.com/dapr/dapr/pkg/injector/monitoring"
 	"github.com/dapr/dapr/pkg/metrics"
+	"github.com/dapr/dapr/pkg/security"
 	"github.com/dapr/dapr/pkg/signals"
 	"github.com/dapr/dapr/utils"
 	"github.com/dapr/kit/logger"
@@ -34,6 +35,10 @@ import (
 var (
 	log         = logger.NewLogger("dapr.injector")
 	healthzPort int
+
+	controlPlaneTrustDomain string
+	sentryAddress           string
+	trustAnchorsFile        string
 )
 
 func main() {
@@ -62,7 +67,30 @@ func main() {
 		log.Fatalf("failed to get authentication uids from services accounts: %s", err)
 	}
 
-	inj := injector.NewInjector(uids, cfg, daprClient, kubeClient)
+	trustAnchors, err := os.ReadFile(trustAnchorsFile)
+	if err != nil {
+		log.Fatalf("failed to read trust anchor file: %s", err)
+	}
+
+	mtlsEnabled, err := injector.MTLSEnabled(daprClient)
+	if err != nil {
+		log.Fatalf("failed to check if mTLS is enabled: %s", err)
+	}
+
+	sec, err := security.New(ctx, security.Options{
+		SentryAddress:           sentryAddress,
+		ControlPlaneTrustDomain: controlPlaneTrustDomain,
+		ControlPlaneNamespace:   security.CurrentNamespace(),
+		TrustAnchors:            trustAnchors,
+		AppID:                   "dapr-injector",
+		AppNamespace:            security.CurrentNamespace(),
+		MTLSEnabled:             mtlsEnabled,
+	})
+	if err != nil {
+		log.Fatalf("failed to create security: %s", err)
+	}
+
+	inj := injector.NewInjector(uids, cfg, daprClient, kubeClient, sec)
 
 	// Blocking call
 	inj.Run(ctx, func() {
@@ -87,11 +115,26 @@ func init() {
 
 	flag.IntVar(&healthzPort, "healthz-port", 8080, "The port used for health checks")
 
-	flag.StringVar(&credentials.RootCertFilename, "issuer-ca-secret-key", credentials.RootCertFilename, "Certificate Authority certificate secret key")
-	flag.StringVar(&credentials.IssuerCertFilename, "issuer-certificate-secret-key", credentials.IssuerCertFilename, "Issuer certificate secret key")
-	flag.StringVar(&credentials.IssuerKeyFilename, "issuer-key-secret-key", credentials.IssuerKeyFilename, "Issuer private key secret key")
+	// TODO: remove these flags in a future release. They now do nothing and are deprecated.
+	issCAKey := flag.String("issuer-ca-secret-key", "", "DEPRECATED: This flag does nothing and will be removed in a future release.")
+	issCertKey := flag.String("issuer-certificate-secret-key", "", "DEPRECATED: This flag does nothing and will be removed in a future release.")
+	issKey := flag.String("issuer-key-secret-key", "", "DEPRECATED: This flag does nothing and will be removed in a future release.")
+
+	flag.StringVar(&controlPlaneTrustDomain, "control-plane-trust-domain", "cluster.local", "The trust domain of the control plane")
+	flag.StringVar(&sentryAddress, "sentry-address", "dapr-sentry.dapr-system.svc:443", "The address of the sentry service")
+	flag.StringVar(&trustAnchorsFile, "trust-anchors-file", "/var/run/dapr/sentry/trustAnchors", "The path to the trust anchor file")
 
 	flag.Parse()
+
+	if issCAKey != nil && len(*issCAKey) > 0 {
+		log.Warn("The flag issuer-ca-secret-key is deprecated and will be removed in a future release.")
+	}
+	if issCertKey != nil && len(*issCertKey) > 0 {
+		log.Warn("The flag issuer-certificate-secret-key is deprecated and will be removed in a future release.")
+	}
+	if issKey != nil && len(*issKey) > 0 {
+		log.Warn("The flag issuer-key-secret-key is deprecated and will be removed in a future release.")
+	}
 
 	if err := utils.SetEnvVariables(map[string]string{
 		utils.KubeConfigVar: *kubeconfig,

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"github.com/valyala/fasthttp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -30,6 +31,7 @@ import (
 
 	nr "github.com/dapr/components-contrib/nameresolution"
 	"github.com/dapr/dapr/pkg/channel"
+	"github.com/dapr/dapr/pkg/config"
 	diag "github.com/dapr/dapr/pkg/diagnostics"
 	diagUtils "github.com/dapr/dapr/pkg/diagnostics/utils"
 	invokev1 "github.com/dapr/dapr/pkg/messaging/v1"
@@ -42,7 +44,7 @@ import (
 
 // messageClientConnection is the function type to connect to the other
 // applications to send the message using service invocation.
-type messageClientConnection func(ctx context.Context, address string, id string, namespace string, customOpts ...grpc.DialOption) (*grpc.ClientConn, func(destroy bool), error)
+type messageClientConnection func(ctx context.Context, address, id, namespace string, customOpts ...grpc.DialOption) (*grpc.ClientConn, func(destroy bool), error)
 
 // DirectMessaging is the API interface for invoking a remote app.
 type DirectMessaging interface {
@@ -64,12 +66,14 @@ type directMessaging struct {
 	proxy                Proxy
 	readBufferSize       int
 	resiliency           resiliency.Provider
+	acl                  *config.AccessControlList
 }
 
 type remoteApp struct {
-	id        string
-	namespace string
-	address   string
+	id          string
+	namespace   string
+	trustDomain spiffeid.TrustDomain
+	address     string
 }
 
 // NewDirectMessaging contains the options for NewDirectMessaging.
@@ -85,6 +89,7 @@ type NewDirectMessagingOpts struct {
 	Proxy              Proxy
 	ReadBufferSize     int
 	Resiliency         resiliency.Provider
+	ACL                *config.AccessControlList
 }
 
 // NewDirectMessaging returns a new direct messaging api.
@@ -106,6 +111,7 @@ func NewDirectMessaging(opts NewDirectMessagingOpts) DirectMessaging {
 		resiliency:           opts.Resiliency,
 		hostAddress:          hAddr,
 		hostName:             hName,
+		acl:                  opts.ACL,
 	}
 
 	if dm.proxy != nil {
@@ -324,5 +330,6 @@ func (d *directMessaging) getRemoteApp(appID string) (remoteApp, error) {
 		namespace: namespace,
 		id:        id,
 		address:   address,
+		// TODO: trustDomain:
 	}, nil
 }

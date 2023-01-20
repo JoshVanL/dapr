@@ -28,8 +28,9 @@ spec:
         {{- with .Values.global.labels }}
           {{- toYaml . | nindent 8 }}
         {{- end }}
-{{- if eq .Values.global.prometheus.enabled true }}
       annotations:
+        dapr.io/app-id: dapr-placement
+{{- if eq .Values.global.prometheus.enabled true }}
         prometheus.io/scrape: "{{ .Values.global.prometheus.enabled }}"
         prometheus.io/port: "{{ .Values.global.prometheus.port }}"
         prometheus.io/path: "/"
@@ -68,8 +69,11 @@ spec:
         resources:
 {{ toYaml .Values.resources | indent 10 }}
         volumeMounts:
-          - name: credentials
-            mountPath: /var/run/dapr/credentials
+          - name: dapr-trust-bundle
+            mountPath: /var/run/dapr.io/trust
+            readOnly: true
+          - mountPath: /var/run/secrets/dapr.io/sentrytoken
+            name: dapr-identity-token
             readOnly: true
 {{- if eq .Values.global.ha.enabled true }}
   {{- if eq .Values.cluster.forceInMemoryLog false }}
@@ -137,14 +141,12 @@ spec:
         - "--enable-metrics=false"
 {{- end }}
         - "--tls-enabled"
-{{- with .Values.global.issuerFilenames }}
-        - "--issuer-ca-filename"
-        - "{{ .ca }}"
-        - "--issuer-certificate-filename"
-        - "{{ .cert }}"
-        - "--issuer-key-filename"
-        - "{{ .key }}"
-{{- end }}
+        - "--control-plane-trust-domain"
+        - "{{ .Values.global.controlPlaneTrustDomain }}"
+        - "--sentry-address"
+        - "dapr-sentry.{{ .Release.Namespace }}.svc:443"
+        - "--trust-anchors-file"
+        - "/var/run/dapr.io/trust/ca.crt"
 {{- if eq .Values.global.daprControlPlaneOs "linux" }}
         securityContext:
 {{- if eq .Values.cluster.forceInMemoryLog true }}
@@ -169,9 +171,15 @@ spec:
                 fieldPath: metadata.namespace
       serviceAccountName: dapr-placement
       volumes:
-        - name: credentials
-          secret:
-            secretName: dapr-trust-bundle
+        - name: dapr-trust-bundle
+          configMap:
+            name: dapr-trust-bundle
+        - name: dapr-identity-token
+          projected:
+            sources:
+            - serviceAccountToken:
+                path: token
+                audience: "dapr.io/sentry"
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:

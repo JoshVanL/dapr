@@ -33,6 +33,7 @@ import (
 	scheme "github.com/dapr/dapr/pkg/client/clientset/versioned"
 	"github.com/dapr/dapr/pkg/injector/monitoring"
 	"github.com/dapr/dapr/pkg/injector/sidecar"
+	"github.com/dapr/dapr/pkg/security"
 	"github.com/dapr/dapr/utils"
 	"github.com/dapr/kit/logger"
 )
@@ -67,6 +68,7 @@ type injector struct {
 	kubeClient   kubernetes.Interface
 	daprClient   scheme.Interface
 	authUIDs     []string
+	sec          security.Interface
 }
 
 // errorToAdmissionResponse is a helper function to create an AdmissionResponse
@@ -99,7 +101,8 @@ func getAppIDFromRequest(req *v1.AdmissionRequest) string {
 }
 
 // NewInjector returns a new Injector instance with the given config.
-func NewInjector(authUIDs []string, config Config, daprClient scheme.Interface, kubeClient kubernetes.Interface) Injector {
+func NewInjector(authUIDs []string, config Config, daprClient scheme.Interface,
+	kubeClient kubernetes.Interface, sec security.Interface) Injector {
 	mux := http.NewServeMux()
 
 	i := &injector{
@@ -109,12 +112,14 @@ func NewInjector(authUIDs []string, config Config, daprClient scheme.Interface, 
 		).UniversalDeserializer(),
 		//nolint:gosec
 		server: &http.Server{
-			Addr:    fmt.Sprintf(":%d", port),
-			Handler: mux,
+			Addr:      fmt.Sprintf(":%d", port),
+			Handler:   mux,
+			TLSConfig: sec.TLSServerConfigBasicTLS(),
 		},
 		kubeClient: kubeClient,
 		daprClient: daprClient,
 		authUIDs:   authUIDs,
+		sec:        sec,
 	}
 
 	mux.HandleFunc("/mutate", i.handleRequest)
@@ -190,7 +195,9 @@ func (i *injector) Run(ctx context.Context, onReady func()) {
 		onReady()
 	}
 
-	err = i.server.ServeTLS(ln, i.config.TLSCertFile, i.config.TLSKeyFile)
+	// ServeTLS cert and key files are empty strings as we use a custom TLS
+	// config.
+	err = i.server.ServeTLS(ln, "", "")
 	if err != http.ErrServerClosed {
 		log.Errorf("Sidecar injector error: %s", err)
 	}
@@ -239,7 +246,7 @@ func (i *injector) handleRequest(w http.ResponseWriter, r *http.Request) {
 		} else if ar.Request.Kind.Kind != "Pod" {
 			log.Errorf("invalid kind for review: %s", ar.Kind)
 		} else {
-			patchOps, err = i.getPodPatchOperations(&ar, i.config.Namespace, i.config.SidecarImage, i.config.SidecarImagePullPolicy, i.kubeClient, i.daprClient)
+			patchOps, err = i.getPodPatchOperations(&ar, i.config.Namespace, i.config.SidecarImage, i.config.SidecarImagePullPolicy, i.kubeClient, i.daprClient, i.sec)
 			if err == nil {
 				patchedSuccessfully = true
 			}

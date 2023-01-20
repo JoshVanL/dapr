@@ -36,8 +36,8 @@ import (
 	configurationapi "github.com/dapr/dapr/pkg/apis/configuration/v1alpha1"
 	resiliencyapi "github.com/dapr/dapr/pkg/apis/resiliency/v1alpha1"
 	subscriptionsapiV2alpha1 "github.com/dapr/dapr/pkg/apis/subscriptions/v2alpha1"
-	daprCredentials "github.com/dapr/dapr/pkg/credentials"
 	operatorv1pb "github.com/dapr/dapr/pkg/proto/operator/v1"
+	"github.com/dapr/dapr/pkg/security"
 	"github.com/dapr/kit/logger"
 )
 
@@ -53,7 +53,7 @@ var log = logger.NewLogger("dapr.operator.api")
 
 // Server runs the Dapr API server for components and configurations.
 type Server interface {
-	Run(ctx context.Context, certChain *daprCredentials.CertChain, onReady func())
+	Run(ctx context.Context, sec security.Interface, onReady func())
 	OnComponentUpdated(component *componentsapi.Component)
 }
 
@@ -74,13 +74,13 @@ func NewAPIServer(client client.Client) Server {
 }
 
 // Run starts a new gRPC server.
-func (a *apiServer) Run(ctx context.Context, certChain *daprCredentials.CertChain, onReady func()) {
+func (a *apiServer) Run(ctx context.Context, sec security.Interface, onReady func()) {
 	log.Infof("starting gRPC server on port %d", serverPort)
 
-	opts, err := daprCredentials.GetServerOptions(certChain)
-	if err != nil {
-		log.Fatalf("error creating gRPC options: %v", err)
-	}
+	var opts []grpc.ServerOption
+	// TODO:
+	opts = append(opts, sec.GRPCServerOption())
+
 	s := grpc.NewServer(opts...)
 	operatorv1pb.RegisterOperatorServer(s, a)
 

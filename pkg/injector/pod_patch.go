@@ -14,7 +14,6 @@ limitations under the License.
 package injector
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 
@@ -27,6 +26,7 @@ import (
 	"github.com/dapr/dapr/pkg/injector/annotations"
 	"github.com/dapr/dapr/pkg/injector/components"
 	"github.com/dapr/dapr/pkg/injector/sidecar"
+	"github.com/dapr/dapr/pkg/security"
 	"github.com/dapr/dapr/pkg/validation"
 )
 
@@ -37,6 +37,7 @@ const (
 
 func (i *injector) getPodPatchOperations(ar *v1.AdmissionReview,
 	namespace, image, imagePullPolicy string, kubeClient kubernetes.Interface, daprClient scheme.Interface,
+	sec security.Interface,
 ) (patchOps []sidecar.PatchOperation, err error) {
 	req := ar.Request
 	var pod corev1.Pod
@@ -72,8 +73,6 @@ func (i *injector) getPodPatchOperations(ar *v1.AdmissionReview,
 	sentryAddress := sidecar.ServiceAddress(sidecar.ServiceSentry, namespace, i.config.KubeClusterDomain)
 	apiSvcAddress := sidecar.ServiceAddress(sidecar.ServiceAPI, namespace, i.config.KubeClusterDomain)
 
-	trustAnchors, certChain, certKey := sidecar.GetTrustAnchorsAndCertChain(context.TODO(), kubeClient, namespace)
-
 	// Get all volume mounts
 	volumeMounts := sidecar.GetVolumeMounts(pod)
 	socketVolumeMount := sidecar.GetUnixDomainSocketVolumeMount(&pod)
@@ -97,27 +96,30 @@ func (i *injector) getPodPatchOperations(ar *v1.AdmissionReview,
 	// Projected volume with the token
 	tokenVolume := sidecar.GetTokenVolume()
 
+	mtlsEnabled, err := MTLSEnabled(daprClient)
+	if err != nil {
+		return nil, err
+	}
+
 	// Get the sidecar container
 	sidecarContainer, err := sidecar.GetSidecarContainer(sidecar.ContainerConfig{
 		AppID:                        appID,
 		Annotations:                  an,
-		CertChain:                    certChain,
-		CertKey:                      certKey,
 		ControlPlaneAddress:          apiSvcAddress,
 		DaprSidecarImage:             image,
 		Identity:                     req.Namespace + ":" + pod.Spec.ServiceAccountName,
 		IgnoreEntrypointTolerations:  i.config.GetIgnoreEntrypointTolerations(),
 		ImagePullPolicy:              i.config.GetPullPolicy(),
-		MTLSEnabled:                  mTLSEnabled(daprClient),
+		MTLSEnabled:                  mtlsEnabled,
 		Namespace:                    req.Namespace,
 		PlacementServiceAddress:      placementAddress,
 		SentryAddress:                sentryAddress,
 		Tolerations:                  pod.Spec.Tolerations,
-		TrustAnchors:                 trustAnchors,
 		VolumeMounts:                 volumeMounts,
 		ComponentsSocketsVolumeMount: componentsSocketVolumeMount,
 		RunAsNonRoot:                 i.config.GetRunAsNonRoot(),
 		ReadOnlyRootFilesystem:       i.config.GetReadOnlyRootFilesystem(),
+		Security:                     sec,
 	})
 	if err != nil {
 		return nil, err
@@ -153,18 +155,18 @@ func (i *injector) getPodPatchOperations(ar *v1.AdmissionReview,
 	return patchOps, nil
 }
 
-func mTLSEnabled(daprClient scheme.Interface) bool {
+func MTLSEnabled(daprClient scheme.Interface) (bool, error) {
 	resp, err := daprClient.ConfigurationV1alpha1().Configurations(metaV1.NamespaceAll).List(metaV1.ListOptions{})
 	if err != nil {
 		log.Errorf("Failed to load dapr configuration from k8s, use default value %t for mTLSEnabled: %s", defaultMtlsEnabled, err)
-		return defaultMtlsEnabled
+		return true, err
 	}
 
 	for _, c := range resp.Items {
 		if c.GetName() == defaultConfig {
-			return c.Spec.MTLSSpec.Enabled
+			return c.Spec.MTLSSpec.Enabled, nil
 		}
 	}
 	log.Infof("Dapr system configuration (%s) is not found, use default value %t for mTLSEnabled", defaultConfig, defaultMtlsEnabled)
-	return defaultMtlsEnabled
+	return defaultMtlsEnabled, nil
 }

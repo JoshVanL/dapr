@@ -16,12 +16,13 @@ package acl
 
 import (
 	"context"
-	"encoding/asn1"
 	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/PuerkitoBio/purell"
+	"github.com/spiffe/go-spiffe/v2/spiffeid"
+	"github.com/spiffe/go-spiffe/v2/svid/x509svid"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
 
@@ -144,89 +145,23 @@ func ParseAccessControlSpec(accessControlSpec config.AccessControlSpec, protocol
 }
 
 // GetAndParseSpiffeID retrieves the SPIFFE Id from the cert and parses it.
-func GetAndParseSpiffeID(ctx context.Context) (*config.SpiffeID, error) {
-	spiffeID, err := getSpiffeID(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	id, err := parseSpiffeID(spiffeID)
-	return id, err
-}
-
-func parseSpiffeID(spiffeID string) (*config.SpiffeID, error) {
-	if spiffeID == "" {
-		return nil, errors.New("input spiffe id string is empty")
-	}
-
-	if !strings.HasPrefix(spiffeID, config.SpiffeIDPrefix) {
-		return nil, fmt.Errorf("input spiffe id: %s is invalid", spiffeID)
-	}
-
-	// The SPIFFE Id will be of the format: spiffe://<trust-domain/ns/<namespace>/<app-id>
-	parts := strings.Split(spiffeID, "/")
-	if len(parts) < 6 {
-		return nil, fmt.Errorf("input spiffe id: %s is invalid", spiffeID)
-	}
-
-	var id config.SpiffeID
-	id.TrustDomain = parts[2]
-	id.Namespace = parts[4]
-	id.AppID = parts[5]
-
-	return &id, nil
-}
-
-func getSpiffeID(ctx context.Context) (string, error) {
-	var spiffeID string
+func GetAndParseSpiffeID(ctx context.Context) (spiffeid.ID, error) {
 	peer, ok := peer.FromContext(ctx)
-	if ok {
-		if peer == nil || peer.AuthInfo == nil {
-			return "", errors.New("unable to retrieve peer auth info")
-		}
-
-		tlsInfo := peer.AuthInfo.(credentials.TLSInfo)
-
-		// https://www.ietf.org/rfc/rfc3280.txt
-		oid := asn1.ObjectIdentifier{2, 5, 29, 17}
-
-		for _, crt := range tlsInfo.State.PeerCertificates {
-			for _, ext := range crt.Extensions {
-				if ext.Id.Equal(oid) {
-					var sequence asn1.RawValue
-					if rest, err := asn1.Unmarshal(ext.Value, &sequence); err != nil {
-						log.Debug(err)
-						continue
-					} else if len(rest) != 0 {
-						log.Debug("the SAN extension is incorrectly encoded")
-						continue
-					}
-
-					if !sequence.IsCompound || sequence.Tag != asn1.TagSequence || sequence.Class != asn1.ClassUniversal {
-						log.Debug("the SAN extension is incorrectly encoded")
-						continue
-					}
-
-					for bytes := sequence.Bytes; len(bytes) > 0; {
-						var rawValue asn1.RawValue
-						var err error
-
-						bytes, err = asn1.Unmarshal(bytes, &rawValue)
-						if err != nil {
-							return "", err
-						}
-
-						spiffeID = string(rawValue.Bytes)
-						if strings.HasPrefix(spiffeID, config.SpiffeIDPrefix) {
-							return spiffeID, nil
-						}
-					}
-				}
-			}
-		}
+	if !ok {
+		return spiffeid.ID{}, errors.New("no peer certificate identity found")
 	}
 
-	return "", nil
+	if peer == nil || peer.AuthInfo == nil {
+		return spiffeid.ID{}, errors.New("unable to retrieve peer auth info")
+	}
+
+	tlsInfo := peer.AuthInfo.(credentials.TLSInfo)
+
+	if len(tlsInfo.State.PeerCertificates) == 0 {
+		return spiffeid.ID{}, errors.New("no peer certificate found")
+	}
+
+	return x509svid.IDFromCert(tlsInfo.State.PeerCertificates[0])
 }
 
 func normalizeOperation(operation string) (string, error) {
@@ -244,12 +179,13 @@ func ApplyAccessControlPolicies(ctx context.Context, operation string, httpVerb 
 		// Apply the default action
 		log.Debugf("error while reading spiffe id from client cert: %v. applying default global policy action", err.Error())
 	}
-	var appID, trustDomain, namespace string
-	if spiffeID != nil {
-		appID = spiffeID.AppID
-		namespace = spiffeID.Namespace
-		trustDomain = spiffeID.TrustDomain
+
+	split := strings.Split(spiffeID.Path(), "/")
+	if len(split) != 4 && split[1] != "ns" {
+		return false, fmt.Sprintf("malformed remote spiffe id: %s", spiffeID.String())
 	}
+	namespace := split[2]
+	appID := split[3]
 
 	operation, err = normalizeOperation(operation)
 	var errMessage string
@@ -260,8 +196,8 @@ func ApplyAccessControlPolicies(ctx context.Context, operation string, httpVerb 
 		return false, errMessage
 	}
 
-	action, actionPolicy := IsOperationAllowedByAccessControlPolicy(spiffeID, appID, operation, httpVerb, appProtocol, acl)
-	emitACLMetrics(actionPolicy, appID, trustDomain, namespace, operation, httpVerb.String(), action)
+	action, actionPolicy := IsOperationAllowedByAccessControlPolicy(spiffeID, appID, namespace, operation, httpVerb, appProtocol, acl)
+	emitACLMetrics(actionPolicy, appID, spiffeID.TrustDomain().String(), namespace, operation, httpVerb.String(), action)
 
 	if !action {
 		errMessage = fmt.Sprintf("access control policy has denied access to appid: %s operation: %s verb: %s", appID, operation, httpVerb)
@@ -290,7 +226,7 @@ func emitACLMetrics(actionPolicy, appID, trustDomain, namespace, operation, verb
 }
 
 // IsOperationAllowedByAccessControlPolicy determines if access control policies allow the operation on the target app.
-func IsOperationAllowedByAccessControlPolicy(spiffeID *config.SpiffeID, srcAppID string, inputOperation string, httpVerb commonv1pb.HTTPExtension_Verb, appProtocol string, accessControlList *config.AccessControlList) (bool, string) {
+func IsOperationAllowedByAccessControlPolicy(spiffeID spiffeid.ID, srcAppID string, srcNamespace, inputOperation string, httpVerb commonv1pb.HTTPExtension_Verb, appProtocol string, accessControlList *config.AccessControlList) (bool, string) {
 	if accessControlList == nil {
 		// No access control list is provided. Do nothing
 		return isActionAllowed(config.AllowAccess), ""
@@ -304,13 +240,13 @@ func IsOperationAllowedByAccessControlPolicy(spiffeID *config.SpiffeID, srcAppID
 		return isActionAllowed(action), actionPolicy
 	}
 
-	if spiffeID == nil {
+	if spiffeID.IsZero() {
 		// Could not retrieve spiffe id or it is invalid. Apply global default action
 		return isActionAllowed(action), actionPolicy
 	}
 
 	// Look up the src app id in the in-memory table. The key is appID||namespace
-	key := getKeyForAppID(srcAppID, spiffeID.Namespace)
+	key := getKeyForAppID(srcAppID, srcNamespace)
 	appPolicy, found := accessControlList.PolicySpec[key]
 
 	if !found {
@@ -319,12 +255,12 @@ func IsOperationAllowedByAccessControlPolicy(spiffeID *config.SpiffeID, srcAppID
 	}
 
 	// Match trust domain
-	if appPolicy.TrustDomain != spiffeID.TrustDomain {
+	if appPolicy.TrustDomain != spiffeID.TrustDomain().String() {
 		return isActionAllowed(action), actionPolicy
 	}
 
 	// Match namespace
-	if appPolicy.Namespace != spiffeID.Namespace {
+	if appPolicy.Namespace != srcNamespace {
 		return isActionAllowed(action), actionPolicy
 	}
 

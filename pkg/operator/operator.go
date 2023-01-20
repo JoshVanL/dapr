@@ -14,13 +14,23 @@ limitations under the License.
 package operator
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
+	"strings"
 	"time"
 
+	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	runtimeutil "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -30,11 +40,10 @@ import (
 	resiliencyapi "github.com/dapr/dapr/pkg/apis/resiliency/v1alpha1"
 	subscriptionsapiV1alpha1 "github.com/dapr/dapr/pkg/apis/subscriptions/v1alpha1"
 	subscriptionsapiV2alpha1 "github.com/dapr/dapr/pkg/apis/subscriptions/v2alpha1"
-	"github.com/dapr/dapr/pkg/credentials"
 	"github.com/dapr/dapr/pkg/health"
 	"github.com/dapr/dapr/pkg/operator/api"
 	"github.com/dapr/dapr/pkg/operator/handlers"
-	"github.com/dapr/kit/fswatcher"
+	"github.com/dapr/dapr/pkg/security"
 	"github.com/dapr/kit/logger"
 )
 
@@ -52,22 +61,21 @@ type Operator interface {
 // Options contains the options for `NewOperator`.
 type Options struct {
 	Config                    string
-	CertChainPath             string
 	LeaderElection            bool
 	WatchdogEnabled           bool
 	WatchdogInterval          time.Duration
 	WatchdogMaxRestartsPerMin int
+	SentryAddress             string
+	ControlPlaneTrustDomain   string
+	TrustAnchors              []byte
 }
 
 type operator struct {
 	daprHandler *handlers.DaprHandler
 	apiServer   api.Server
 
-	configName    string
-	certChainPath string
-	config        *Config
-
 	mgr    ctrl.Manager
+	sec    security.Interface
 	client client.Client
 }
 
@@ -89,11 +97,38 @@ func NewOperator(opts Options) Operator {
 	if err != nil {
 		log.Fatalf("Unable to get controller runtime configuration, err: %s", err)
 	}
+
+	client, err := client.New(conf, client.Options{Scheme: scheme})
+	if err != nil {
+		log.Fatalf("Unable to create client, err: %s", err)
+	}
+
+	config, err := LoadConfiguration(opts.Config, client)
+	if err != nil {
+		log.Fatalf("Unable to load configuration, err: %s", err)
+	}
+
+	sec, err := security.New(context.TODO(), security.Options{
+		SentryAddress:           opts.SentryAddress,
+		ControlPlaneTrustDomain: opts.ControlPlaneTrustDomain,
+		ControlPlaneNamespace:   security.CurrentNamespace(),
+		TrustAnchors:            opts.TrustAnchors,
+		AppID:                   "dapr-operator",
+		AppNamespace:            security.CurrentNamespace(),
+		MTLSEnabled:             config.MTLSEnabled,
+	})
+	if err != nil {
+		log.Fatalf("failed to create security: %s", err)
+	}
+
 	mgr, err := ctrl.NewManager(conf, ctrl.Options{
-		Scheme:             scheme,
-		MetricsBindAddress: "0",
-		LeaderElection:     opts.LeaderElection,
-		LeaderElectionID:   "operator.dapr.io",
+		Scheme:                 scheme,
+		Port:                   19443,
+		HealthProbeBindAddress: "0",
+		MetricsBindAddress:     "0",
+		LeaderElection:         opts.LeaderElection,
+		LeaderElectionID:       "operator.dapr.io",
+		TLSOpts:                []func(*tls.Config){sec.TLSServerConfigBasicTLSOption},
 	})
 	if err != nil {
 		log.Fatalf("Unable to start manager, err: %s", err)
@@ -124,13 +159,12 @@ func NewOperator(opts Options) Operator {
 	}
 
 	o := &operator{
-		daprHandler:   daprHandler,
-		mgr:           mgr,
-		client:        mgrClient,
-		configName:    opts.Config,
-		certChainPath: opts.CertChainPath,
+		daprHandler: daprHandler,
+		mgr:         mgr,
+		client:      mgrClient,
+		sec:         sec,
+		apiServer:   api.NewAPIServer(mgrClient),
 	}
-	o.apiServer = api.NewAPIServer(o.client)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	componentInformer, err := mgr.GetCache().GetInformer(ctx, &componentsapi.Component{})
@@ -149,56 +183,12 @@ func NewOperator(opts Options) Operator {
 	return o
 }
 
-func (o *operator) prepareConfig() {
-	var err error
-	o.config, err = LoadConfiguration(o.configName, o.client)
-	if err != nil {
-		log.Fatalf("Unable to load configuration, config: %s, err: %s", o.configName, err)
-	}
-	o.config.Credentials = credentials.NewTLSCredentials(o.certChainPath)
-}
-
 func (o *operator) syncComponent(obj interface{}) {
 	c, ok := obj.(*componentsapi.Component)
 	if ok {
 		log.Debugf("Observed component to be synced, %s/%s", c.Namespace, c.Name)
 		o.apiServer.OnComponentUpdated(c)
 	}
-}
-
-func (o *operator) loadCertChain(ctx context.Context) (certChain *credentials.CertChain) {
-	log.Info("Getting TLS certificates")
-
-	watchCtx, watchCancel := context.WithTimeout(ctx, time.Minute)
-	fsevent := make(chan struct{})
-	go func() {
-		log.Infof("Starting watch for certs on filesystem: %s", o.config.Credentials.Path())
-		err := fswatcher.Watch(watchCtx, o.config.Credentials.Path(), fsevent)
-		// Watch always returns an error, which is context.Canceled if everything went well
-		if err != nil && !errors.Is(err, context.Canceled) {
-			log.Fatalf("Error starting watch on filesystem: %s", err)
-		}
-		close(fsevent)
-		if watchCtx.Err() == context.DeadlineExceeded {
-			log.Fatal("Timeout while waiting to load TLS certificates")
-		}
-	}()
-
-	for {
-		chain, err := credentials.LoadFromDisk(o.config.Credentials.RootCertPath(), o.config.Credentials.CertPath(), o.config.Credentials.KeyPath())
-		if err == nil {
-			log.Info("TLS certificates loaded successfully")
-			certChain = chain
-			break
-		}
-		log.Infof("TLS certificate not found; waiting for disk changes. err=%v", err)
-		<-fsevent
-		log.Debug("Watcher found activity on filesystem")
-	}
-
-	watchCancel()
-
-	return certChain
 }
 
 func (o *operator) Run(ctx context.Context) {
@@ -214,10 +204,26 @@ func (o *operator) Run(ctx context.Context) {
 	if !o.mgr.GetCache().WaitForCacheSync(ctx) {
 		log.Fatalf("Failed to wait for cache sync")
 	}
-	o.prepareConfig()
 
-	// load certs from disk
-	certChain := o.loadCertChain(ctx)
+	/*
+		Make sure to set `ENABLE_WEBHOOKS=false` when we run locally.
+	*/
+	if !strings.EqualFold(os.Getenv("ENABLE_WEBHOOKS"), "false") {
+		if err := ctrl.NewWebhookManagedBy(o.mgr).
+			For(&subscriptionsapiV1alpha1.Subscription{}).
+			Complete(); err != nil {
+			log.Fatalf("unable to create webhook Subscriptions v1alpha1: %v", err)
+		}
+		if err := ctrl.NewWebhookManagedBy(o.mgr).
+			For(&subscriptionsapiV2alpha1.Subscription{}).
+			Complete(); err != nil {
+			log.Fatalf("unable to create webhook Subscriptions v2alpha1: %v", err)
+		}
+	}
+
+	if err := o.patchCRDs(ctx, o.mgr.GetConfig(), "subscriptions.dapr.io"); err != nil {
+		log.Fatal(err)
+	}
 
 	// start healthz server
 	healthzServer := health.NewServer(log)
@@ -230,10 +236,83 @@ func (o *operator) Run(ctx context.Context) {
 	}()
 
 	// blocking call
-	o.apiServer.Run(ctx, certChain, func() {
+	o.apiServer.Run(ctx, o.sec, func() {
 		healthzServer.Ready()
 		log.Infof("Dapr Operator started")
 	})
 
 	log.Infof("Dapr Operator is shutting down")
+}
+
+func (o *operator) patchCRDs(ctx context.Context, conf *rest.Config, crdNames ...string) error {
+	clientSet, err := apiextensionsclient.NewForConfig(conf)
+	if err != nil {
+		return fmt.Errorf("Could not get API extension client: %v", err)
+	}
+
+	crdClient := clientSet.ApiextensionsV1().CustomResourceDefinitions()
+	namespace := os.Getenv("NAMESPACE")
+	if namespace == "" {
+		return errors.New("Could not get dapr namespace")
+	}
+
+	for _, crdName := range crdNames {
+		crd, err := crdClient.Get(ctx, crdName, v1.GetOptions{})
+		if err != nil {
+			log.Errorf("Could not get CRD %q: %v", crdName, err)
+			continue
+		}
+
+		if crd == nil ||
+			crd.Spec.Conversion == nil ||
+			crd.Spec.Conversion.Webhook == nil ||
+			crd.Spec.Conversion.Webhook.ClientConfig == nil {
+			log.Errorf("CRD %q does not have an existing webhook client config. Applying resources of this type will fail.", crdName)
+
+			continue
+		}
+
+		if crd.Spec.Conversion.Webhook.ClientConfig.Service != nil &&
+			crd.Spec.Conversion.Webhook.ClientConfig.Service.Namespace == namespace &&
+			crd.Spec.Conversion.Webhook.ClientConfig.CABundle != nil &&
+			bytes.Equal(crd.Spec.Conversion.Webhook.ClientConfig.CABundle, o.sec.TrustAnchors()) {
+			log.Infof("Conversion webhook for %q is up to date", crdName)
+
+			continue
+		}
+
+		// This code mimics:
+		// kubectl patch crd "subscriptions.dapr.io" --type='json' -p [{'op': 'replace', 'path': '/spec/conversion/webhook/clientConfig/service/namespace', 'value':'${namespace}'},{'op': 'add', 'path': '/spec/conversion/webhook/clientConfig/caBundle', 'value':'${caBundle}'}]"
+		type patchValue struct {
+			Op    string      `json:"op"`
+			Path  string      `json:"path"`
+			Value interface{} `json:"value"`
+		}
+		payload := []patchValue{{
+			Op:    "replace",
+			Path:  "/spec/conversion/webhook/clientConfig/service/namespace",
+			Value: namespace,
+		}, {
+			Op:    "replace",
+			Path:  "/spec/conversion/webhook/clientConfig/caBundle",
+			Value: o.sec.TrustAnchors(),
+		}}
+
+		payloadJSON, err := json.Marshal(payload)
+		if err != nil {
+			log.Errorf("Could not marshal webhook spec: %v", err)
+
+			continue
+		}
+		_, err = crdClient.Patch(ctx, crdName, types.JSONPatchType, payloadJSON, v1.PatchOptions{})
+		if err != nil {
+			log.Errorf("Failed to patch webhook in CRD %q: %v", crdName, err)
+
+			continue
+		}
+
+		log.Infof("Successfully patched webhook in CRD %q", crdName)
+	}
+
+	return nil
 }

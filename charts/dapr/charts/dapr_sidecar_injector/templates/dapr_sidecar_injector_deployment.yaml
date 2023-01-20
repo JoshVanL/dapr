@@ -26,8 +26,9 @@ spec:
         {{- with .Values.global.labels }}
           {{- toYaml . | nindent 8 }}
         {{- end }}
-{{- if eq .Values.global.prometheus.enabled true }}
       annotations:
+        dapr.io/app-id: dapr-injector
+{{- if eq .Values.global.prometheus.enabled true }}
         prometheus.io/scrape: "{{ .Values.global.prometheus.enabled }}"
         prometheus.io/port: "{{ .Values.global.prometheus.port }}"
         prometheus.io/path: "/"
@@ -111,14 +112,12 @@ spec:
 {{- end }}
         - "--healthz-port"
         - "{{ .Values.healthzPort }}"
-{{- with .Values.global.issuerFilenames }}
-        - "--issuer-ca-secret-key"
-        - "{{ .ca }}"
-        - "--issuer-certificate-secret-key"
-        - "{{ .cert }}"
-        - "--issuer-key-secret-key"
-        - "{{ .key }}"
-{{- end }}
+        - "--control-plane-trust-domain"
+        - "{{ .Values.global.controlPlaneTrustDomain }}"
+        - "--sentry-address"
+        - "dapr-sentry.{{ .Release.Namespace }}.svc:443"
+        - "--trust-anchors-file"
+        - "/var/run/dapr.io/trust/ca.crt"
         env:
         - name: TLS_CERT_FILE
           value: /dapr/cert/tls.crt
@@ -169,13 +168,22 @@ spec:
         resources:
 {{ toYaml .Values.resources | indent 10 }}
         volumeMounts:
-        - name: cert
-          mountPath: /dapr/cert
-          readOnly: true
+          - name: dapr-trust-bundle
+            mountPath: /var/run/dapr.io/trust
+            readOnly: true
+          - mountPath: /var/run/secrets/dapr.io/sentrytoken
+            name: dapr-identity-token
+            readOnly: true
       volumes:
-      - name: cert
-        secret:
-          secretName: dapr-sidecar-injector-cert
+      - name: dapr-trust-bundle
+        configMap:
+          name: dapr-trust-bundle
+      - name: dapr-identity-token
+        projected:
+          sources:
+          - serviceAccountToken:
+              path: token
+              audience: "dapr.io/sentry"
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:

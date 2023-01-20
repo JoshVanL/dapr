@@ -18,17 +18,17 @@ import (
 	"strings"
 	"sync"
 
-	daprCredentials "github.com/dapr/dapr/pkg/credentials"
-	diag "github.com/dapr/dapr/pkg/diagnostics"
-	"github.com/dapr/dapr/pkg/runtime/security"
-
+	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"google.golang.org/grpc"
+
+	diag "github.com/dapr/dapr/pkg/diagnostics"
+	"github.com/dapr/dapr/pkg/security"
 )
 
 var errEstablishingTLSConn = errors.New("failed to establish TLS credentials for actor placement service")
 
 // getGrpcOptsGetter returns a function that provides the grpc options and once defined, a cached version will be returned.
-func getGrpcOptsGetter(servers []string, clientCert *daprCredentials.CertChain) func() ([]grpc.DialOption, error) {
+func getGrpcOptsGetter(servers []string, pid spiffeid.ID, sec security.Interface) func() ([]grpc.DialOption, error) {
 	mu := sync.RWMutex{}
 	var cached []grpc.DialOption
 	return func() ([]grpc.DialOption, error) {
@@ -45,11 +45,8 @@ func getGrpcOptsGetter(servers []string, clientCert *daprCredentials.CertChain) 
 			return cached, nil
 		}
 
-		opts, err := daprCredentials.GetClientOptions(clientCert, security.TLSServerName)
-		if err != nil {
-			log.Errorf("%s: %s", errEstablishingTLSConn, err)
-			return nil, errEstablishingTLSConn
-		}
+		var opts []grpc.DialOption
+		opts = append(opts, sec.GRPCDialOption(pid))
 
 		if diag.DefaultGRPCMonitoring.IsEnabled() {
 			opts = append(
