@@ -25,8 +25,9 @@ import (
 
 	"github.com/dapr/dapr/pkg/components/pluggable"
 	"github.com/dapr/dapr/pkg/injector/annotations"
-	authConsts "github.com/dapr/dapr/pkg/runtime/security/consts"
-	sentryConsts "github.com/dapr/dapr/pkg/sentry/consts"
+	"github.com/dapr/dapr/pkg/security"
+	"github.com/dapr/dapr/pkg/security/consts"
+	authConsts "github.com/dapr/dapr/pkg/security/consts"
 	"github.com/dapr/dapr/utils"
 	"github.com/dapr/kit/logger"
 	"github.com/dapr/kit/ptr"
@@ -36,8 +37,6 @@ import (
 type ContainerConfig struct {
 	AppID                        string
 	Annotations                  Annotations
-	CertChain                    string
-	CertKey                      string
 	ControlPlaneAddress          string
 	DaprSidecarImage             string
 	Identity                     string
@@ -48,12 +47,12 @@ type ContainerConfig struct {
 	PlacementServiceAddress      string
 	SentryAddress                string
 	Tolerations                  []corev1.Toleration
-	TrustAnchors                 string
 	VolumeMounts                 []corev1.VolumeMount
 	ComponentsSocketsVolumeMount *corev1.VolumeMount
 	RunAsNonRoot                 bool
 	ReadOnlyRootFilesystem       bool
 	SidecarDropALLCapabilities   bool
+	Security                     security.Interface
 }
 
 var (
@@ -144,6 +143,8 @@ func GetSidecarContainer(cfg ContainerConfig) (*corev1.Container, error) {
 		"--dapr-http-read-buffer-size", strconv.Itoa(int(readBufferSize)),
 		"--dapr-graceful-shutdown-seconds", strconv.Itoa(int(gracefulShutdownSeconds)),
 		"--disable-builtin-k8s-secret-store=" + strconv.FormatBool(disableBuiltinK8sSecretStore),
+		"--control-plane-namespace", cfg.Security.ControlPlaneNamespace(),
+		"--control-plane-trust-domain", cfg.Security.ControlPlaneTrustDomain().String(),
 	}
 
 	// --enable-api-logging is set only if there's an explicit annotation (true or false) for that
@@ -209,6 +210,11 @@ func GetSidecarContainer(cfg ContainerConfig) (*corev1.Container, error) {
 		securityContext.Capabilities = &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}
 	}
 
+	trustAnchors, err := cfg.Security.CurrentTrustAnchors()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get current trust anchors: %w", err)
+	}
+
 	container := &corev1.Container{
 		Name:            SidecarContainerName,
 		Image:           cfg.DaprSidecarImage,
@@ -228,6 +234,10 @@ func GetSidecarContainer(cfg ContainerConfig) (*corev1.Container, error) {
 						FieldPath: "metadata.name",
 					},
 				},
+			},
+			{
+				Name:  consts.TrustAnchorsEnvVar,
+				Value: string(trustAnchors),
 			},
 		},
 		VolumeMounts: []corev1.VolumeMount{},
@@ -302,25 +312,6 @@ func GetSidecarContainer(cfg ContainerConfig) (*corev1.Container, error) {
 	if cfg.Annotations.GetBoolOrDefault(annotations.KeyEnableProfiling, annotations.DefaultEnableProfiling) {
 		container.Args = append(container.Args, "--enable-profiling")
 	}
-
-	container.Env = append(container.Env,
-		corev1.EnvVar{
-			Name:  sentryConsts.TrustAnchorsEnvVar,
-			Value: cfg.TrustAnchors,
-		},
-		corev1.EnvVar{
-			Name:  sentryConsts.CertChainEnvVar,
-			Value: cfg.CertChain,
-		},
-		corev1.EnvVar{
-			Name:  sentryConsts.CertKeyEnvVar,
-			Value: cfg.CertKey,
-		},
-		corev1.EnvVar{
-			Name:  "SENTRY_LOCAL_IDENTITY",
-			Value: cfg.Identity,
-		},
-	)
 
 	if cfg.MTLSEnabled {
 		container.Args = append(container.Args, "--enable-mtls")

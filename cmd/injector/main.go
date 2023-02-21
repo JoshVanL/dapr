@@ -15,20 +15,23 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"path/filepath"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/homedir"
 
 	"github.com/dapr/dapr/pkg/buildinfo"
 	scheme "github.com/dapr/dapr/pkg/client/clientset/versioned"
 	"github.com/dapr/dapr/pkg/concurrency"
-	"github.com/dapr/dapr/pkg/credentials"
 	"github.com/dapr/dapr/pkg/health"
 	"github.com/dapr/dapr/pkg/injector"
 	"github.com/dapr/dapr/pkg/injector/monitoring"
 	"github.com/dapr/dapr/pkg/metrics"
+	"github.com/dapr/dapr/pkg/security"
 	"github.com/dapr/dapr/pkg/signals"
 	"github.com/dapr/dapr/utils"
 	"github.com/dapr/kit/logger"
@@ -59,13 +62,27 @@ func main() {
 		log.Fatalf("failed to get authentication uids from services accounts: %s", err)
 	}
 
-	inj, err := injector.NewInjector(uids, cfg, daprClient, kubeClient)
+	secProvider, err := security.New(ctx, security.Options{
+		SentryAddress:           cfg.SentryAddress,
+		ControlPlaneTrustDomain: cfg.ControlPlaneTrustDomain,
+		ControlPlaneNamespace:   security.CurrentNamespace(),
+		TrustAnchorsFile:        cfg.TrustAnchorsFile,
+		AppID:                   "dapr-injector",
+		MTLSEnabled:             true,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	inj, err := injector.NewInjector(secProvider, uids, cfg, daprClient, kubeClient)
 	if err != nil {
 		log.Fatalf("error creating injector: %s", err)
 	}
 
 	healthzServer := health.NewServer(log)
+	caBundleCh := make(chan []byte)
 	mngr := concurrency.NewRunnerManager(
+		secProvider.Start,
 		inj.Run,
 		func(ctx context.Context) error {
 			if err := inj.Ready(ctx); err != nil {
@@ -80,6 +97,43 @@ func main() {
 				return fmt.Errorf("failed to start healthz server: %w", err)
 			}
 			return nil
+		},
+		func(ctx context.Context) error {
+			sec, rErr := secProvider.Security(ctx)
+			if rErr != nil {
+				return rErr
+			}
+			sec.WatchTrustAnchors(ctx, caBundleCh)
+			return nil
+		},
+		func(ctx context.Context) error {
+			sec, err := secProvider.Security(ctx)
+			if err != nil {
+				return err
+			}
+
+			caBundle, rErr := sec.CurrentTrustAnchors()
+			if rErr != nil {
+				return rErr
+			}
+
+			for {
+				_, rErr = kubeClient.AdmissionregistrationV1().MutatingWebhookConfigurations().Patch(ctx,
+					"dapr-sidecar-injector",
+					types.JSONPatchType,
+					[]byte(`[{"op":"replace","path":"/webhooks/0/clientConfig/caBundle","value":"`+base64.StdEncoding.EncodeToString(caBundle)+`"}]`),
+					metav1.PatchOptions{},
+				)
+				if rErr != nil {
+					return rErr
+				}
+
+				select {
+				case caBundle = <-caBundleCh:
+				case <-ctx.Done():
+					return nil
+				}
+			}
 		},
 	)
 
@@ -105,11 +159,15 @@ func init() {
 
 	flag.IntVar(&healthzPort, "healthz-port", 8080, "The port used for health checks")
 
-	flag.StringVar(&credentials.RootCertFilename, "issuer-ca-secret-key", credentials.RootCertFilename, "Certificate Authority certificate secret key")
-	flag.StringVar(&credentials.IssuerCertFilename, "issuer-certificate-secret-key", credentials.IssuerCertFilename, "Issuer certificate secret key")
-	flag.StringVar(&credentials.IssuerKeyFilename, "issuer-key-secret-key", credentials.IssuerKeyFilename, "Issuer private key secret key")
+	depRCF := flag.String("issuer-ca-filename", "", "DEPRECATED")
+	depICF := flag.String("issuer-certificate-filename", "", "DEPRECATED")
+	depIKF := flag.String("issuer-key-filename", "", "DEPRECATED")
 
 	flag.Parse()
+
+	if len(*depRCF) > 0 || len(*depICF) > 0 || len(*depIKF) > 0 {
+		log.Warn("issuer-ca-filename, issuer-certificate-filename and issuer-key-filename are deprecated and will be removed in v1.12. Please use certchain instead.")
+	}
 
 	if err := utils.SetEnvVariables(map[string]string{
 		utils.KubeConfigVar: *kubeconfig,

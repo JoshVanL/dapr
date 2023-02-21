@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -35,8 +34,10 @@ import (
 	"github.com/dapr/dapr/pkg/injector/monitoring"
 	"github.com/dapr/dapr/pkg/injector/namespacednamematcher"
 	"github.com/dapr/dapr/pkg/injector/sidecar"
+	"github.com/dapr/dapr/pkg/security"
 	"github.com/dapr/dapr/utils"
 	"github.com/dapr/kit/logger"
+	"github.com/spiffe/go-spiffe/v2/spiffeid"
 )
 
 const (
@@ -74,6 +75,8 @@ type injector struct {
 
 	namespaceNameMatcher *namespacednamematcher.EqualPrefixNameNamespaceMatcher
 	ready                chan struct{}
+	secProv              security.Provider
+	sentryID             spiffeid.ID
 }
 
 // errorToAdmissionResponse is a helper function to create an AdmissionResponse
@@ -106,8 +109,13 @@ func getAppIDFromRequest(req *v1.AdmissionRequest) string {
 }
 
 // NewInjector returns a new Injector instance with the given config.
-func NewInjector(authUIDs []string, config Config, daprClient scheme.Interface, kubeClient kubernetes.Interface) (Injector, error) {
+func NewInjector(secProv security.Provider, authUIDs []string, config Config, daprClient scheme.Interface, kubeClient kubernetes.Interface) (Injector, error) {
 	mux := http.NewServeMux()
+
+	sentryID, err := security.SentryID(config.ControlPlaneTrustDomain, config.Namespace)
+	if err != nil {
+		return nil, err
+	}
 
 	i := &injector{
 		config: config,
@@ -123,6 +131,8 @@ func NewInjector(authUIDs []string, config Config, daprClient scheme.Interface, 
 		daprClient: daprClient,
 		authUIDs:   authUIDs,
 		ready:      make(chan struct{}),
+		secProv:    secProv,
+		sentryID:   sentryID,
 	}
 
 	matcher, err := createNamespaceNameMatcher(strings.TrimSpace(config.AllowedServiceAccountsPrefixNames))
@@ -195,16 +205,17 @@ func (i *injector) Run(ctx context.Context) error {
 		// Nop
 	}
 
-	ln, err := net.Listen("tcp", i.server.Addr)
+	sec, err := i.secProv.Security(ctx)
 	if err != nil {
-		return fmt.Errorf("error while creating listener: %w", err)
+		return err
 	}
+	i.server.TLSConfig = sec.TLSServerConfigBasicTLS()
 
 	log.Infof("Sidecar injector is listening on %s, patching Dapr-enabled pods", i.server.Addr)
 
 	errCh := make(chan error, 1)
 	go func() {
-		srverr := i.server.ServeTLS(ln, i.config.TLSCertFile, i.config.TLSKeyFile)
+		srverr := i.server.ListenAndServeTLS("", "")
 		if !errors.Is(srverr, http.ErrServerClosed) {
 			errCh <- fmt.Errorf("sidecar injector error: %s", srverr)
 			return
