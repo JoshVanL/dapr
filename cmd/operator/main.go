@@ -21,10 +21,10 @@ import (
 	"k8s.io/klog"
 
 	"github.com/dapr/dapr/pkg/buildinfo"
-	"github.com/dapr/dapr/pkg/credentials"
 	"github.com/dapr/dapr/pkg/metrics"
 	"github.com/dapr/dapr/pkg/operator"
 	"github.com/dapr/dapr/pkg/operator/monitoring"
+	"github.com/dapr/dapr/pkg/security"
 	"github.com/dapr/dapr/pkg/signals"
 	"github.com/dapr/kit/logger"
 )
@@ -32,7 +32,6 @@ import (
 var (
 	log                                = logger.NewLogger("dapr.operator")
 	config                             string
-	certChainPath                      string
 	watchInterval                      string
 	maxPodRestartsPerMinute            int
 	disableLeaderElection              bool
@@ -40,13 +39,12 @@ var (
 	watchNamespace                     string
 	enableArgoRolloutServiceReconciler bool
 	watchdogCanPatchPodLabels          bool
+
+	trustAnchorsFile string
 )
 
 //nolint:gosec
 const (
-	// defaultCredentialsPath is the default path for the credentials (the K8s mountpoint by default).
-	defaultCredentialsPath = "/var/run/dapr/credentials"
-
 	// defaultDaprSystemConfigName is the default resource object name for Dapr System Config.
 	defaultDaprSystemConfigName = "daprsystem"
 
@@ -62,7 +60,6 @@ func main() {
 
 	operatorOpts := operator.Options{
 		Config:                              config,
-		CertChainPath:                       certChainPath,
 		LeaderElection:                      !disableLeaderElection,
 		WatchdogEnabled:                     false,
 		WatchdogInterval:                    0,
@@ -71,6 +68,8 @@ func main() {
 		ServiceReconcilerEnabled:            !disableServiceReconciler,
 		ArgoRolloutServiceReconcilerEnabled: enableArgoRolloutServiceReconciler,
 		WatchdogCanPatchPodLabels:           watchdogCanPatchPodLabels,
+		ControlPlaneNamespace:               security.CurrentNamespace(),
+		TrustAnchorsFile:                    trustAnchorsFile,
 	}
 
 	wilc := strings.ToLower(watchInterval)
@@ -100,7 +99,7 @@ func main() {
 
 	err = op.Run(ctx)
 	if err != nil {
-		log.Fatalf("error running operator: %v", err)
+		log.Fatalf(err)
 	}
 	log.Info("operator shut down gracefully")
 }
@@ -118,11 +117,6 @@ func init() {
 	metricsExporter.Options().AttachCmdFlags(flag.StringVar, flag.BoolVar)
 
 	flag.StringVar(&config, "config", defaultDaprSystemConfigName, "Path to config file, or name of a configuration object")
-	flag.StringVar(&certChainPath, "certchain", defaultCredentialsPath, "Path to the credentials directory holding the cert chain")
-
-	flag.StringVar(&credentials.RootCertFilename, "issuer-ca-filename", credentials.RootCertFilename, "Certificate Authority certificate filename")
-	flag.StringVar(&credentials.IssuerCertFilename, "issuer-certificate-filename", credentials.IssuerCertFilename, "Issuer certificate filename")
-	flag.StringVar(&credentials.IssuerKeyFilename, "issuer-key-filename", credentials.IssuerKeyFilename, "Issuer private key filename")
 
 	flag.StringVar(&watchInterval, "watch-interval", defaultWatchInterval, "Interval for polling pods' state, e.g. '2m'. Set to '0' to disable, or 'once' to only run once when the operator starts")
 	flag.IntVar(&maxPodRestartsPerMinute, "max-pod-restarts-per-minute", defaultMaxPodRestartsPerMinute, "Maximum number of pods in an invalid state that can be restarted per minute")
@@ -133,7 +127,17 @@ func init() {
 	flag.BoolVar(&enableArgoRolloutServiceReconciler, "enable-argo-rollout-service-reconciler", false, "Enable the service reconciler for Dapr-enabled Argo Rollouts")
 	flag.BoolVar(&watchdogCanPatchPodLabels, "watchdog-can-patch-pod-labels", false, "Allow watchdog to patch pod labels to set pods with sidecar present")
 
+	flag.StringVar(&trustAnchorsFile, "trust-anchors-file", "/var/run/secrets/dapr.io/tls/ca.crt", "Path to trust anchors file")
+
+	depRCF := flag.String("issuer-ca-filename", "", "DEPRECATED")
+	depICF := flag.String("issuer-certificate-filename", "", "DEPRECATED")
+	depIKF := flag.String("issuer-key-filename", "", "DEPRECATED")
+
 	flag.Parse()
+
+	if len(*depRCF) > 0 || len(*depICF) > 0 || len(*depIKF) > 0 {
+		log.Warn("--issuer-ca-filename, --issuer-certificate-filename and --issuer-key-filename are deprecated and will be removed in v1.12")
+	}
 
 	// Apply options to all loggers
 	if err := logger.ApplyOptionsToLoggers(&loggerOptions); err != nil {

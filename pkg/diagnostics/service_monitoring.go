@@ -10,6 +10,7 @@ import (
 	"go.opencensus.io/tag"
 
 	diagUtils "github.com/dapr/dapr/pkg/diagnostics/utils"
+	"github.com/dapr/dapr/pkg/security/spiffe"
 )
 
 // Tag keys.
@@ -343,15 +344,15 @@ func (s *serviceMetrics) ReportActorPendingCalls(actorType string, pendingLocks 
 }
 
 // RequestAllowedByAppAction records the requests allowed due to a match with the action specified in the access control policy for the app.
-func (s *serviceMetrics) RequestAllowedByAppAction(appID, trustDomain, namespace, operation, httpverb string, policyAction bool) {
+func (s *serviceMetrics) RequestAllowedByAppAction(id spiffe.Parsed, operation, httpverb string, policyAction bool) {
 	if s.enabled {
 		stats.RecordWithTags(
 			s.ctx,
 			diagUtils.WithTags(
 				s.appPolicyActionAllowed.Name(),
-				appIDKey, appID,
-				trustDomainKey, trustDomain,
-				namespaceKey, namespace,
+				appIDKey, id.AppID,
+				trustDomainKey, id.TrustDomain,
+				namespaceKey, id.Namespace,
 				operationKey, operation,
 				httpMethodKey, httpverb,
 				policyActionKey, policyAction),
@@ -360,15 +361,15 @@ func (s *serviceMetrics) RequestAllowedByAppAction(appID, trustDomain, namespace
 }
 
 // RequestBlockedByAppAction records the requests blocked due to a match with the action specified in the access control policy for the app.
-func (s *serviceMetrics) RequestBlockedByAppAction(appID, trustDomain, namespace, operation, httpverb string, policyAction bool) {
+func (s *serviceMetrics) RequestBlockedByAppAction(id spiffe.Parsed, operation, httpverb string, policyAction bool) {
 	if s.enabled {
 		stats.RecordWithTags(
 			s.ctx,
 			diagUtils.WithTags(
 				s.appPolicyActionBlocked.Name(),
-				appIDKey, appID,
-				trustDomainKey, trustDomain,
-				namespaceKey, namespace,
+				appIDKey, id.AppID,
+				trustDomainKey, id.TrustDomain,
+				namespaceKey, id.Namespace,
 				operationKey, operation,
 				httpMethodKey, httpverb,
 				policyActionKey, policyAction),
@@ -377,15 +378,15 @@ func (s *serviceMetrics) RequestBlockedByAppAction(appID, trustDomain, namespace
 }
 
 // RequestAllowedByGlobalAction records the requests allowed due to a match with the global action in the access control policy.
-func (s *serviceMetrics) RequestAllowedByGlobalAction(appID, trustDomain, namespace, operation, httpverb string, policyAction bool) {
+func (s *serviceMetrics) RequestAllowedByGlobalAction(id spiffe.Parsed, operation, httpverb string, policyAction bool) {
 	if s.enabled {
 		stats.RecordWithTags(
 			s.ctx,
 			diagUtils.WithTags(
 				s.globalPolicyActionAllowed.Name(),
-				appIDKey, appID,
-				trustDomainKey, trustDomain,
-				namespaceKey, namespace,
+				appIDKey, id.AppID,
+				trustDomainKey, id.TrustDomain,
+				namespaceKey, id.Namespace,
 				operationKey, operation,
 				httpMethodKey, httpverb,
 				policyActionKey, policyAction),
@@ -394,15 +395,15 @@ func (s *serviceMetrics) RequestAllowedByGlobalAction(appID, trustDomain, namesp
 }
 
 // RequestBlockedByGlobalAction records the requests blocked due to a match with the global action in the access control policy.
-func (s *serviceMetrics) RequestBlockedByGlobalAction(appID, trustDomain, namespace, operation, httpverb string, policyAction bool) {
+func (s *serviceMetrics) RequestBlockedByGlobalAction(id spiffe.Parsed, operation, httpverb string, policyAction bool) {
 	if s.enabled {
 		stats.RecordWithTags(
 			s.ctx,
 			diagUtils.WithTags(
 				s.globalPolicyActionBlocked.Name(),
-				appIDKey, appID,
-				trustDomainKey, trustDomain,
-				namespaceKey, namespace,
+				appIDKey, id.AppID,
+				trustDomainKey, id.TrustDomain,
+				namespaceKey, id.Namespace,
 				operationKey, operation,
 				httpMethodKey, httpverb,
 				policyActionKey, policyAction),

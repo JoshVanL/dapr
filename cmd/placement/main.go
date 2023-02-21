@@ -20,12 +20,12 @@ import (
 
 	"github.com/dapr/dapr/pkg/buildinfo"
 	"github.com/dapr/dapr/pkg/concurrency"
-	"github.com/dapr/dapr/pkg/credentials"
 	"github.com/dapr/dapr/pkg/health"
 	"github.com/dapr/dapr/pkg/placement"
 	"github.com/dapr/dapr/pkg/placement/hashing"
 	"github.com/dapr/dapr/pkg/placement/monitoring"
 	"github.com/dapr/dapr/pkg/placement/raft"
+	"github.com/dapr/dapr/pkg/security"
 	"github.com/dapr/dapr/pkg/signals"
 	"github.com/dapr/kit/logger"
 )
@@ -35,7 +35,10 @@ var log = logger.NewLogger("dapr.placement")
 func main() {
 	log.Infof("Starting Dapr Placement Service -- version %s -- commit %s", buildinfo.Version(), buildinfo.Commit())
 
-	cfg := newConfig()
+	cfg, err := newConfig()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Apply options to all loggers.
 	if err := logger.ApplyOptionsToLoggers(&cfg.loggerOptions); err != nil {
@@ -44,7 +47,7 @@ func main() {
 	log.Infof("Log level set to: %s", cfg.loggerOptions.OutputLevel)
 
 	// Initialize dapr metrics for placement.
-	err := cfg.metricsExporter.Init()
+	err = cfg.metricsExporter.Init()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -64,16 +67,16 @@ func main() {
 	hashing.SetReplicationFactor(cfg.replicationFactor)
 	apiServer := placement.NewPlacementService(raftServer)
 
-	var certChain *credentials.CertChain
-	if cfg.tlsEnabled {
-		tlsCreds := credentials.NewTLSCredentials(cfg.certChainPath)
-
-		certChain, err = credentials.LoadFromDisk(tlsCreds.RootCertPath(), tlsCreds.CertPath(), tlsCreds.KeyPath())
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		log.Info("TLS certificates loaded successfully")
+	secProvider, err := security.New(security.Options{
+		SentryAddress:           cfg.sentryAddress,
+		ControlPlaneTrustDomain: cfg.trustDomain,
+		ControlPlaneNamespace:   security.CurrentNamespace(),
+		TrustAnchorsFile:        cfg.trustAnchorsFile,
+		AppID:                   "dapr-placement",
+		MTLSEnabled:             cfg.tlsEnabled,
+	})
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	err = concurrency.NewRunnerManager(
@@ -89,8 +92,13 @@ func main() {
 			}
 			return nil
 		},
+		secProvider.Start,
 		func(ctx context.Context) error {
-			return apiServer.Run(ctx, strconv.Itoa(cfg.placementPort), certChain)
+			sec, err := secProvider.Security(ctx)
+			if err != nil {
+				return err
+			}
+			return apiServer.Run(ctx, strconv.Itoa(cfg.placementPort), sec)
 		},
 	).Run(signals.Context())
 	if err != nil {

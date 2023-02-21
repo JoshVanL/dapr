@@ -25,8 +25,9 @@ import (
 
 	"github.com/dapr/dapr/pkg/components/pluggable"
 	"github.com/dapr/dapr/pkg/injector/annotations"
-	authConsts "github.com/dapr/dapr/pkg/runtime/security/consts"
-	sentryConsts "github.com/dapr/dapr/pkg/sentry/consts"
+	"github.com/dapr/dapr/pkg/security"
+	"github.com/dapr/dapr/pkg/security/consts"
+	authConsts "github.com/dapr/dapr/pkg/security/consts"
 	"github.com/dapr/dapr/utils"
 	"github.com/dapr/kit/logger"
 	"github.com/dapr/kit/ptr"
@@ -46,7 +47,7 @@ type ContainerConfig struct {
 	MTLSEnabled                  bool
 	Namespace                    string
 	PlacementServiceAddress      string
-	SentryAddress                string
+	SentryAddress                   string
 	Tolerations                  []corev1.Toleration
 	TrustAnchors                 string
 	VolumeMounts                 []corev1.VolumeMount
@@ -54,6 +55,7 @@ type ContainerConfig struct {
 	RunAsNonRoot                 bool
 	ReadOnlyRootFilesystem       bool
 	SidecarDropALLCapabilities   bool
+	Security                     security.Interface
 }
 
 var (
@@ -303,18 +305,15 @@ func GetSidecarContainer(cfg ContainerConfig) (*corev1.Container, error) {
 		container.Args = append(container.Args, "--enable-profiling")
 	}
 
+	trustAnchors, err := cfg.Security.CurrentTrustAnchors()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get current trust anchors: %w", err)
+	}
+
 	container.Env = append(container.Env,
 		corev1.EnvVar{
-			Name:  sentryConsts.TrustAnchorsEnvVar,
-			Value: cfg.TrustAnchors,
-		},
-		corev1.EnvVar{
-			Name:  sentryConsts.CertChainEnvVar,
-			Value: cfg.CertChain,
-		},
-		corev1.EnvVar{
-			Name:  sentryConsts.CertKeyEnvVar,
-			Value: cfg.CertKey,
+			Name:  consts.TrustAnchorsEnvVar,
+			Value: string(trustAnchors),
 		},
 		corev1.EnvVar{
 			Name:  "SENTRY_LOCAL_IDENTITY",
