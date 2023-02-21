@@ -14,7 +14,6 @@ limitations under the License.
 package injector
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 
@@ -72,8 +71,6 @@ func (i *injector) getPodPatchOperations(ar *v1.AdmissionReview,
 	sentryAddress := sidecar.ServiceAddress(sidecar.ServiceSentry, namespace, i.config.KubeClusterDomain)
 	apiSvcAddress := sidecar.ServiceAddress(sidecar.ServiceAPI, namespace, i.config.KubeClusterDomain)
 
-	trustAnchors, certChain, certKey := sidecar.GetTrustAnchorsAndCertChain(context.TODO(), kubeClient, namespace)
-
 	// Get all volume mounts
 	volumeMounts := sidecar.GetVolumeMounts(pod)
 	socketVolumeMount := sidecar.GetUnixDomainSocketVolumeMount(&pod)
@@ -97,8 +94,6 @@ func (i *injector) getPodPatchOperations(ar *v1.AdmissionReview,
 	sidecarContainer, err := sidecar.GetSidecarContainer(sidecar.ContainerConfig{
 		AppID:                        appID,
 		Annotations:                  an,
-		CertChain:                    certChain,
-		CertKey:                      certKey,
 		ControlPlaneAddress:          apiSvcAddress,
 		DaprSidecarImage:             image,
 		Identity:                     req.Namespace + ":" + pod.Spec.ServiceAccountName,
@@ -109,11 +104,11 @@ func (i *injector) getPodPatchOperations(ar *v1.AdmissionReview,
 		PlacementServiceAddress:      placementAddress,
 		SentryAddress:                sentryAddress,
 		Tolerations:                  pod.Spec.Tolerations,
-		TrustAnchors:                 trustAnchors,
 		VolumeMounts:                 volumeMounts,
 		ComponentsSocketsVolumeMount: componentsSocketVolumeMount,
 		RunAsNonRoot:                 i.config.GetRunAsNonRoot(),
 		ReadOnlyRootFilesystem:       i.config.GetReadOnlyRootFilesystem(),
+		Security:                     i.sec,
 	})
 	if err != nil {
 		return nil, err

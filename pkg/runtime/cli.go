@@ -15,6 +15,7 @@ limitations under the License.
 package runtime
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -36,7 +37,8 @@ import (
 	"github.com/dapr/dapr/pkg/operator/client"
 	operatorV1 "github.com/dapr/dapr/pkg/proto/operator/v1"
 	resiliencyConfig "github.com/dapr/dapr/pkg/resiliency"
-	"github.com/dapr/dapr/pkg/runtime/security"
+	"github.com/dapr/dapr/pkg/security"
+	"github.com/dapr/dapr/pkg/security/consts"
 	"github.com/dapr/dapr/pkg/validation"
 	"github.com/dapr/dapr/utils"
 	"github.com/dapr/kit/logger"
@@ -44,7 +46,8 @@ import (
 )
 
 // FromFlags parses command flags and returns DaprRuntime instance.
-func FromFlags() (*DaprRuntime, error) {
+// TODO @joshvanl: figure out how to pass security here.
+func FromFlags(ctx context.Context) (*DaprRuntime, error) {
 	mode := flag.String("mode", string(modes.StandaloneMode), "Runtime mode for Dapr")
 	daprHTTPPort := flag.String("dapr-http-port", strconv.Itoa(DefaultDaprHTTPPort), "HTTP port for Dapr API to listen on")
 	daprAPIListenAddresses := flag.String("dapr-listen-addresses", DefaultAPIListenAddress, "One or more addresses for the Dapr API to listen on, CSV limited")
@@ -80,6 +83,8 @@ func FromFlags() (*DaprRuntime, error) {
 	appHealthProbeInterval := flag.Int("app-health-probe-interval", int(apphealth.DefaultProbeInterval/time.Second), "Interval to probe for the health of the app in seconds")
 	appHealthProbeTimeout := flag.Int("app-health-probe-timeout", int(apphealth.DefaultProbeTimeout/time.Millisecond), "Timeout for app health probes in milliseconds")
 	appHealthThreshold := flag.Int("app-health-threshold", int(apphealth.DefaultThreshold), "Number of consecutive failures for the app to be considered unhealthy")
+	controlPlaneNamespace := flag.String("control-plane-namespace", "dapr-system", "Namespace of the Dapr control plane")
+	controlPlaneTrustDomain := flag.String("control-plane-trust-domain", "cluster.local", "Trust domain of the Dapr control plane")
 
 	loggerOptions := logger.DefaultOptions()
 	loggerOptions.AttachCmdFlags(flag.StringVar, flag.BoolVar)
@@ -332,18 +337,30 @@ func FromFlags() (*DaprRuntime, error) {
 	var globalConfig *daprGlobalConfig.Configuration
 	var configErr error
 
-	if *enableMTLS || *mode == string(modes.KubernetesMode) {
-		runtimeConfig.CertChain, err = security.GetCertChain()
-		if err != nil {
-			return nil, err
-		}
+	trustAnchors, ok := os.LookupEnv(consts.TrustAnchorsEnvVar)
+	if !ok {
+		return nil, fmt.Errorf("couldn't find trust anchors in environment variable %q", consts.TrustAnchorsEnvVar)
+	}
+
+	namespace := os.Getenv("NAMESPACE")
+	secProvider, err := security.New(ctx, security.Options{
+		SentryAddress:           *sentryAddress,
+		ControlPlaneTrustDomain: *controlPlaneTrustDomain,
+		ControlPlaneNamespace:   *controlPlaneNamespace,
+		TrustAnchors:            []byte(trustAnchors),
+		AppID:                   *appID,
+		AppNamespace:            namespace,
+		MTLSEnabled:             *enableMTLS,
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	// Config and resiliency need the operator client
 	var operatorClient operatorV1.OperatorClient
 	if *mode == string(modes.KubernetesMode) {
 		log.Infof("Initializing the operator client (config: %s)", *config)
-		client, conn, clientErr := client.GetOperatorClient(*controlPlaneAddress, security.TLSServerName, runtimeConfig.CertChain)
+		client, conn, clientErr := client.GetOperatorClient(*controlPlaneAddress, "cluster.local", runtimeConfig.Security)
 		if clientErr != nil {
 			return nil, clientErr
 		}
@@ -352,7 +369,6 @@ func FromFlags() (*DaprRuntime, error) {
 	}
 
 	var accessControlList *daprGlobalConfig.AccessControlList
-	namespace := os.Getenv("NAMESPACE")
 	podName := os.Getenv("POD_NAME")
 
 	if *config != "" {

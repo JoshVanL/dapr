@@ -14,17 +14,13 @@ limitations under the License.
 package sidecar
 
 import (
-	"context"
 	"fmt"
 	"strconv"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 
-	"github.com/dapr/dapr/pkg/credentials"
 	"github.com/dapr/dapr/pkg/injector/annotations"
-	sentryConsts "github.com/dapr/dapr/pkg/sentry/consts"
+	"github.com/dapr/dapr/pkg/sentry/server/validator/kubernetes"
 	"github.com/dapr/kit/ptr"
 )
 
@@ -245,7 +241,7 @@ func GetTokenVolume() corev1.Volume {
 				DefaultMode: ptr.Of(int32(420)),
 				Sources: []corev1.VolumeProjection{{
 					ServiceAccountToken: &corev1.ServiceAccountTokenProjection{
-						Audience:          sentryConsts.ServiceAccountTokenAudience,
+						Audience:          kubernetes.ServiceAccountTokenAudience,
 						ExpirationSeconds: ptr.Of(int64(7200)),
 						Path:              "token",
 					},
@@ -253,19 +249,6 @@ func GetTokenVolume() corev1.Volume {
 			},
 		},
 	}
-}
-
-// GetTrustAnchorsAndCertChain returns the trust anchor and certs.
-func GetTrustAnchorsAndCertChain(ctx context.Context, kubeClient kubernetes.Interface, namespace string) (string, string, string) {
-	secret, err := kubeClient.CoreV1().Secrets(namespace).Get(ctx, sentryConsts.TrustBundleK8sSecretName, metav1.GetOptions{})
-	if err != nil {
-		return "", "", ""
-	}
-
-	rootCert := secret.Data[credentials.RootCertFilename]
-	certChain := secret.Data[credentials.IssuerCertFilename]
-	certKey := secret.Data[credentials.IssuerKeyFilename]
-	return string(rootCert), string(certChain), string(certKey)
 }
 
 // GetVolumeMounts returns the list of VolumeMount's for the sidecar container.

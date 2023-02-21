@@ -25,8 +25,9 @@ import (
 
 	"github.com/dapr/dapr/pkg/components/pluggable"
 	"github.com/dapr/dapr/pkg/injector/annotations"
-	authConsts "github.com/dapr/dapr/pkg/runtime/security/consts"
-	sentryConsts "github.com/dapr/dapr/pkg/sentry/consts"
+	"github.com/dapr/dapr/pkg/security"
+	"github.com/dapr/dapr/pkg/security/consts"
+	authConsts "github.com/dapr/dapr/pkg/security/consts"
 	"github.com/dapr/dapr/utils"
 	"github.com/dapr/kit/logger"
 	"github.com/dapr/kit/ptr"
@@ -53,6 +54,7 @@ type ContainerConfig struct {
 	ComponentsSocketsVolumeMount *corev1.VolumeMount
 	RunAsNonRoot                 bool
 	ReadOnlyRootFilesystem       bool
+	Security                     security.Interface
 }
 
 var (
@@ -294,16 +296,8 @@ func GetSidecarContainer(cfg ContainerConfig) (*corev1.Container, error) {
 
 	container.Env = append(container.Env,
 		corev1.EnvVar{
-			Name:  sentryConsts.TrustAnchorsEnvVar,
-			Value: cfg.TrustAnchors,
-		},
-		corev1.EnvVar{
-			Name:  sentryConsts.CertChainEnvVar,
-			Value: cfg.CertChain,
-		},
-		corev1.EnvVar{
-			Name:  sentryConsts.CertKeyEnvVar,
-			Value: cfg.CertKey,
+			Name:  consts.TrustAnchorsEnvVar,
+			Value: string(cfg.Security.TrustAnchors()),
 		},
 		corev1.EnvVar{
 			Name:  "SENTRY_LOCAL_IDENTITY",

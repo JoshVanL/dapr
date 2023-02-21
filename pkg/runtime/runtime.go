@@ -74,9 +74,9 @@ import (
 	"github.com/dapr/dapr/pkg/operator/client"
 	"github.com/dapr/dapr/pkg/resiliency"
 	runtimePubsub "github.com/dapr/dapr/pkg/runtime/pubsub"
-	"github.com/dapr/dapr/pkg/runtime/security"
 	"github.com/dapr/dapr/pkg/runtime/wfengine"
 	"github.com/dapr/dapr/pkg/scopes"
+	"github.com/dapr/dapr/pkg/security"
 	"github.com/dapr/dapr/utils"
 	"github.com/dapr/kit/logger"
 
@@ -191,7 +191,7 @@ type DaprRuntime struct {
 	hostAddress               string
 	actorStateStoreName       string
 	actorStateStoreLock       *sync.RWMutex
-	authenticator             security.Authenticator
+	security                  security.Interface
 	namespace                 string
 	podName                   string
 	daprHTTPAPI               http.API

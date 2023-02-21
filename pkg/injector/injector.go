@@ -33,6 +33,7 @@ import (
 	scheme "github.com/dapr/dapr/pkg/client/clientset/versioned"
 	"github.com/dapr/dapr/pkg/injector/monitoring"
 	"github.com/dapr/dapr/pkg/injector/sidecar"
+	"github.com/dapr/dapr/pkg/security"
 	"github.com/dapr/dapr/utils"
 	"github.com/dapr/kit/logger"
 )
@@ -67,6 +68,7 @@ type injector struct {
 	kubeClient   kubernetes.Interface
 	daprClient   scheme.Interface
 	authUIDs     []string
+	sec          security.Interface
 }
 
 // errorToAdmissionResponse is a helper function to create an AdmissionResponse
@@ -99,7 +101,7 @@ func getAppIDFromRequest(req *v1.AdmissionRequest) string {
 }
 
 // NewInjector returns a new Injector instance with the given config.
-func NewInjector(authUIDs []string, config Config, daprClient scheme.Interface, kubeClient kubernetes.Interface) Injector {
+func NewInjector(sec security.Interface, authUIDs []string, config Config, daprClient scheme.Interface, kubeClient kubernetes.Interface) Injector {
 	mux := http.NewServeMux()
 
 	i := &injector{
@@ -115,6 +117,7 @@ func NewInjector(authUIDs []string, config Config, daprClient scheme.Interface, 
 		kubeClient: kubeClient,
 		daprClient: daprClient,
 		authUIDs:   authUIDs,
+		sec:        sec,
 	}
 
 	mux.HandleFunc("/mutate", i.handleRequest)

@@ -18,8 +18,8 @@ import (
 
 	"github.com/dapr/dapr/pkg/apphealth"
 	config "github.com/dapr/dapr/pkg/config/modes"
-	"github.com/dapr/dapr/pkg/credentials"
 	"github.com/dapr/dapr/pkg/modes"
+	"github.com/dapr/dapr/pkg/security"
 )
 
 // Protocol is a communications protocol.
@@ -73,7 +73,6 @@ type Config struct {
 	MaxConcurrency               int
 	mtlsEnabled                  bool
 	SentryServiceAddress         string
-	CertChain                    *credentials.CertChain
 	AppSSL                       bool
 	MaxRequestBodySize           int
 	UnixDomainSocket             string
@@ -83,6 +82,7 @@ type Config struct {
 	DisableBuiltinK8sSecretStore bool
 	AppHealthCheck               *apphealth.Config
 	AppHealthCheckHTTPPath       string
+	Security                     security.Interface
 }
 
 // NewRuntimeConfigOpts contains options for NewRuntimeConfig.
