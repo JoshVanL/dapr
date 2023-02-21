@@ -17,6 +17,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"k8s.io/client-go/util/homedir"
@@ -24,11 +25,11 @@ import (
 	"github.com/dapr/dapr/pkg/buildinfo"
 	scheme "github.com/dapr/dapr/pkg/client/clientset/versioned"
 	"github.com/dapr/dapr/pkg/concurrency"
-	"github.com/dapr/dapr/pkg/credentials"
 	"github.com/dapr/dapr/pkg/health"
 	"github.com/dapr/dapr/pkg/injector"
 	"github.com/dapr/dapr/pkg/injector/monitoring"
 	"github.com/dapr/dapr/pkg/metrics"
+	"github.com/dapr/dapr/pkg/security"
 	"github.com/dapr/dapr/pkg/signals"
 	"github.com/dapr/dapr/utils"
 	"github.com/dapr/kit/logger"
@@ -37,6 +38,11 @@ import (
 var (
 	log         = logger.NewLogger("dapr.injector")
 	healthzPort int
+
+	namespace     = os.Getenv("NAMESPACE")
+	trustDomain   string
+	trustAnchors  []byte
+	sentryAddress string
 )
 
 func main() {
@@ -59,13 +65,27 @@ func main() {
 		log.Fatalf("failed to get authentication uids from services accounts: %s", err)
 	}
 
-	inj, err := injector.NewInjector(uids, cfg, daprClient, kubeClient)
+	secProv, err := security.New(security.Options{
+		SentryAddress:           sentryAddress,
+		ControlPlaneTrustDomain: trustDomain,
+		ControlPlaneNamespace:   namespace,
+		TrustAnchors:            trustAnchors,
+		AppID:                   "dapr-injector",
+		AppNamespace:            namespace,
+		MTLSEnabled:             true,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	inj, err := injector.NewInjector(secProv, uids, cfg, daprClient, kubeClient)
 	if err != nil {
 		log.Fatalf("error creating injector: %s", err)
 	}
 
 	healthzServer := health.NewServer(log)
 	mngr := concurrency.NewRunnerManager(
+		secProv.Start,
 		inj.Run,
 		func(ctx context.Context) error {
 			if err := inj.Ready(ctx); err != nil {
@@ -105,11 +125,26 @@ func init() {
 
 	flag.IntVar(&healthzPort, "healthz-port", 8080, "The port used for health checks")
 
-	flag.StringVar(&credentials.RootCertFilename, "issuer-ca-secret-key", credentials.RootCertFilename, "Certificate Authority certificate secret key")
-	flag.StringVar(&credentials.IssuerCertFilename, "issuer-certificate-secret-key", credentials.IssuerCertFilename, "Issuer certificate secret key")
-	flag.StringVar(&credentials.IssuerKeyFilename, "issuer-key-secret-key", credentials.IssuerKeyFilename, "Issuer private key secret key")
+	flag.StringVar(&trustDomain, "trust-domain", "localhost", "Trust domain for the Dapr control plane")
+	trustAnchorsFilePath := flag.String("trust-anchors-file", "/var/run/dapr.io/ca.crt", "Filepath to the trust anchors for the Dapr control plane")
+	flag.StringVar(&sentryAddress, "sentry-address", fmt.Sprintf("dapr-sentry.%s.svc", namespace), "Filepath to the trust anchors for the Dapr control plane")
+
+	depRCF := flag.String("issuer-ca-filename", "", "DEPRECATED")
+	depICF := flag.String("issuer-certificate-filename", "", "DEPRECATED")
+	depIKF := flag.String("issuer-key-filename", "", "DEPRECATED")
 
 	flag.Parse()
+
+	if len(*depRCF) > 0 || len(*depICF) > 0 || len(*depIKF) > 0 {
+		log.Warn("issuer-ca-filename, issuer-certificate-filename and issuer-key-filename are deprecated and will be removed in v1.12. Please use certchain instead.")
+	}
+
+	// TODO: Make this a file that is watched.
+	var err error
+	trustAnchors, err = os.ReadFile(*trustAnchorsFilePath)
+	if err != nil {
+		log.Fatalf("failed to read trust anchors file: %w", err)
+	}
 
 	if err := utils.SetEnvVariables(map[string]string{
 		utils.KubeConfigVar: *kubeconfig,

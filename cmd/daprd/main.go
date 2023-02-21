@@ -14,6 +14,8 @@ limitations under the License.
 package main
 
 import (
+	"context"
+
 	"go.uber.org/automaxprocs/maxprocs"
 
 	// Register all components
@@ -28,7 +30,9 @@ import (
 	secretstoresLoader "github.com/dapr/dapr/pkg/components/secretstores"
 	stateLoader "github.com/dapr/dapr/pkg/components/state"
 	workflowsLoader "github.com/dapr/dapr/pkg/components/workflows"
+	"github.com/dapr/dapr/pkg/security"
 
+	"github.com/dapr/dapr/cmd/daprd/options"
 	"github.com/dapr/dapr/pkg/runtime"
 	"github.com/dapr/kit/logger"
 )
@@ -42,7 +46,70 @@ func main() {
 	// set GOMAXPROCS
 	_, _ = maxprocs.Set()
 
-	rt, err := runtime.FromFlags()
+	opts, err := options.Parse()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	secProvider, err := security.New(security.Options{
+		SentryAddress:           opts.SentryAddress,
+		ControlPlaneTrustDomain: opts.ControlPlaneTrustDomain,
+		ControlPlaneNamespace:   opts.ControlPlaneNamespace,
+		TrustAnchors:            opts.TrustAnchors,
+		AppID:                   opts.AppID,
+		AppNamespace:            opts.Namespace,
+		MTLSEnabled:             opts.EnableMTLS,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// TODO: Update with a shared context rooted in a signal.
+	ctx, cancel := context.WithCancel(context.TODO())
+	defer cancel()
+
+	go secProvider.Start(ctx)
+
+	sec, err := secProvider.Security(ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	rt, err := runtime.FromFlags(ctx, runtime.NewRuntimeConfigOpts{
+		ID:                           opts.AppID,
+		PlacementAddresses:           opts.PlacementAddresses,
+		ControlPlaneAddress:          opts.ControlPlaneAddress,
+		AllowedOrigins:               opts.AllowedOrigins,
+		ResourcesPath:                opts.ResourcesPath,
+		AppProtocol:                  opts.AppProtocol,
+		Mode:                         opts.Mode,
+		HTTPPort:                     opts.HTTPPort,
+		InternalGRPCPort:             opts.InternalGRPCPort,
+		APIGRPCPort:                  opts.APIGRPCPort,
+		APIListenAddresses:           opts.APIListenAddresses,
+		PublicPort:                   opts.PublicPort,
+		AppPort:                      opts.AppPort,
+		ProfilePort:                  opts.ProfilePort,
+		EnableProfiling:              opts.EnableProfiling,
+		MaxConcurrency:               opts.AppMaxConcurrency,
+		SentryAddress:                opts.SentryAddress,
+		MTLSEnabled:                  opts.EnableMTLS,
+		AppSSL:                       opts.AppSSL,
+		MaxRequestBodySize:           opts.HTTPMaxRequestBodySize,
+		UnixDomainSocket:             opts.UnixDomainSocket,
+		ReadBufferSize:               opts.HTTPReadBufferSize,
+		GracefulShutdownDuration:     opts.GracefulShutdownDuration,
+		EnableAPILogging:             opts.EnableAPILogging,
+		DisableBuiltinK8sSecretStore: opts.DisableBuiltinK8sSecretStore,
+		EnableAppHealthCheck:         opts.EnableAppHealthCheck,
+		AppHealthCheckPath:           opts.AppHealthCheckPath,
+		AppHealthProbeInterval:       opts.AppHealthProbeInterval,
+		AppHealthProbeTimeout:        opts.AppHealthProbeTimeout,
+		AppHealthThreshold:           opts.AppHealthThreshold,
+		ConfigPath:                   opts.Config,
+		Namespace:                    opts.Namespace,
+		Security:                     sec,
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -75,5 +142,6 @@ func main() {
 	}
 
 	<-stopCh
+	cancel()
 	rt.ShutdownWithWait()
 }

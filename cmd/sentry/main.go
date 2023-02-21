@@ -24,7 +24,6 @@ import (
 
 	"github.com/dapr/dapr/pkg/buildinfo"
 	"github.com/dapr/dapr/pkg/concurrency"
-	"github.com/dapr/dapr/pkg/credentials"
 	"github.com/dapr/dapr/pkg/health"
 	"github.com/dapr/dapr/pkg/metrics"
 	"github.com/dapr/dapr/pkg/sentry"
@@ -50,9 +49,9 @@ const (
 func main() {
 	configName := flag.String("config", defaultDaprSystemConfigName, "Path to config file, or name of a configuration object")
 	credsPath := flag.String("issuer-credentials", defaultCredentialsPath, "Path to the credentials directory holding the issuer data")
-	flag.StringVar(&credentials.RootCertFilename, "issuer-ca-filename", credentials.RootCertFilename, "Certificate Authority certificate filename")
-	flag.StringVar(&credentials.IssuerCertFilename, "issuer-certificate-filename", credentials.IssuerCertFilename, "Issuer certificate filename")
-	flag.StringVar(&credentials.IssuerKeyFilename, "issuer-key-filename", credentials.IssuerKeyFilename, "Issuer private key filename")
+	//flag.StringVar(&credentials.RootCertFilename, "issuer-ca-filename", credentials.RootCertFilename, "Certificate Authority certificate filename")
+	//flag.StringVar(&credentials.IssuerCertFilename, "issuer-certificate-filename", credentials.IssuerCertFilename, "Issuer certificate filename")
+	//flag.StringVar(&credentials.IssuerKeyFilename, "issuer-key-filename", credentials.IssuerKeyFilename, "Issuer private key filename")
 	trustDomain := flag.String("trust-domain", "localhost", "The CA trust domain")
 	tokenAudience := flag.String("token-audience", "", "Expected audience for tokens; multiple values can be separated by a comma")
 
@@ -92,19 +91,20 @@ func main() {
 		log.Fatal(err)
 	}
 
-	issuerCertPath := filepath.Join(*credsPath, credentials.IssuerCertFilename)
-	issuerKeyPath := filepath.Join(*credsPath, credentials.IssuerKeyFilename)
-	rootCertPath := filepath.Join(*credsPath, credentials.RootCertFilename)
+	//issuerCertPath := filepath.Join(*credsPath, credentials.IssuerCertFilename)
+	//issuerKeyPath := filepath.Join(*credsPath, credentials.IssuerKeyFilename)
+	//rootCertPath := filepath.Join(*credsPath, credentials.RootCertFilename)
 
 	config, err := config.FromConfigName(*configName)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	config.IssuerCertPath = issuerCertPath
-	config.IssuerKeyPath = issuerKeyPath
-	config.RootCertPath = rootCertPath
-	config.TrustDomain = *trustDomain
+	// TODO:
+	//config.IssuerCertPath = issuerCertPath
+	//config.IssuerKeyPath = issuerKeyPath
+	//config.RootCertPath = rootCertPath
+	//config.TrustDomain = *trustDomain
 	if *tokenAudience != "" {
 		config.TokenAudience = tokenAudience
 	}

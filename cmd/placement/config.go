@@ -15,11 +15,12 @@ package main
 
 import (
 	"flag"
+	"fmt"
+	"os"
 	"strings"
 
 	"github.com/dapr/kit/logger"
 
-	"github.com/dapr/dapr/pkg/credentials"
 	"github.com/dapr/dapr/pkg/metrics"
 	"github.com/dapr/dapr/pkg/placement/raft"
 )
@@ -51,9 +52,14 @@ type config struct {
 	// Log and metrics configurations
 	loggerOptions   logger.Options
 	metricsExporter metrics.Exporter
+
+	namespace     string
+	trustDomain   string
+	trustAnchors  []byte
+	sentryAddress string
 }
 
-func newConfig() *config {
+func newConfig() (*config, error) {
 	// Default configuration
 	cfg := config{
 		raftID:           "dapr-placement-0",
@@ -66,6 +72,7 @@ func newConfig() *config {
 		healthzPort:   defaultHealthzPort,
 		certChainPath: defaultCredentialsPath,
 		tlsEnabled:    false,
+		namespace:     os.Getenv("NAMESPACE"),
 	}
 
 	flag.StringVar(&cfg.raftID, "id", cfg.raftID, "Placement server ID.")
@@ -75,12 +82,16 @@ func newConfig() *config {
 	flag.IntVar(&cfg.placementPort, "port", cfg.placementPort, "sets the gRPC port for the placement service")
 	flag.IntVar(&cfg.healthzPort, "healthz-port", cfg.healthzPort, "sets the HTTP port for the healthz server")
 	flag.StringVar(&cfg.certChainPath, "certchain", cfg.certChainPath, "Path to the credentials directory holding the cert chain")
-	flag.BoolVar(&cfg.tlsEnabled, "tls-enabled", cfg.tlsEnabled, "Should TLS be enabled for the placement gRPC server")
+	flag.BoolVar(&cfg.tlsEnabled, "tls-enabled", cfg.tlsEnabled, "Should TLS be enabled for the placement gRPC server. Requires sentry server connection.")
 	flag.IntVar(&cfg.replicationFactor, "replicationFactor", defaultReplicationFactor, "sets the replication factor for actor distribution on vnodes")
 
-	flag.StringVar(&credentials.RootCertFilename, "issuer-ca-filename", credentials.RootCertFilename, "Certificate Authority certificate filename")
-	flag.StringVar(&credentials.IssuerCertFilename, "issuer-certificate-filename", credentials.IssuerCertFilename, "Issuer certificate filename")
-	flag.StringVar(&credentials.IssuerKeyFilename, "issuer-key-filename", credentials.IssuerKeyFilename, "Issuer private key filename")
+	flag.StringVar(&cfg.trustDomain, "trust-domain", "localhost", "Trust domain for the Dapr control plane")
+	trustAnchorsFilePath := flag.String("trust-anchors-file", "/var/run/dapr.io/ca.crt", "Filepath to the trust anchors for the Dapr control plane")
+	flag.StringVar(&cfg.sentryAddress, "sentry-address", fmt.Sprintf("dapr-sentry.%s.svc", cfg.namespace), "Filepath to the trust anchors for the Dapr control plane")
+
+	depRCF := flag.String("issuer-ca-filename", "", "DEPRECATED")
+	depICF := flag.String("issuer-certificate-filename", "", "DEPRECATED")
+	depIKF := flag.String("issuer-key-filename", "", "DEPRECATED")
 
 	cfg.loggerOptions = logger.DefaultOptions()
 	cfg.loggerOptions.AttachCmdFlags(flag.StringVar, flag.BoolVar)
@@ -90,12 +101,25 @@ func newConfig() *config {
 
 	flag.Parse()
 
+	if len(*depRCF) > 0 || len(*depICF) > 0 || len(*depIKF) > 0 {
+		log.Warn("issuer-ca-filename, issuer-certificate-filename and issuer-key-filename are deprecated and will be removed in v1.12. Please use certchain instead.")
+	}
+
+	// TODO: Make this a file that is watched.
+	if cfg.tlsEnabled {
+		var err error
+		cfg.trustAnchors, err = os.ReadFile(*trustAnchorsFilePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read trust anchors file: %w", err)
+		}
+	}
+
 	cfg.raftPeers = parsePeersFromFlag(cfg.raftPeerString)
 	if cfg.raftLogStorePath != "" {
 		cfg.raftInMemEnabled = false
 	}
 
-	return &cfg
+	return &cfg, nil
 }
 
 func parsePeersFromFlag(val string) []raft.PeerInfo {

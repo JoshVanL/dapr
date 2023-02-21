@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/dapr/dapr/pkg/modes"
-	"github.com/dapr/dapr/pkg/runtime/security"
+	"github.com/dapr/dapr/pkg/security"
 )
 
 type authenticatorMock struct{}

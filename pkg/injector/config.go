@@ -24,8 +24,6 @@ import (
 
 // Config represents configuration options for the Dapr Sidecar Injector webhook server.
 type Config struct {
-	TLSCertFile                       string `envconfig:"TLS_CERT_FILE" required:"true"`
-	TLSKeyFile                        string `envconfig:"TLS_KEY_FILE" required:"true"`
 	SidecarImage                      string `envconfig:"SIDECAR_IMAGE" required:"true"`
 	SidecarImagePullPolicy            string `envconfig:"SIDECAR_IMAGE_PULL_POLICY"`
 	Namespace                         string `envconfig:"NAMESPACE" required:"true"`

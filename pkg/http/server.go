@@ -35,8 +35,8 @@ import (
 	diag "github.com/dapr/dapr/pkg/diagnostics"
 	diagUtils "github.com/dapr/dapr/pkg/diagnostics/utils"
 	httpMiddleware "github.com/dapr/dapr/pkg/middleware/http"
-	auth "github.com/dapr/dapr/pkg/runtime/security"
-	authConsts "github.com/dapr/dapr/pkg/runtime/security/consts"
+	"github.com/dapr/dapr/pkg/security"
+	"github.com/dapr/dapr/pkg/security/consts"
 	"github.com/dapr/dapr/utils/fasthttpadaptor"
 	"github.com/dapr/dapr/utils/nethttpadaptor"
 	"github.com/dapr/kit/logger"
@@ -279,16 +279,16 @@ func (s *server) useCors(next fasthttp.RequestHandler) fasthttp.RequestHandler {
 }
 
 func useAPIAuthentication(next fasthttp.RequestHandler) fasthttp.RequestHandler {
-	token := auth.GetAPIToken()
+	token := security.GetAPIToken()
 	if token == "" {
 		return next
 	}
 	log.Info("enabled token authentication on http server")
 
 	return func(ctx *fasthttp.RequestCtx) {
-		v := ctx.Request.Header.Peek(authConsts.APITokenHeader)
-		if auth.ExcludedRoute(string(ctx.Request.URI().FullURI())) || string(v) == token {
-			ctx.Request.Header.Del(authConsts.APITokenHeader)
+		v := ctx.Request.Header.Peek(consts.APITokenHeader)
+		if security.ExcludedRoute(string(ctx.Request.URI().FullURI())) || string(v) == token {
+			ctx.Request.Header.Del(consts.APITokenHeader)
 			next(ctx)
 		} else {
 			ctx.Error("invalid api token", http.StatusUnauthorized)
