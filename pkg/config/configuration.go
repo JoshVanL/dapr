@@ -57,7 +57,6 @@ const (
 	DefaultNamespace    = "default"
 	ActionPolicyApp     = "app"
 	ActionPolicyGlobal  = "global"
-	SpiffeIDPrefix      = "spiffe://"
 	HTTPProtocol        = "http"
 	GRPCProtocol        = "grpc"
 )
@@ -229,16 +228,11 @@ type NameResolutionSpec struct {
 }
 
 type MTLSSpec struct {
-	Enabled          bool   `json:"enabled" yaml:"enabled"`
-	WorkloadCertTTL  string `json:"workloadCertTTL" yaml:"workloadCertTTL"`
-	AllowedClockSkew string `json:"allowedClockSkew" yaml:"allowedClockSkew"`
-}
-
-// SpiffeID represents the separated fields in a spiffe id.
-type SpiffeID struct {
-	TrustDomain string
-	Namespace   string
-	AppID       string
+	Enabled                 bool   `json:"enabled" yaml:"enabled"`
+	WorkloadCertTTL         string `json:"workloadCertTTL" yaml:"workloadCertTTL"`
+	AllowedClockSkew        string `json:"allowedClockSkew" yaml:"allowedClockSkew"`
+	SentryAddress           string `json:"sentryAddress" yaml:"sentryAddress"`
+	ControlPlaneTrustDomain string `json:"controlPlaneTrustDomain" yaml:"controlPlaneTrustDomain"`
 }
 
 // FeatureSpec defines which preview features are enabled.

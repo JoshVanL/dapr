@@ -25,11 +25,12 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/dapr/kit/logger"
+	"github.com/spiffe/go-spiffe/v2/spiffeid"
 
-	daprCredentials "github.com/dapr/dapr/pkg/credentials"
 	diag "github.com/dapr/dapr/pkg/diagnostics"
 	"github.com/dapr/dapr/pkg/placement/hashing"
 	v1pb "github.com/dapr/dapr/pkg/proto/placement/v1"
+	"github.com/dapr/dapr/pkg/security"
 )
 
 var log = logger.NewLogger("dapr.runtime.actor.internal.placement")
@@ -90,10 +91,11 @@ type ActorPlacement struct {
 
 // NewActorPlacement initializes ActorPlacement for the actor service.
 func NewActorPlacement(
-	serverAddr []string, clientCert *daprCredentials.CertChain,
+	serverAddr []string,
 	appID, runtimeHostName string, actorTypes []string,
 	appHealthFn func() bool,
 	afterTableUpdateFn func(),
+	sec security.Interface, pid spiffeid.ID,
 ) *ActorPlacement {
 	servers := addDNSResolverPrefix(serverAddr)
 	return &ActorPlacement{
@@ -102,7 +104,7 @@ func NewActorPlacement(
 		runtimeHostName: runtimeHostName,
 		serverAddr:      servers,
 
-		client: newPlacementClient(getGrpcOptsGetter(servers, clientCert)),
+		client: newPlacementClient(getGrpcOptsGetter(servers, pid, sec)),
 
 		placementTableLock: &sync.RWMutex{},
 		placementTables:    &hashing.ConsistentHashTables{Entries: make(map[string]*hashing.Consistent)},

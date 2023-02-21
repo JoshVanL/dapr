@@ -19,6 +19,9 @@ rules:
   - apiGroups: ["authentication.k8s.io"]
     resources: ["tokenreviews"]
     verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get"]
 {{- if not .Values.global.rbac.namespaced }}
   - apiGroups: ["dapr.io"]
     resources: ["configurations"]
@@ -52,7 +55,7 @@ metadata:
     {{- end }}
 rules:
   - apiGroups: [""]
-    resources: ["secrets"]
+    resources: ["secrets", "configmaps"]
     verbs: ["get", "update"]
     resourceNames: ["dapr-trust-bundle"]
 {{- if eq .Values.global.rbac.namespaced true }}

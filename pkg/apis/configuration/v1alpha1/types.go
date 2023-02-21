@@ -118,6 +118,10 @@ type MTLSSpec struct {
 	WorkloadCertTTL string `json:"workloadCertTTL"`
 	// +optional
 	AllowedClockSkew string `json:"allowedClockSkew"`
+	// +optional
+	ControlPlaneTrustDomain string `json:"controlPlaneTrustDomain"`
+	// +optional
+	SentryAddress string `json:"sentryAddress"`
 }
 
 // SelectorSpec selects target services to which the handler is to be applied.
