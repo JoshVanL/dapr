@@ -18,8 +18,8 @@ import (
 
 	"github.com/dapr/dapr/pkg/apphealth"
 	config "github.com/dapr/dapr/pkg/config/modes"
-	"github.com/dapr/dapr/pkg/credentials"
 	"github.com/dapr/dapr/pkg/modes"
+	"github.com/dapr/dapr/pkg/security"
 )
 
 // Protocol is a communications protocol.
@@ -72,7 +72,6 @@ type Config struct {
 	MaxConcurrency               int
 	mtlsEnabled                  bool
 	SentryServiceAddress         string
-	CertChain                    *credentials.CertChain
 	AppSSL                       bool
 	MaxRequestBodySize           int
 	UnixDomainSocket             string
@@ -82,6 +81,7 @@ type Config struct {
 	DisableBuiltinK8sSecretStore bool
 	AppHealthCheck               *apphealth.Config
 	AppHealthCheckHTTPPath       string
+	Security                     security.Interface
 }
 
 // NewRuntimeConfigOpts contains options for NewRuntimeConfig.
@@ -103,7 +103,7 @@ type NewRuntimeConfigOpts struct {
 	EnableProfiling              bool
 	MaxConcurrency               int
 	MTLSEnabled                  bool
-	SentryAddress                string
+	SentryHost                string
 	AppSSL                       bool
 	MaxRequestBodySize           int
 	UnixDomainSocket             string
@@ -116,6 +116,9 @@ type NewRuntimeConfigOpts struct {
 	AppHealthProbeInterval       time.Duration
 	AppHealthProbeTimeout        time.Duration
 	AppHealthThreshold           int32
+	Security                     security.Interface
+	ConfigPath                   string
+	Namespace                    string
 }
 
 // NewRuntimeConfig returns a new runtime config.
@@ -152,7 +155,7 @@ func NewRuntimeConfig(opts NewRuntimeConfigOpts) *Config {
 		EnableProfiling:              opts.EnableProfiling,
 		MaxConcurrency:               opts.MaxConcurrency,
 		mtlsEnabled:                  opts.MTLSEnabled,
-		SentryServiceAddress:         opts.SentryAddress,
+		SentryServiceAddress:         opts.SentryHost,
 		AppSSL:                       opts.AppSSL,
 		MaxRequestBodySize:           opts.MaxRequestBodySize,
 		UnixDomainSocket:             opts.UnixDomainSocket,
@@ -162,5 +165,6 @@ func NewRuntimeConfig(opts NewRuntimeConfigOpts) *Config {
 		DisableBuiltinK8sSecretStore: opts.DisableBuiltinK8sSecretStore,
 		AppHealthCheck:               appHealthCheck,
 		AppHealthCheckHTTPPath:       opts.AppHealthCheckPath,
+		Security:                     opts.Security,
 	}
 }

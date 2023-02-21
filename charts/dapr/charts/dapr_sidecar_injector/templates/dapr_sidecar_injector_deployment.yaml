@@ -112,19 +112,13 @@ spec:
 {{- end }}
         - "--healthz-port"
         - "{{ .Values.healthzPort }}"
-{{- with .Values.global.issuerFilenames }}
-        - "--issuer-ca-secret-key"
-        - "{{ .ca }}"
-        - "--issuer-certificate-secret-key"
-        - "{{ .cert }}"
-        - "--issuer-key-secret-key"
-        - "{{ .key }}"
-{{- end }}
         env:
-        - name: TLS_CERT_FILE
-          value: /dapr/cert/tls.crt
-        - name: TLS_KEY_FILE
-          value: /dapr/cert/tls.key
+        - name: DAPR_PLACEMENT_TRUST_ANCHORS_FILE
+          value: /var/run/secrets/dapr.io/tls/ca.crt
+        - name: DAPR_PLACEMENT_CONTROL_PLANE_TRUST_DOMAIN
+          value: {{ .Values.global.mtls.controlPlaneTrustDomain }}
+        - name: DAPR_PLACEMENT_SENTRY_HOST
+          value: {{ .Values.global.mtls.sentryHost }}
 {{- if .Values.kubeClusterDomain }}
         - name: KUBE_CLUSTER_DOMAIN
           value: "{{ .Values.kubeClusterDomain }}"
@@ -180,13 +174,13 @@ spec:
         resources:
 {{ toYaml .Values.resources | indent 10 }}
         volumeMounts:
-        - name: cert
-          mountPath: /dapr/cert
+        - name: dapr-trust-bundle
+          mountPath: /var/run/secrets/dapr.io/tls
           readOnly: true
       volumes:
-      - name: cert
-        secret:
-          secretName: dapr-sidecar-injector-cert
+      - name: dapr-trust-bundle
+        configMap:
+          name: dapr-trust-bundle
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:

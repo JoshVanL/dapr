@@ -91,9 +91,9 @@ import (
 	runtimev1pb "github.com/dapr/dapr/pkg/proto/runtime/v1"
 	"github.com/dapr/dapr/pkg/resiliency"
 	runtimePubsub "github.com/dapr/dapr/pkg/runtime/pubsub"
-	"github.com/dapr/dapr/pkg/runtime/security"
 	"github.com/dapr/dapr/pkg/scopes"
-	sentryConsts "github.com/dapr/dapr/pkg/sentry/consts"
+	"github.com/dapr/dapr/pkg/security"
+	sentryConsts "github.com/dapr/dapr/pkg/security/consts"
 	daprt "github.com/dapr/dapr/pkg/testing"
 	"github.com/dapr/kit/logger"
 	"github.com/dapr/kit/ptr"
@@ -4188,7 +4188,7 @@ func NewTestDaprRuntimeConfig(mode modes.DaprMode, protocol string, appPort int)
 		EnableProfiling:              false,
 		MaxConcurrency:               -1,
 		MTLSEnabled:                  false,
-		SentryAddress:                "",
+		SentryHost:                "",
 		AppSSL:                       false,
 		MaxRequestBodySize:           4,
 		UnixDomainSocket:             "",

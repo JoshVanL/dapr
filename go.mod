@@ -14,6 +14,7 @@ require (
 	github.com/fasthttp/router v1.4.18
 	github.com/ghodss/yaml v1.0.1-0.20190212211648-25d852aebe32
 	github.com/go-logr/logr v1.2.3
+	github.com/gogo/status v1.1.1
 	github.com/golang/mock v1.6.0
 	github.com/golang/protobuf v1.5.3
 	github.com/google/cel-go v0.13.0
@@ -38,6 +39,7 @@ require (
 	github.com/prometheus/common v0.42.0
 	github.com/sony/gobreaker v0.5.0
 	github.com/spf13/cast v1.5.0
+	github.com/spiffe/go-spiffe/v2 v2.1.3
 	github.com/stretchr/testify v1.8.2
 	github.com/tidwall/transform v0.0.0-20201103190739-32f242e2dbde
 	github.com/valyala/fasthttp v1.45.0
@@ -67,6 +69,11 @@ require (
 	k8s.io/klog v1.0.0
 	k8s.io/metrics v0.26.3
 	sigs.k8s.io/controller-runtime v0.14.5
+)
+
+require (
+	github.com/gogo/googleapis v1.4.1 // indirect
+	github.com/zeebo/errs v1.3.0 // indirect
 )
 
 require (
@@ -198,8 +205,8 @@ require (
 	github.com/godbus/dbus v0.0.0-20190726142602-4481cbc300e2 // indirect
 	github.com/gofrs/uuid v3.3.0+incompatible // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
-	github.com/golang-jwt/jwt v3.2.2+incompatible // indirect
-	github.com/golang-jwt/jwt/v4 v4.4.3 // indirect
+	github.com/golang-jwt/jwt v3.2.2+incompatible
+	github.com/golang-jwt/jwt/v4 v4.4.3
 	github.com/golang-sql/civil v0.0.0-20190719163853-cb61b32ac6fe // indirect
 	github.com/golang-sql/sqlexp v0.1.0 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect

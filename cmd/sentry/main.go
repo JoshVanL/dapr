@@ -24,7 +24,6 @@ import (
 
 	"github.com/dapr/dapr/pkg/buildinfo"
 	"github.com/dapr/dapr/pkg/concurrency"
-	"github.com/dapr/dapr/pkg/credentials"
 	"github.com/dapr/dapr/pkg/health"
 	"github.com/dapr/dapr/pkg/metrics"
 	"github.com/dapr/dapr/pkg/sentry"
@@ -40,7 +39,7 @@ var log = logger.NewLogger("dapr.sentry")
 
 //nolint:gosec
 const (
-	defaultCredentialsPath = "/var/run/dapr/credentials"
+	defaultCredentialsPath = "/var/run/secrets/dapr.io/credentials"
 	// defaultDaprSystemConfigName is the default resource object name for Dapr System Config.
 	defaultDaprSystemConfigName = "daprsystem"
 
@@ -50,10 +49,9 @@ const (
 func main() {
 	configName := flag.String("config", defaultDaprSystemConfigName, "Path to config file, or name of a configuration object")
 	credsPath := flag.String("issuer-credentials", defaultCredentialsPath, "Path to the credentials directory holding the issuer data")
-	flag.StringVar(&credentials.RootCertFilename, "issuer-ca-filename", credentials.RootCertFilename, "Certificate Authority certificate filename")
-	flag.StringVar(&credentials.IssuerCertFilename, "issuer-certificate-filename", credentials.IssuerCertFilename, "Issuer certificate filename")
-	flag.StringVar(&credentials.IssuerKeyFilename, "issuer-key-filename", credentials.IssuerKeyFilename, "Issuer private key filename")
-	trustDomain := flag.String("trust-domain", "localhost", "The CA trust domain")
+	rootCertFilename := flag.String("issuer-ca-filename", config.DefaultRootCertFilename, "Certificate Authority certificate filename")
+	issuerCertFilename := flag.String("issuer-certificate-filename", config.DefaultIssuerCertFilename, "Issuer certificate filename")
+	issuerKeyFilename := flag.String("issuer-key-filename", config.DefaultIssuerKeyFilename, "Issuer private key filename")
 	tokenAudience := flag.String("token-audience", "", "Expected audience for tokens; multiple values can be separated by a comma")
 
 	loggerOptions := logger.DefaultOptions()
@@ -92,9 +90,9 @@ func main() {
 		log.Fatal(err)
 	}
 
-	issuerCertPath := filepath.Join(*credsPath, credentials.IssuerCertFilename)
-	issuerKeyPath := filepath.Join(*credsPath, credentials.IssuerKeyFilename)
-	rootCertPath := filepath.Join(*credsPath, credentials.RootCertFilename)
+	issuerCertPath := filepath.Join(*credsPath, *issuerCertFilename)
+	issuerKeyPath := filepath.Join(*credsPath, *issuerKeyFilename)
+	rootCertPath := filepath.Join(*credsPath, *rootCertFilename)
 
 	config, err := config.FromConfigName(*configName)
 	if err != nil {
@@ -104,7 +102,6 @@ func main() {
 	config.IssuerCertPath = issuerCertPath
 	config.IssuerKeyPath = issuerKeyPath
 	config.RootCertPath = rootCertPath
-	config.TrustDomain = *trustDomain
 	if *tokenAudience != "" {
 		config.TokenAudience = tokenAudience
 	}
@@ -121,9 +118,7 @@ func main() {
 	// events (as well as wanting to terminate the program on signals).
 	caMngrFactory := func() *concurrency.RunnerManager {
 		return concurrency.NewRunnerManager(
-			func(ctx context.Context) error {
-				return sentry.NewSentryCA().Start(ctx, config)
-			},
+			sentry.New(config).Start,
 			func(ctx context.Context) error {
 				select {
 				case <-ctx.Done():

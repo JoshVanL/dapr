@@ -12,4 +12,6 @@ spec:
     enabled: {{ .Values.global.mtls.enabled }}
     workloadCertTTL: {{ .Values.global.mtls.workloadCertTTL }}
     allowedClockSkew: {{ .Values.global.mtls.allowedClockSkew }}
+    controlPlaneTrustDomain: {{ .Values.global.mtls.controlPlaneTrustDomain }}
+    sentryHost: {{ .Values.global.mtls.sentryHost }}
 {{- end }}

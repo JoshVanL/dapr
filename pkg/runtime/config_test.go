@@ -40,7 +40,7 @@ func TestNewConfig(t *testing.T) {
 		EnableProfiling:              true,
 		MaxConcurrency:               1,
 		MTLSEnabled:                  true,
-		SentryAddress:                "localhost:5052",
+		SentryHost:                "localhost:5052",
 		AppSSL:                       true,
 		MaxRequestBodySize:           4,
 		UnixDomainSocket:             "",

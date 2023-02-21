@@ -69,10 +69,8 @@ func (i *injector) getPodPatchOperations(ctx context.Context, ar *v1.AdmissionRe
 
 	// Keep DNS resolution outside of GetSidecarContainer for unit testing.
 	placementAddress := sidecar.ServiceAddress(sidecar.ServicePlacement, namespace, i.config.KubeClusterDomain)
-	sentryAddress := sidecar.ServiceAddress(sidecar.ServiceSentry, namespace, i.config.KubeClusterDomain)
+	sentryHost := sidecar.ServiceAddress(sidecar.ServiceSentry, namespace, i.config.KubeClusterDomain)
 	apiSvcAddress := sidecar.ServiceAddress(sidecar.ServiceAPI, namespace, i.config.KubeClusterDomain)
-
-	trustAnchors, certChain, certKey := sidecar.GetTrustAnchorsAndCertChain(ctx, kubeClient, namespace)
 
 	// Get all volume mounts
 	volumeMounts := sidecar.GetVolumeMounts(pod)
@@ -93,12 +91,15 @@ func (i *injector) getPodPatchOperations(ctx context.Context, ar *v1.AdmissionRe
 	// Projected volume with the token
 	tokenVolume := sidecar.GetTokenVolume()
 
+	sec, err := i.secProv.Security(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	// Get the sidecar container
 	sidecarContainer, err := sidecar.GetSidecarContainer(sidecar.ContainerConfig{
 		AppID:                        appID,
 		Annotations:                  an,
-		CertChain:                    certChain,
-		CertKey:                      certKey,
 		ControlPlaneAddress:          apiSvcAddress,
 		DaprSidecarImage:             image,
 		Identity:                     req.Namespace + ":" + pod.Spec.ServiceAccountName,
@@ -107,14 +108,14 @@ func (i *injector) getPodPatchOperations(ctx context.Context, ar *v1.AdmissionRe
 		MTLSEnabled:                  mTLSEnabled(daprClient),
 		Namespace:                    req.Namespace,
 		PlacementServiceAddress:      placementAddress,
-		SentryAddress:                sentryAddress,
+		SentryHost:                sentryHost,
 		Tolerations:                  pod.Spec.Tolerations,
-		TrustAnchors:                 trustAnchors,
 		VolumeMounts:                 volumeMounts,
 		ComponentsSocketsVolumeMount: componentsSocketVolumeMount,
 		RunAsNonRoot:                 i.config.GetRunAsNonRoot(),
 		ReadOnlyRootFilesystem:       i.config.GetReadOnlyRootFilesystem(),
 		SidecarDropALLCapabilities:   i.config.GetDropCapabilities(),
+		Security:                     sec,
 	})
 	if err != nil {
 		return nil, err

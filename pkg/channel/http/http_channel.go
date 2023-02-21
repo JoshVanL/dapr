@@ -38,8 +38,8 @@ import (
 	httpMiddleware "github.com/dapr/dapr/pkg/middleware/http"
 	commonv1pb "github.com/dapr/dapr/pkg/proto/common/v1"
 	internalv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
-	auth "github.com/dapr/dapr/pkg/runtime/security"
-	authConsts "github.com/dapr/dapr/pkg/runtime/security/consts"
+	"github.com/dapr/dapr/pkg/security"
+	"github.com/dapr/dapr/pkg/security/consts"
 	streamutils "github.com/dapr/dapr/utils/streams"
 )
 
@@ -110,7 +110,7 @@ func CreateLocalChannel(config ChannelConfiguration) (channel.AppChannel, error)
 		},
 		baseAddress:           fmt.Sprintf("%s://%s:%d", scheme, channel.DefaultChannelAddress, config.Port),
 		tracingSpec:           config.TracingSpec,
-		appHeaderToken:        auth.GetAppToken(),
+		appHeaderToken:        security.GetAppToken(),
 		maxResponseBodySizeMB: config.MaxRequestBodySizeMB,
 	}
 
@@ -349,7 +349,7 @@ func (h *Channel) constructRequest(ctx context.Context, req *invokev1.InvokeMeth
 	}
 
 	if h.appHeaderToken != "" {
-		channelReq.Header.Set(authConsts.APITokenHeader, h.appHeaderToken)
+		channelReq.Header.Set(consts.APITokenHeader, h.appHeaderToken)
 	}
 
 	return channelReq, nil

@@ -89,6 +89,8 @@ The Helm chart has the follow configuration options that can be supplied:
 | `global.mtls.enabled`                     | Mutual TLS enablement                                                   | `true`                  |
 | `global.mtls.workloadCertTTL`             | TTL for workload cert                                                   | `24h`                   |
 | `global.mtls.allowedClockSkew`            | Allowed clock skew for workload cert rotation                           | `15m`                   |
+| `global.mtls.controlPlaneTrustDomain `    | Trust domain for control plane                                          | `cluster.local`         |
+| `global.mtls.sentryHost`               | Sentry address for control plane                                        | `dapr-sentry.{{ .ReleaseNamespace  }}.svc` |
 | `global.dnsSuffix`                        | Kuberentes DNS suffix                                                   | `.cluster.local`        |
 | `global.daprControlPlaneOs`               | Operating System for Dapr control plane                                 | `linux`                 |
 | `global.daprControlPlaneArch`             | CPU Architecture for Dapr control plane                                 | `amd64`                 |

@@ -22,6 +22,8 @@ global:
     enabled: true
     workloadCertTTL: 24h
     allowedClockSkew: 15m
+    controlPlaneTrustDomain: "cluster.local"
+    sentryHost: "dapr-sentry.{{ .Release.Namespace }}.svc"
   daprControlPlaneOs: linux
   labels: {}
   k8sLabels:
@@ -37,6 +39,7 @@ global:
   #   ca: "ca.crt"
   #   cert: "tls.crt"
   #   key: "tls.key"
+
   argoRolloutServiceReconciler:
     enabled: false
 

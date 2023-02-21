@@ -35,6 +35,7 @@ import (
 	"github.com/dapr/dapr/pkg/injector/monitoring"
 	"github.com/dapr/dapr/pkg/injector/namespacednamematcher"
 	"github.com/dapr/dapr/pkg/injector/sidecar"
+	"github.com/dapr/dapr/pkg/security"
 	"github.com/dapr/dapr/utils"
 	"github.com/dapr/kit/logger"
 )
@@ -74,6 +75,7 @@ type injector struct {
 
 	namespaceNameMatcher *namespacednamematcher.EqualPrefixNameNamespaceMatcher
 	ready                chan struct{}
+	secProv              security.Provider
 }
 
 // errorToAdmissionResponse is a helper function to create an AdmissionResponse
@@ -106,7 +108,7 @@ func getAppIDFromRequest(req *v1.AdmissionRequest) string {
 }
 
 // NewInjector returns a new Injector instance with the given config.
-func NewInjector(authUIDs []string, config Config, daprClient scheme.Interface, kubeClient kubernetes.Interface) (Injector, error) {
+func NewInjector(secProv security.Provider, authUIDs []string, config Config, daprClient scheme.Interface, kubeClient kubernetes.Interface) (Injector, error) {
 	mux := http.NewServeMux()
 
 	i := &injector{
@@ -123,6 +125,7 @@ func NewInjector(authUIDs []string, config Config, daprClient scheme.Interface, 
 		daprClient: daprClient,
 		authUIDs:   authUIDs,
 		ready:      make(chan struct{}),
+		secProv:    secProv,
 	}
 
 	matcher, err := createNamespaceNameMatcher(strings.TrimSpace(config.AllowedServiceAccountsPrefixNames))
@@ -195,6 +198,12 @@ func (i *injector) Run(ctx context.Context) error {
 		// Nop
 	}
 
+	sec, err := i.secProv.Security(ctx)
+	if err != nil {
+		return err
+	}
+	sec.TLSServerConfigBasicTLSOption(i.server.TLSConfig)
+
 	ln, err := net.Listen("tcp", i.server.Addr)
 	if err != nil {
 		return fmt.Errorf("error while creating listener: %w", err)
@@ -204,7 +213,7 @@ func (i *injector) Run(ctx context.Context) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		srverr := i.server.ServeTLS(ln, i.config.TLSCertFile, i.config.TLSKeyFile)
+		srverr := i.server.Serve(ln)
 		if !errors.Is(srverr, http.ErrServerClosed) {
 			errCh <- fmt.Errorf("sidecar injector error: %s", srverr)
 			return

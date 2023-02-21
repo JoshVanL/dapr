@@ -8,13 +8,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/dapr/dapr/pkg/apis/configuration/v1alpha1"
-	"github.com/dapr/dapr/pkg/credentials"
 )
 
 // Config returns an operator config options.
 type Config struct {
-	MTLSEnabled bool
-	Credentials credentials.TLSCredentials
+	MTLSEnabled             bool
+	ControlPlaneTrustDomain string
+	SentryHost           string
 }
 
 // GetNamespace returns the namespace for Dapr.
@@ -33,6 +33,8 @@ func LoadConfiguration(name string, client client.Client) (*Config, error) {
 		return nil, err
 	}
 	return &Config{
-		MTLSEnabled: conf.Spec.MTLSSpec.Enabled,
+		MTLSEnabled:             conf.Spec.MTLSSpec.Enabled,
+		ControlPlaneTrustDomain: conf.Spec.MTLSSpec.ControlPlaneTrustDomain,
+		SentryHost:           conf.Spec.MTLSSpec.SentryHost,
 	}, nil
 }

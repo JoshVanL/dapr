@@ -144,7 +144,7 @@ func TestGetSidecarContainer(t *testing.T) {
 			Namespace:               "dapr-system",
 			ControlPlaneAddress:     "controlplane:9000",
 			PlacementServiceAddress: "placement:50000",
-			SentryAddress:           "sentry:50000",
+			SentryHost:           "sentry:50000",
 			MTLSEnabled:             true,
 			Identity:                "pod_identity",
 		})
@@ -210,7 +210,7 @@ func TestGetSidecarContainer(t *testing.T) {
 			Namespace:               "dapr-system",
 			ControlPlaneAddress:     "controlplane:9000",
 			PlacementServiceAddress: "placement:50000",
-			SentryAddress:           "sentry:50000",
+			SentryHost:           "sentry:50000",
 			MTLSEnabled:             true,
 			Identity:                "pod_identity",
 		})
@@ -284,7 +284,7 @@ func TestGetSidecarContainer(t *testing.T) {
 			Namespace:               "dapr-system",
 			ControlPlaneAddress:     "controlplane:9000",
 			PlacementServiceAddress: "placement:50000",
-			SentryAddress:           "sentry:50000",
+			SentryHost:           "sentry:50000",
 			MTLSEnabled:             true,
 			Identity:                "pod_identity",
 		})
@@ -348,7 +348,7 @@ func TestGetSidecarContainer(t *testing.T) {
 			Annotations:             an,
 			ControlPlaneAddress:     "controlplane:9000",
 			PlacementServiceAddress: "placement:50000",
-			SentryAddress:           "sentry:50000",
+			SentryHost:           "sentry:50000",
 			MTLSEnabled:             true,
 		})
 
@@ -391,7 +391,7 @@ func TestGetSidecarContainer(t *testing.T) {
 			Annotations:             an,
 			ControlPlaneAddress:     "controlplane:9000",
 			PlacementServiceAddress: "placement:50000",
-			SentryAddress:           "sentry:50000",
+			SentryHost:           "sentry:50000",
 			MTLSEnabled:             true,
 		})
 
@@ -434,7 +434,7 @@ func TestGetSidecarContainer(t *testing.T) {
 			Annotations:             an,
 			ControlPlaneAddress:     "controlplane:9000",
 			PlacementServiceAddress: "placement:50000",
-			SentryAddress:           "sentry:50000",
+			SentryHost:           "sentry:50000",
 			MTLSEnabled:             true,
 		})
 
@@ -521,7 +521,7 @@ func TestGetSidecarContainer(t *testing.T) {
 			Annotations:             an,
 			ControlPlaneAddress:     "controlplane:9000",
 			PlacementServiceAddress: "placement:50000",
-			SentryAddress:           "sentry:50000",
+			SentryHost:           "sentry:50000",
 			MTLSEnabled:             true,
 		})
 
@@ -564,7 +564,7 @@ func TestGetSidecarContainer(t *testing.T) {
 			Annotations:             an,
 			ControlPlaneAddress:     "controlplane:9000",
 			PlacementServiceAddress: "placement:50000",
-			SentryAddress:           "sentry:50000",
+			SentryHost:           "sentry:50000",
 			MTLSEnabled:             true,
 		}
 

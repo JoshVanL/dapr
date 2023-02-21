@@ -68,8 +68,8 @@ spec:
         resources:
 {{ toYaml .Values.resources | indent 10 }}
         volumeMounts:
-          - name: credentials
-            mountPath: /var/run/dapr/credentials
+          - name: dapr-trust-bundle
+            mountPath: /var/run/secrets/dapr.io/tls
             readOnly: true
 {{- if eq .Values.global.ha.enabled true }}
   {{- if eq .Values.cluster.forceInMemoryLog false }}
@@ -137,14 +137,9 @@ spec:
         - "--enable-metrics=false"
 {{- end }}
         - "--tls-enabled"
-{{- with .Values.global.issuerFilenames }}
-        - "--issuer-ca-filename"
-        - "{{ .ca }}"
-        - "--issuer-certificate-filename"
-        - "{{ .cert }}"
-        - "--issuer-key-filename"
-        - "{{ .key }}"
-{{- end }}
+        - "--trust-domain={{ .Values.global.mtls.controlPlaneTrustDomain }}"
+        - "--trust-anchor-file=/var/run/secrets/dapr.io/tls/ca.crt"
+        - "--sentry-host={{ .Values.global.mtls.sentryHost }}"
 {{- if eq .Values.global.daprControlPlaneOs "linux" }}
         securityContext:
 {{- if eq .Values.cluster.forceInMemoryLog true }}
@@ -169,9 +164,9 @@ spec:
                 fieldPath: metadata.namespace
       serviceAccountName: dapr-placement
       volumes:
-        - name: credentials
-          secret:
-            secretName: dapr-trust-bundle
+        - name: dapr-test-bundle
+          configMap:
+            name: dapr-test-bundle
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:

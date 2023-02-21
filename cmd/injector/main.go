@@ -24,11 +24,11 @@ import (
 	"github.com/dapr/dapr/pkg/buildinfo"
 	scheme "github.com/dapr/dapr/pkg/client/clientset/versioned"
 	"github.com/dapr/dapr/pkg/concurrency"
-	"github.com/dapr/dapr/pkg/credentials"
 	"github.com/dapr/dapr/pkg/health"
 	"github.com/dapr/dapr/pkg/injector"
 	"github.com/dapr/dapr/pkg/injector/monitoring"
 	"github.com/dapr/dapr/pkg/metrics"
+	"github.com/dapr/dapr/pkg/security"
 	"github.com/dapr/dapr/pkg/signals"
 	"github.com/dapr/dapr/utils"
 	"github.com/dapr/kit/logger"
@@ -59,13 +59,27 @@ func main() {
 		log.Fatalf("failed to get authentication uids from services accounts: %s", err)
 	}
 
-	inj, err := injector.NewInjector(uids, cfg, daprClient, kubeClient)
+	secProv, err := security.New(security.Options{
+		SentryHost:              cfg.SentryHost,
+		ControlPlaneTrustDomain: cfg.ControlPlaneTrustDomain,
+		ControlPlaneNamespace:   cfg.Namespace,
+		TrustAnchorsFile:        cfg.TrustAnchorsFile,
+		AppID:                   "dapr-injector",
+		AppNamespace:            cfg.Namespace,
+		MTLSEnabled:             true,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	inj, err := injector.NewInjector(secProv, uids, cfg, daprClient, kubeClient)
 	if err != nil {
 		log.Fatalf("error creating injector: %s", err)
 	}
 
 	healthzServer := health.NewServer(log)
 	mngr := concurrency.NewRunnerManager(
+		secProv.Start,
 		inj.Run,
 		func(ctx context.Context) error {
 			if err := inj.Ready(ctx); err != nil {
@@ -105,11 +119,15 @@ func init() {
 
 	flag.IntVar(&healthzPort, "healthz-port", 8080, "The port used for health checks")
 
-	flag.StringVar(&credentials.RootCertFilename, "issuer-ca-secret-key", credentials.RootCertFilename, "Certificate Authority certificate secret key")
-	flag.StringVar(&credentials.IssuerCertFilename, "issuer-certificate-secret-key", credentials.IssuerCertFilename, "Issuer certificate secret key")
-	flag.StringVar(&credentials.IssuerKeyFilename, "issuer-key-secret-key", credentials.IssuerKeyFilename, "Issuer private key secret key")
+	depRCF := flag.String("issuer-ca-filename", "", "DEPRECATED")
+	depICF := flag.String("issuer-certificate-filename", "", "DEPRECATED")
+	depIKF := flag.String("issuer-key-filename", "", "DEPRECATED")
 
 	flag.Parse()
+
+	if len(*depRCF) > 0 || len(*depICF) > 0 || len(*depIKF) > 0 {
+		log.Warn("issuer-ca-filename, issuer-certificate-filename and issuer-key-filename are deprecated and will be removed in v1.12. Please use certchain instead.")
+	}
 
 	if err := utils.SetEnvVariables(map[string]string{
 		utils.KubeConfigVar: *kubeconfig,

@@ -24,8 +24,6 @@ import (
 
 // Config represents configuration options for the Dapr Sidecar Injector webhook server.
 type Config struct {
-	TLSCertFile                       string `envconfig:"TLS_CERT_FILE" required:"true"`
-	TLSKeyFile                        string `envconfig:"TLS_KEY_FILE" required:"true"`
 	SidecarImage                      string `envconfig:"SIDECAR_IMAGE" required:"true"`
 	SidecarImagePullPolicy            string `envconfig:"SIDECAR_IMAGE_PULL_POLICY"`
 	Namespace                         string `envconfig:"NAMESPACE" required:"true"`
@@ -37,6 +35,10 @@ type Config struct {
 	ReadOnlyRootFilesystem            string `envconfig:"SIDECAR_READ_ONLY_ROOT_FILESYSTEM"`
 	SidecarDropALLCapabilities        string `envconfig:"SIDECAR_DROP_ALL_CAPABILITIES"`
 
+	TrustAnchorsFile        string `envconfig:"DAPR_PLACEMENT_TRUST_ANCHORS_FILE"`
+	ControlPlaneTrustDomain string `envconfig:"DAPR_PLACEMENT_CONTROL_PLANE_TRUST_DOMAIN"`
+	SentryHost              string `envconfig:"DAPR_PLACEMENT_SENTRY_HOST"`
+
 	parsedEntrypointTolerations []corev1.Toleration
 }
 
@@ -45,7 +47,10 @@ type Config struct {
 // and/or override default values.
 func NewConfigWithDefaults() Config {
 	return Config{
-		SidecarImagePullPolicy: "Always",
+		SidecarImagePullPolicy:  "Always",
+		ControlPlaneTrustDomain: "cluster.local",
+		SentryHost:              "dapr-sentry.dapr-system.svc",
+		TrustAnchorsFile:        "/var/run/dapr.io/tls/ca.crt",
 	}
 }
 

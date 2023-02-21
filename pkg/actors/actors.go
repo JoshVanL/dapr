@@ -31,6 +31,7 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	"github.com/google/uuid"
 	"github.com/mitchellh/mapstructure"
+	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"github.com/valyala/fasthttp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -42,7 +43,6 @@ import (
 	"github.com/dapr/dapr/pkg/channel"
 	"github.com/dapr/dapr/pkg/concurrency"
 	configuration "github.com/dapr/dapr/pkg/config"
-	daprCredentials "github.com/dapr/dapr/pkg/credentials"
 	diag "github.com/dapr/dapr/pkg/diagnostics"
 	diagUtils "github.com/dapr/dapr/pkg/diagnostics/utils"
 	"github.com/dapr/dapr/pkg/health"
@@ -52,6 +52,7 @@ import (
 	internalv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 	"github.com/dapr/dapr/pkg/resiliency"
 	"github.com/dapr/dapr/pkg/retry"
+	"github.com/dapr/dapr/pkg/security"
 	"github.com/dapr/kit/logger"
 	timeutils "github.com/dapr/kit/time"
 )
@@ -114,7 +115,6 @@ type actorsRuntime struct {
 	evaluationLock         *sync.RWMutex
 	evaluationChan         chan struct{}
 	appHealthy             *atomic.Bool
-	certChain              *daprCredentials.CertChain
 	tracingSpec            configuration.TracingSpec
 	resiliency             resiliency.Provider
 	storeName              string
@@ -123,6 +123,7 @@ type actorsRuntime struct {
 	clock                  clock.WithTicker
 	internalActors         map[string]InternalActor
 	internalActorChannel   *internalActorChannel
+	sec                    security.Interface
 }
 
 // ActiveActorsCount contain actorType and count of actors each type has.
@@ -162,10 +163,10 @@ type ActorsOpts struct {
 	AppChannel       channel.AppChannel
 	GRPCConnectionFn GRPCConnectionFn
 	Config           Config
-	CertChain        *daprCredentials.CertChain
 	TracingSpec      configuration.TracingSpec
 	Resiliency       resiliency.Provider
 	StateStoreName   string
+	Security         security.Interface
 
 	// MockPlacement is a placement service implementation used for testing
 	MockPlacement PlacementService
@@ -193,7 +194,6 @@ func newActorsWithClock(opts ActorsOpts, clock clock.WithTicker) Actors {
 		appChannel:             opts.AppChannel,
 		grpcConnectionFn:       opts.GRPCConnectionFn,
 		config:                 opts.Config,
-		certChain:              opts.CertChain,
 		tracingSpec:            opts.TracingSpec,
 		resiliency:             opts.Resiliency,
 		storeName:              opts.StateStoreName,
@@ -215,6 +215,7 @@ func newActorsWithClock(opts ActorsOpts, clock clock.WithTicker) Actors {
 		clock:                  clock,
 		internalActors:         map[string]InternalActor{},
 		internalActorChannel:   newInternalActorChannel(),
+		sec:                    opts.Security,
 	}
 }
 
@@ -247,12 +248,23 @@ func (a *actorsRuntime) Init() error {
 	}
 	appHealthFn := func() bool { return a.appHealthy.Load() }
 
+	placementID, err := spiffeid.FromPathf(
+		a.sec.ControlPlaneTrustDomain(),
+		"/ns/%s/dapr-placement",
+		a.sec.ControlPlaneNamespace(),
+	)
+	if err != nil {
+		return err
+	}
+
 	if a.placement == nil {
 		a.placement = internal.NewActorPlacement(
-			a.config.PlacementAddresses, a.certChain,
+			a.config.PlacementAddresses,
 			a.config.AppID, hostname, a.config.HostedActorTypes,
 			appHealthFn,
-			afterTableUpdateFn)
+			afterTableUpdateFn,
+			a.sec, placementID,
+		)
 	}
 
 	go a.placement.Start()
@@ -566,12 +578,11 @@ func (a *actorsRuntime) getAppChannel(actorType string) channel.AppChannel {
 	return a.appChannel
 }
 
-func (a *actorsRuntime) callRemoteActor(
-	ctx context.Context,
+func (a *actorsRuntime) callRemoteActor(ctx context.Context,
 	targetAddress, targetID string,
 	req *invokev1.InvokeMethodRequest,
 ) (*invokev1.InvokeMethodResponse, func(destroy bool), error) {
-	conn, teardown, err := a.grpcConnectionFn(context.TODO(), targetAddress, targetID, a.config.Namespace)
+	conn, teardown, err := a.grpcConnectionFn(ctx, targetAddress, targetID, a.config.Namespace)
 	if err != nil {
 		return nil, teardown, err
 	}
