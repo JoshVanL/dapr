@@ -258,9 +258,11 @@ type NameResolutionSpec struct {
 }
 
 type MTLSSpec struct {
-	Enabled          bool   `json:"enabled" yaml:"enabled"`
-	WorkloadCertTTL  string `json:"workloadCertTTL" yaml:"workloadCertTTL"`
-	AllowedClockSkew string `json:"allowedClockSkew" yaml:"allowedClockSkew"`
+	Enabled                 bool   `json:"enabled" yaml:"enabled"`
+	WorkloadCertTTL         string `json:"workloadCertTTL" yaml:"workloadCertTTL"`
+	AllowedClockSkew        string `json:"allowedClockSkew" yaml:"allowedClockSkew"`
+	SentryAddress           string `json:"sentryAddress" yaml:"sentryAddress"`
+	ControlPlaneTrustDomain string `json:"controlPlaneTrustDomain" yaml:"controlPlaneTrustDomain"`
 }
 
 // SpiffeID represents the separated fields in a spiffe id.
