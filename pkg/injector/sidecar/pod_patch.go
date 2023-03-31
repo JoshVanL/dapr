@@ -24,7 +24,7 @@ import (
 	"github.com/dapr/dapr/pkg/credentials"
 	"github.com/dapr/dapr/pkg/injector/annotations"
 	"github.com/dapr/dapr/pkg/injector/patcher"
-	sentryConsts "github.com/dapr/dapr/pkg/sentry/consts"
+	"github.com/dapr/dapr/pkg/security/consts"
 	"github.com/dapr/kit/ptr"
 )
 
@@ -197,7 +197,7 @@ func GetTokenVolume() corev1.Volume {
 				DefaultMode: ptr.Of(int32(420)),
 				Sources: []corev1.VolumeProjection{{
 					ServiceAccountToken: &corev1.ServiceAccountTokenProjection{
-						Audience:          sentryConsts.ServiceAccountTokenAudience,
+						Audience:          consts.ServiceAccountTokenAudience,
 						ExpirationSeconds: ptr.Of(int64(7200)),
 						Path:              "token",
 					},
@@ -209,7 +209,7 @@ func GetTokenVolume() corev1.Volume {
 
 // GetTrustAnchorsAndCertChain returns the trust anchor and certs.
 func GetTrustAnchorsAndCertChain(ctx context.Context, kubeClient kubernetes.Interface, namespace string) (string, string, string) {
-	secret, err := kubeClient.CoreV1().Secrets(namespace).Get(ctx, sentryConsts.TrustBundleK8sSecretName, metav1.GetOptions{})
+	secret, err := kubeClient.CoreV1().Secrets(namespace).Get(ctx, consts.TrustBundleK8sSecretName, metav1.GetOptions{})
 	if err != nil {
 		return "", "", ""
 	}
