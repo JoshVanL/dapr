@@ -136,9 +136,10 @@ linters-settings:
       - "github.com/benbjohnson/clock": "must use k8s.io/utils/clock"
       - "github.com/ghodss/yaml": "must use sigs.k8s.io/yaml"
       - "gopkg.in/yaml.v2": "must use gopkg.in/yaml.v3"
-      - "github.com/golang-jwt/jwt": "must use github.com/golang-jwt/jwt/v4"
-      - "github.com/golang-jwt/jwt/v2": "must use github.com/golang-jwt/jwt/v4"
-      - "github.com/golang-jwt/jwt/v3": "must use github.com/golang-jwt/jwt/v4"
+      - "github.com/golang-jwt/jwt": "must use github.com/lestrrat-go/jwx/v2"
+      - "github.com/golang-jwt/jwt/v2": "must use github.com/lestrrat-go/jwx/v2"
+      - "github.com/golang-jwt/jwt/v3": "must use github.com/lestrrat-go/jwx/v2"
+      - "github.com/golang-jwt/jwt/v4": "must use github.com/lestrrat-go/jwx/v2"
   misspell:
     # Correct spellings using locale preferences for US or UK.
     # Default is to use a neutral variety of English.
