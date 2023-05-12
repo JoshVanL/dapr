@@ -84,11 +84,10 @@ func (a *app) Setup(t *testing.T) []framework.Option {
 }
 
 func (a *app) Run(t *testing.T, ctx context.Context) {
-	done := make(chan struct{})
+	srvCloseErr := make(chan error)
 
 	go func() {
-		defer close(done)
-		require.ErrorIs(t, a.server.Serve(a.listener), http.ErrServerClosed)
+		srvCloseErr <- a.server.Serve(a.listener)
 	}()
 
 	assert.Eventually(t, func() bool {
@@ -136,7 +135,8 @@ func (a *app) Run(t *testing.T, ctx context.Context) {
 	require.NoError(t, a.server.Shutdown(ctx))
 
 	select {
-	case <-done:
+	case err := <-srvCloseErr:
+		require.ErrorIs(t, err, http.ErrServerClosed)
 	case <-time.After(5 * time.Second):
 		t.Error("timed out waiting for healthz server to close")
 	}

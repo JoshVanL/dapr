@@ -123,7 +123,7 @@ func buildBinary(t *testing.T, name string) {
 	t.Helper()
 	env := fmt.Sprintf("DAPR_INTEGRATION_%s_PATH", strings.ToUpper(name))
 	if _, ok := os.LookupEnv(env); !ok {
-		t.Logf("%q not set, building %s binary", env, name)
+		t.Logf("%q not set, building %q binary", env, name)
 
 		_, tfile, _, ok := runtime.Caller(0)
 		require.True(t, ok)
