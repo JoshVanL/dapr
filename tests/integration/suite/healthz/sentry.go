@@ -16,7 +16,6 @@ package healthz
 import (
 	"context"
 	"fmt"
-	"net"
 	"net/http"
 	"testing"
 	"time"
@@ -46,17 +45,10 @@ func (s *sentry) Setup(t *testing.T) []framework.Option {
 }
 
 func (s *sentry) Run(t *testing.T, _ context.Context) {
-	assert.Eventuallyf(t, func() bool {
-		conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", s.proc.HealthzPort))
-		if err != nil {
-			return false
-		}
-		require.NoError(t, conn.Close())
-		return true
-	}, time.Second*5, 100*time.Millisecond, "healthz port %d not ready", s.proc.HealthzPort)
+	s.proc.WaitUntilRunning(t)
 
 	assert.Eventually(t, func() bool {
-		resp, err := http.DefaultClient.Get(fmt.Sprintf("http://127.0.0.1:%d/healthz", s.proc.HealthzPort))
+		resp, err := http.DefaultClient.Get(fmt.Sprintf("http://127.0.0.1:%d/healthz", s.proc.HealthzPort()))
 		require.NoError(t, err)
 		require.NoError(t, resp.Body.Close())
 		return http.StatusOK == resp.StatusCode

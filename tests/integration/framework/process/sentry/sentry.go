@@ -18,12 +18,15 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/dapr/dapr/pkg/sentry/ca"
@@ -54,10 +57,10 @@ type Sentry struct {
 	exec     process.Interface
 	freeport *freeport.FreePort
 
-	CA          *certs.Credentials
-	Port        int
-	HealthzPort int
-	MetricsPort int
+	ca          *certs.Credentials
+	port        int
+	healthzPort int
+	metricsPort int
 }
 
 func New(t *testing.T, fopts ...Option) *Sentry {
@@ -118,10 +121,10 @@ func New(t *testing.T, fopts ...Option) *Sentry {
 	return &Sentry{
 		exec:        exec.New(t, binary.EnvValue("sentry"), args, opts.execOpts...),
 		freeport:    fp,
-		CA:          opts.ca,
-		Port:        opts.port,
-		MetricsPort: opts.metricsPort,
-		HealthzPort: opts.healthzPort,
+		ca:          opts.ca,
+		port:        opts.port,
+		metricsPort: opts.metricsPort,
+		healthzPort: opts.healthzPort,
 	}
 }
 
@@ -132,4 +135,31 @@ func (s *Sentry) Run(t *testing.T, ctx context.Context) {
 
 func (s *Sentry) Cleanup(t *testing.T) {
 	s.exec.Cleanup(t)
+}
+
+func (s *Sentry) WaitUntilRunning(t *testing.T) {
+	assert.Eventually(t, func() bool {
+		conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", s.port))
+		if err != nil {
+			return false
+		}
+		require.NoError(t, conn.Close())
+		return true
+	}, time.Second*5, 100*time.Millisecond)
+}
+
+func (s *Sentry) CA() *certs.Credentials {
+	return s.ca
+}
+
+func (s *Sentry) Port() int {
+	return s.port
+}
+
+func (s *Sentry) HealthzPort() int {
+	return s.healthzPort
+}
+
+func (s *Sentry) MetricsPort() int {
+	return s.metricsPort
 }

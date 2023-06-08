@@ -21,6 +21,12 @@ func WithExecOptions(execOptions ...exec.Option) Option {
 	}
 }
 
+func WithLogLevel(logLevel string) Option {
+	return func(o *options) {
+		o.logLevel = logLevel
+	}
+}
+
 func WithAppID(appID string) Option {
 	return func(o *options) {
 		o.appID = appID

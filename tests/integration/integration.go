@@ -16,28 +16,32 @@ package integration
 import (
 	"context"
 	"os"
-	"path/filepath"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/dapr/dapr/tests/integration/framework"
 	"github.com/dapr/dapr/tests/integration/framework/binary"
 	"github.com/dapr/dapr/tests/integration/suite"
+
+	_ "github.com/dapr/dapr/tests/integration/suite/daprd"
 	_ "github.com/dapr/dapr/tests/integration/suite/healthz"
 	_ "github.com/dapr/dapr/tests/integration/suite/ports"
 )
 
 const (
-	defaultConcurrency = 3
+	defaultConcurrency = 5
 
 	envConcurrency = "DAPR_INTEGRATION_CONCURRENCY"
 )
 
 func RunIntegrationTests(t *testing.T) {
 	// Parallelise the integration tests, but don't run more than `conc` (default
-	// 3) at once.
+	// 5) at once.
 	conc := concurrency(t)
 	t.Logf("running integration tests with concurrency: %d", conc)
 
@@ -48,7 +52,9 @@ func RunIntegrationTests(t *testing.T) {
 	for _, tcase := range suite.All() {
 		tcase := tcase
 		tof := reflect.TypeOf(tcase).Elem()
-		testName := filepath.Base(tof.PkgPath()) + "/" + tof.Name()
+		_, aft, ok := strings.Cut(tof.PkgPath(), "tests/integration/suite/")
+		require.True(t, ok)
+		testName := aft + "/" + tof.Name()
 
 		t.Run(testName, func(t *testing.T) {
 			t.Logf("%s: setting up test case", testName)
