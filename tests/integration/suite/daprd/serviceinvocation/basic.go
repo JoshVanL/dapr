@@ -19,6 +19,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -192,5 +193,26 @@ func (b *basic) Run(t *testing.T, ctx context.Context) {
 		require.NoError(t, err)
 		require.NoError(t, resp.Body.Close())
 		assert.Equal(t, "ok", string(body))
+	})
+
+	t.Run("parallel requests", func(t *testing.T) {
+		var wg sync.WaitGroup
+		wg.Add(100)
+		for i := 0; i < 100; i++ {
+			go func() {
+				defer wg.Done()
+				reqURL := fmt.Sprintf("http://localhost:%d/v1.0/invoke/%s/method/foo", b.daprd1.HTTPPort(), b.daprd2.AppID())
+				req, err := http.NewRequest(http.MethodPost, reqURL, nil)
+				require.NoError(t, err)
+				resp, err := http.DefaultClient.Do(req)
+				require.NoError(t, err)
+				assert.Equal(t, http.StatusCreated, resp.StatusCode)
+				body, err := ioutil.ReadAll(resp.Body)
+				require.NoError(t, err)
+				require.NoError(t, resp.Body.Close())
+				assert.Equal(t, "POST", string(body))
+			}()
+		}
+		wg.Wait()
 	})
 }
