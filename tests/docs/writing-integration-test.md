@@ -15,6 +15,13 @@ always built from source within the test.
 go test -v -race -tags="integration" ./tests/integration`
 ```
 
+You can also invoke a specific test which is likely to be more useful during
+development:
+
+```go
+go test -v -race -tags="integration" -run Test_Integration/daprd/serviceinvocation/fuzzhttp ./tests/integration
+```
+
 Rather than building from source, you can also set a custom daprd binary path
 with the environment variable `DAPR_INTEGRATION_DAPRD_PATH`.
 

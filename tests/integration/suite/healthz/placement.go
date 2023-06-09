@@ -53,6 +53,7 @@ func (p *placement) Run(t *testing.T, ctx context.Context) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 		require.NoError(t, err)
 		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
 		require.NoError(t, resp.Body.Close())
 		return http.StatusOK == resp.StatusCode
 	}, time.Second*10, 100*time.Millisecond)

@@ -15,6 +15,26 @@ package daprd
 
 import "github.com/dapr/dapr/tests/integration/framework/process/exec"
 
+// options contains the options for running Daprd in integration tests.
+type options struct {
+	execOpts []exec.Option
+
+	logLevel                string
+	appID                   string
+	appPort                 int
+	grpcPort                int
+	httpPort                int
+	internalGRPCPort        int
+	publicPort              int
+	metricsPort             int
+	profilePort             int
+	appHealthCheck          bool
+	appHealthCheckPath      string
+	appHealthProbeInterval  int
+	appHealthProbeThreshold int
+	componentFiles          []string
+}
+
 func WithExecOptions(execOptions ...exec.Option) Option {
 	return func(o *options) {
 		o.execOpts = execOptions
@@ -96,5 +116,11 @@ func WithAppHealthProbeInterval(interval int) Option {
 func WithAppHealthProbeThreshold(threshold int) Option {
 	return func(o *options) {
 		o.appHealthProbeThreshold = threshold
+	}
+}
+
+func WithComponentFiles(files ...string) Option {
+	return func(o *options) {
+		o.componentFiles = files
 	}
 }

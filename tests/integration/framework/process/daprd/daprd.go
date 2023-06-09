@@ -17,6 +17,8 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -31,25 +33,6 @@ import (
 	"github.com/dapr/dapr/tests/integration/framework/process/exec"
 	"github.com/dapr/dapr/tests/integration/framework/process/http"
 )
-
-// options contains the options for running Daprd in integration tests.
-type options struct {
-	execOpts []exec.Option
-
-	logLevel                string
-	appID                   string
-	appPort                 int
-	grpcPort                int
-	httpPort                int
-	internalGRPCPort        int
-	publicPort              int
-	metricsPort             int
-	profilePort             int
-	appHealthCheck          bool
-	appHealthCheckPath      string
-	appHealthProbeInterval  int
-	appHealthProbeThreshold int
-}
 
 // Option is a function that configures the dapr process.
 type Option func(*options)
@@ -94,6 +77,11 @@ func New(t *testing.T, fopts ...Option) *Daprd {
 		fopt(&opts)
 	}
 
+	dir := t.TempDir()
+	for i, file := range opts.componentFiles {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, strconv.Itoa(i)+".yaml"), []byte(file), 0o600))
+	}
+
 	args := []string{
 		"--log-level=" + opts.logLevel,
 		"--app-id=" + opts.appID,
@@ -110,6 +98,9 @@ func New(t *testing.T, fopts ...Option) *Daprd {
 	}
 	if opts.appHealthCheckPath != "" {
 		args = append(args, "--app-health-check-path="+opts.appHealthCheckPath)
+	}
+	if len(opts.componentFiles) > 0 {
+		args = append(args, "-components-path="+dir)
 	}
 
 	return &Daprd{

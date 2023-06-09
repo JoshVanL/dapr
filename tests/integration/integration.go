@@ -34,14 +34,14 @@ import (
 )
 
 const (
-	defaultConcurrency = 5
+	defaultConcurrency = 3
 
 	envConcurrency = "DAPR_INTEGRATION_CONCURRENCY"
 )
 
 func RunIntegrationTests(t *testing.T) {
 	// Parallelise the integration tests, but don't run more than `conc` (default
-	// 5) at once.
+	// 3) at once.
 	conc := concurrency(t)
 	t.Logf("running integration tests with concurrency: %d", conc)
 
@@ -57,10 +57,10 @@ func RunIntegrationTests(t *testing.T) {
 		testName := aft + "/" + tof.Name()
 
 		t.Run(testName, func(t *testing.T) {
+			t.Parallel()
+
 			t.Logf("%s: setting up test case", testName)
 			options := tcase.Setup(t)
-
-			t.Parallel()
 
 			// Wait for a slot to become available.
 			guard <- struct{}{}
@@ -72,11 +72,12 @@ func RunIntegrationTests(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 
-			t.Log("running framework")
 			f := framework.Run(t, ctx, options...)
 
-			t.Log("running test case")
-			tcase.Run(t, ctx)
+			t.Run("run", func(t *testing.T) {
+				t.Log("running test case")
+				tcase.Run(t, ctx)
+			})
 
 			t.Log("cleaning up framework")
 			f.Cleanup(t)

@@ -14,13 +14,13 @@ limitations under the License.
 package binary
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -31,24 +31,26 @@ func BuildAll(t *testing.T) {
 
 	binaryNames := []string{"daprd", "placement", "sentry"}
 
-	var wg sync.WaitGroup
-	wg.Add(len(binaryNames))
+	err := make(chan error)
 	for _, name := range binaryNames {
 		go func(name string) {
-			defer wg.Done()
-			Build(t, name)
+			err <- Build(t, name)
 		}(name)
 	}
-	wg.Wait()
+
+	for i := 0; i < len(binaryNames); i++ {
+		require.NoError(t, <-err)
+	}
 }
 
-func Build(t *testing.T, name string) {
-	t.Helper()
+func Build(t *testing.T, name string) error {
 	if _, ok := os.LookupEnv(EnvKey(name)); !ok {
 		t.Logf("%q not set, building %q binary", EnvKey(name), name)
 
 		_, tfile, _, ok := runtime.Caller(0)
-		require.True(t, ok)
+		if !ok {
+			return errors.New("failed to get caller info")
+		}
 		rootDir := filepath.Join(filepath.Dir(tfile), "../../../..")
 
 		// Use a consistent temp dir for the binary so that the binary is cached on
@@ -59,7 +61,9 @@ func Build(t *testing.T, name string) {
 		}
 
 		// Ensure CGO is disabled to avoid linking against system libraries.
-		require.NoError(t, os.Setenv("CGO_ENABLED", "0"))
+		if err := os.Setenv("CGO_ENABLED", "0"); err != nil {
+			return err
+		}
 
 		t.Logf("Root dir: %q", rootDir)
 		t.Logf("Compiling %q binary to: %q", name, binPath)
@@ -67,10 +71,14 @@ func Build(t *testing.T, name string) {
 		cmd.Dir = rootDir
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
-		require.NoError(t, cmd.Run())
+		if err := cmd.Run(); err != nil {
+			return err
+		}
 
-		require.NoError(t, os.Setenv(EnvKey(name), binPath))
+		return os.Setenv(EnvKey(name), binPath)
 	}
+
+	return nil
 }
 
 func EnvValue(name string) string {
