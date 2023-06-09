@@ -16,13 +16,16 @@ package components
 import (
 	"bufio"
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
-	"github.com/dapr/dapr/utils"
-
+	"k8s.io/apimachinery/pkg/api/validation/path"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/yaml"
+
+	"github.com/dapr/dapr/utils"
 )
 
 const yamlSeparator = "\n---"
@@ -103,8 +106,9 @@ func (m DiskManifestLoader[T]) loadManifestsFromFile(manifestPath string) []T {
 	return manifests
 }
 
-type typeInfo struct {
-	metav1.TypeMeta `json:",inline"`
+type metadataInfo struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
 }
 
 // decodeYaml decodes the yaml document.
@@ -126,13 +130,18 @@ func (m DiskManifestLoader[T]) decodeYaml(b []byte) ([]T, []error) {
 		}
 
 		scannerBytes := scanner.Bytes()
-		var ti typeInfo
+		var ti metadataInfo
 		if err := yaml.Unmarshal(scannerBytes, &ti); err != nil {
 			errors = append(errors, err)
 			continue
 		}
 
 		if ti.Kind != m.kind {
+			continue
+		}
+
+		if errs := path.IsValidPathSegmentName(ti.Name); len(errs) > 0 {
+			errors = append(errors, fmt.Errorf("invalid name %q for %q: %s", ti.Name, m.kind, strings.Join(errs, "; ")))
 			continue
 		}
 
@@ -144,6 +153,7 @@ func (m DiskManifestLoader[T]) decodeYaml(b []byte) ([]T, []error) {
 			errors = append(errors, err)
 			continue
 		}
+
 		list = append(list, manifest)
 	}
 
