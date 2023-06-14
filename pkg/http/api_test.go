@@ -4418,7 +4418,8 @@ func TestV1StateEndpoints(t *testing.T) {
 	t.Run("Update state - PUT verb supported", func(t *testing.T) {
 		apiPath := fmt.Sprintf("v1.0/state/%s", storeName)
 		request := []state.SetRequest{{
-			Key: "good-key",
+			Key:   "good-key",
+			Value: "a value",
 		}}
 		b, _ := json.Marshal(request)
 		// act
@@ -4431,7 +4432,8 @@ func TestV1StateEndpoints(t *testing.T) {
 	t.Run("Update state - No ETag", func(t *testing.T) {
 		apiPath := fmt.Sprintf("v1.0/state/%s", storeName)
 		request := []state.SetRequest{{
-			Key: "good-key",
+			Key:   "good-key",
+			Value: "a value",
 		}}
 		b, _ := json.Marshal(request)
 		// act
@@ -4444,8 +4446,9 @@ func TestV1StateEndpoints(t *testing.T) {
 	t.Run("Update state - State Error", func(t *testing.T) {
 		apiPath := fmt.Sprintf("v1.0/state/%s", storeName)
 		request := []state.SetRequest{{
-			Key:  "error-key",
-			ETag: ptr.Of(""),
+			Key:   "error-key",
+			Value: "a value",
+			ETag:  ptr.Of(""),
 		}}
 		b, _ := json.Marshal(request)
 		// act
@@ -4458,8 +4461,9 @@ func TestV1StateEndpoints(t *testing.T) {
 	t.Run("Update state - Matching ETag", func(t *testing.T) {
 		apiPath := fmt.Sprintf("v1.0/state/%s", storeName)
 		request := []state.SetRequest{{
-			Key:  "good-key",
-			ETag: &etag,
+			Key:   "good-key",
+			Value: "a value",
+			ETag:  &etag,
 		}}
 		b, _ := json.Marshal(request)
 		// act
@@ -4473,8 +4477,9 @@ func TestV1StateEndpoints(t *testing.T) {
 		invalidEtag := "BAD ETAG"
 		apiPath := fmt.Sprintf("v1.0/state/%s", storeName)
 		request := []state.SetRequest{{
-			Key:  "good-key",
-			ETag: &invalidEtag,
+			Key:   "good-key",
+			Value: "a value",
+			ETag:  &invalidEtag,
 		}}
 		b, _ := json.Marshal(request)
 		// act
@@ -4486,8 +4491,8 @@ func TestV1StateEndpoints(t *testing.T) {
 	t.Run("Update bulk state - No ETag", func(t *testing.T) {
 		apiPath := fmt.Sprintf("v1.0/state/%s", storeName)
 		request := []state.SetRequest{
-			{Key: "good-key"},
-			{Key: "good-key2"},
+			{Key: "good-key", Value: "a value"},
+			{Key: "good-key2", Value: "a value"},
 		}
 		b, _ := json.Marshal(request)
 		// act
@@ -4500,8 +4505,8 @@ func TestV1StateEndpoints(t *testing.T) {
 	t.Run("Update bulk state - State Error", func(t *testing.T) {
 		apiPath := fmt.Sprintf("v1.0/state/%s", storeName)
 		request := []state.SetRequest{
-			{Key: "good-key"},
-			{Key: "error-key"},
+			{Key: "good-key", Value: "a value"},
+			{Key: "error-key", Value: "a value"},
 		}
 		b, _ := json.Marshal(request)
 		// act
@@ -4514,8 +4519,8 @@ func TestV1StateEndpoints(t *testing.T) {
 	t.Run("Update bulk state - Matching ETag", func(t *testing.T) {
 		apiPath := fmt.Sprintf("v1.0/state/%s", storeName)
 		request := []state.SetRequest{
-			{Key: "good-key", ETag: &etag},
-			{Key: "good-key2", ETag: &etag},
+			{Key: "good-key", ETag: &etag, Value: "a value"},
+			{Key: "good-key2", ETag: &etag, Value: "a value"},
 		}
 		b, _ := json.Marshal(request)
 		// act
@@ -4528,8 +4533,8 @@ func TestV1StateEndpoints(t *testing.T) {
 	t.Run("Update bulk state - One has invalid ETag", func(t *testing.T) {
 		apiPath := fmt.Sprintf("v1.0/state/%s", storeName)
 		request := []state.SetRequest{
-			{Key: "good-key", ETag: &etag},
-			{Key: "good-key2", ETag: ptr.Of("BAD ETAG")},
+			{Key: "good-key", ETag: &etag, Value: "a value"},
+			{Key: "good-key2", ETag: ptr.Of("BAD ETAG"), Value: "a value"},
 		}
 		b, _ := json.Marshal(request)
 		// act
@@ -4701,7 +4706,7 @@ func TestV1StateEndpoints(t *testing.T) {
 		apiPath := fmt.Sprintf("v1.0/state/%s", "failStore")
 
 		request := []state.SetRequest{{
-			Key: "failingSetKey",
+			Key: "failingSetKey", Value: []byte("value"),
 		}}
 		b, _ := json.Marshal(request)
 
@@ -4714,7 +4719,7 @@ func TestV1StateEndpoints(t *testing.T) {
 		apiPath := fmt.Sprintf("v1.0/state/%s", "failStore")
 
 		request := []state.SetRequest{{
-			Key: "timeoutSetKey",
+			Key: "timeoutSetKey", Value: []byte("value"),
 		}}
 		b, _ := json.Marshal(request)
 
@@ -4770,10 +4775,12 @@ func TestV1StateEndpoints(t *testing.T) {
 
 		reqs := []state.SetRequest{
 			{
-				Key: "failingBulkSetKey",
+				Key:   "failingBulkSetKey",
+				Value: []byte("value"),
 			},
 			{
-				Key: "goodBulkSetKey",
+				Key:   "goodBulkSetKey",
+				Value: []byte("value"),
 			},
 		}
 		b, _ := json.Marshal(reqs)
@@ -4790,10 +4797,12 @@ func TestV1StateEndpoints(t *testing.T) {
 
 		reqs := []state.SetRequest{
 			{
-				Key: "timeoutBulkSetKey",
+				Key:   "timeoutBulkSetKey",
+				Value: "value",
 			},
 			{
-				Key: "goodTimeoutBulkSetKey",
+				Key:   "goodTimeoutBulkSetKey",
+				Value: "value",
 			},
 		}
 		b, _ := json.Marshal(reqs)

@@ -51,6 +51,11 @@ type saveReqString struct {
 	Value string `json:"value"`
 }
 
+type saveReqAny struct {
+	Key   string `json:"key"`
+	Value any    `json:"value"`
+}
+
 type fuzzstate struct {
 	daprd *procdaprd.Daprd
 
@@ -58,9 +63,12 @@ type fuzzstate struct {
 	getFuzzKeys     []string
 	saveReqBinaries [][]saveReqBinary
 	saveReqStrings  [][]saveReqString
+	saveReqAnys     [][]saveReqAny
 }
 
 func (f *fuzzstate) Setup(t *testing.T) []framework.Option {
+	const numTests = 10000
+
 	var takenKeys sync.Map
 
 	fuzzFuncs := []any{
@@ -84,6 +92,13 @@ func (f *fuzzstate) Setup(t *testing.T) []framework.Option {
 				s.Value = c.RandString()
 			}
 		},
+		func(s *saveReqAny, c fuzz.Continue) {
+			var ok bool
+			for len(s.Key) == 0 || strings.Contains(s.Key, "||") || ok {
+				s.Key = c.RandString()
+				_, ok = takenKeys.LoadOrStore(s.Key, true)
+			}
+		},
 		func(s *string, c fuzz.Continue) {
 			var ok bool
 			for len(*s) == 0 || ok {
@@ -93,7 +108,8 @@ func (f *fuzzstate) Setup(t *testing.T) []framework.Option {
 		},
 	}
 
-	for f.storeName == "" {
+	for f.storeName == "" ||
+		len(path.IsValidPathSegmentName(f.storeName)) > 0 {
 		fuzz.New().Fuzz(&f.storeName)
 	}
 
@@ -107,21 +123,24 @@ spec:
   version: v1
 `, f.storeName)))
 
-	f.getFuzzKeys = make([]string, 1000)
-	f.saveReqBinaries = make([][]saveReqBinary, 1000)
-	f.saveReqStrings = make([][]saveReqString, 1000)
+	f.getFuzzKeys = make([]string, numTests)
+	f.saveReqBinaries = make([][]saveReqBinary, numTests)
+	f.saveReqStrings = make([][]saveReqString, numTests)
+	f.saveReqAnys = make([][]saveReqAny, numTests)
 
 	fz := fuzz.New().Funcs(fuzzFuncs...)
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < numTests; i++ {
+
 		fz.Fuzz(&f.getFuzzKeys[i])
 		if strings.Contains(f.getFuzzKeys[i], "||") || len(path.IsValidPathSegmentName(f.getFuzzKeys[i])) > 0 {
 			f.getFuzzKeys[i] = ""
 			i--
 		}
 	}
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < numTests; i++ {
 		fz.Fuzz(&f.saveReqBinaries[i])
 		fz.Fuzz(&f.saveReqStrings[i])
+		fz.Fuzz(&f.saveReqAnys[i])
 	}
 
 	return []framework.Option{
@@ -148,7 +167,7 @@ func (f *fuzzstate) Run(t *testing.T, ctx context.Context) {
 		}
 	})
 
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < len(f.getFuzzKeys); i++ {
 		i := i
 		t.Run("save "+strconv.Itoa(i), func(t *testing.T) {
 			t.Parallel()
@@ -182,19 +201,18 @@ func (f *fuzzstate) Run(t *testing.T, ctx context.Context) {
 
 			}
 
-			// TODO: fix encoding bug
-			//for _, s := range f.saveReqStrings[i] {
-			//	getURL := fmt.Sprintf("http://localhost:%d/v1.0/state/%s/%s", f.daprd.HTTPPort(), url.QueryEscape(f.storeName), url.QueryEscape(s.Key))
-			//	req, err := http.NewRequestWithContext(ctx, http.MethodGet, getURL, nil)
-			//	require.NoError(t, err)
-			//	resp, err := http.DefaultClient.Do(req)
-			//	require.NoError(t, err)
-			//	assert.Equal(t, http.StatusOK, resp.StatusCode)
-			//	respBody, err := io.ReadAll(resp.Body)
-			//	require.NoError(t, err)
-			//	orig := append(append([]byte(`"`), s.Value...), []byte(`"`)...)
-			//	assert.Equalf(t, orig, respBody, "orig=%q got=%q", s.Value, respBody)
-			//}
+			for _, s := range f.saveReqStrings[i] {
+				getURL := fmt.Sprintf("http://localhost:%d/v1.0/state/%s/%s", f.daprd.HTTPPort(), url.QueryEscape(f.storeName), url.QueryEscape(s.Key))
+				req, err := http.NewRequestWithContext(ctx, http.MethodGet, getURL, nil)
+				require.NoError(t, err)
+				resp, err := http.DefaultClient.Do(req)
+				require.NoError(t, err)
+				assert.Equal(t, http.StatusOK, resp.StatusCode)
+				respBody, err := io.ReadAll(resp.Body)
+				require.NoError(t, err)
+				orig := `"` + strings.ReplaceAll(s.Value, `"`, `\"`) + `"`
+				assert.Equalf(t, []byte(orig), respBody, "orig=%s got=%s", orig, respBody)
+			}
 		})
 	}
 }

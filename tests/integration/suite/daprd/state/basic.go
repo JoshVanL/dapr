@@ -63,13 +63,13 @@ func (b *basic) Run(t *testing.T, ctx context.Context) {
 			"",
 			"{}",
 			`foobar`,
+			"[{}]",
 			`[{"key": "ke||y1", "value": "value1"}]`,
 			`[{"key": "key1", "value": "value1"},]`,
 			`[{"key": "key1", "value": "value1"},{"key": "key2", "value": "value1"},]`,
-			// TODO: @joshvanl
-			//`[{"key": "key1", "value": "value1", "etag": 123}]`,
-			//`[{"key": "key1", "vae": "value1"}]`,
-			//`[{"ey": "key1", "value": "value1"}]`,
+			`[{"key": "key1", "value": "value1", "etag": 123}]`,
+			`[{"key": "key1", "vae": "value1"}]`,
+			`[{"ey": "key1", "value": "value1"}]`,
 		} {
 			t.Run(body, func(t *testing.T) {
 				req, err := http.NewRequestWithContext(ctx, http.MethodPost, postURL, strings.NewReader(body))
@@ -87,9 +87,10 @@ func (b *basic) Run(t *testing.T, ctx context.Context) {
 
 	t.Run("good json", func(t *testing.T) {
 		for _, body := range []string{
-			"[{}]",
+			"[]",
 			`[{"key": "key1", "value": "value1"}]`,
 			`[{"key": "key1", "value": "value1"},{"key": "key2", "value": "value1"}]`,
+			`[{"key": "key1", "value": "value1"},{"key": "key2", "value": "value1"},  {"key": "key1", "value": "value1"},{"key": "key2", "value": "value1"}]`,
 		} {
 			t.Run(body, func(t *testing.T) {
 				req, err := http.NewRequestWithContext(ctx, http.MethodPost, postURL, strings.NewReader(body))

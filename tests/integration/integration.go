@@ -34,7 +34,7 @@ import (
 )
 
 const (
-	defaultConcurrency = 3
+	defaultConcurrency = 5
 
 	envConcurrency = "DAPR_INTEGRATION_CONCURRENCY"
 )

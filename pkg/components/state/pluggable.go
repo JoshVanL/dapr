@@ -15,7 +15,6 @@ package state
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -359,7 +358,7 @@ func toPagination(pagination query.Pagination) *proto.Pagination {
 func toQuery(req query.Query) (*proto.Query, error) {
 	filters := make(map[string]*anypb.Any)
 	for key, value := range req.Filters {
-		data, err := utils.Marshal(value, json.Marshal)
+		data, err := utils.JSONStringify(value)
 		if err != nil {
 			return nil, err
 		}
@@ -428,7 +427,7 @@ func toSetRequest(req *state.SetRequest) (*proto.SetRequest, error) {
 		}
 		// TODO only json content type is supported.
 		var err error
-		if dataBytes, err = utils.Marshal(reqValue, json.Marshal); err != nil {
+		if dataBytes, err = utils.JSONStringify(reqValue); err != nil {
 			return nil, err
 		}
 	}

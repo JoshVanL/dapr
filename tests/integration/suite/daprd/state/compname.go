@@ -44,6 +44,7 @@ type componentName struct {
 }
 
 func (c *componentName) Setup(t *testing.T) []framework.Option {
+	const numTests = 10000
 	takenNames := make(map[string]bool)
 
 	reg, err := regexp.Compile("^([a-zA-Z].*)$")
@@ -53,31 +54,28 @@ func (c *componentName) Setup(t *testing.T) []framework.Option {
 		for *s == "" ||
 			takenNames[*s] ||
 			len(path.IsValidPathSegmentName(*s)) > 0 ||
-			strings.Contains(*s, " ") ||
-			strings.Contains(*s, ":") ||
-			// TODO: understand why it doesn't like the letter Y or N.
-			strings.ToUpper(*s) == "Y" ||
-			strings.ToUpper(*s) == "N" ||
 			!reg.MatchString(*s) {
 			*s = c.RandString()
 		}
 		takenNames[*s] = true
 	})
 
-	c.storeNames = make([]string, 100)
-	files := make([]string, 100)
-	for i := 0; i < 100; i++ {
+	c.storeNames = make([]string, numTests)
+	files := make([]string, numTests)
+	for i := 0; i < numTests; i++ {
 		fz.Fuzz(&c.storeNames[i])
 
 		files[i] = fmt.Sprintf(`
 apiVersion: dapr.io/v1alpha1
 kind: Component
 metadata:
-  name: %s
+  name: '%s'
 spec:
   type: state.in-memory
   version: v1
-`, c.storeNames[i])
+`,
+			// Escape single quotes in the store name.
+			strings.ReplaceAll(c.storeNames[i], "'", "''"))
 	}
 
 	c.daprd = procdaprd.New(t, procdaprd.WithComponentFiles(files...))

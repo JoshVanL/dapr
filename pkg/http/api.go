@@ -1127,8 +1127,8 @@ func (a *api) onPostState(reqCtx *fasthttp.RequestCtx) {
 	}
 
 	reqs := []state.SetRequest{}
-	err = json.Unmarshal(reqCtx.PostBody(), &reqs)
-	if err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(reqCtx.PostBody()))
+	if err = decoder.Decode(&reqs); err != nil {
 		msg := NewErrorResponse("ERR_MALFORMED_REQUEST", err.Error())
 		respond(reqCtx, withError(nethttp.StatusBadRequest, msg))
 		log.Debug(msg)
@@ -1142,6 +1142,12 @@ func (a *api) onPostState(reqCtx *fasthttp.RequestCtx) {
 	metadata := getMetadataFromRequest(reqCtx)
 
 	for i, r := range reqs {
+		if reqs[i].Value == nil || len(reqs[i].Key) == 0 {
+			msg := NewErrorResponse("ERR_MALFORMED_REQUEST", `"key" and "value" are required fields`)
+			respond(reqCtx, withError(nethttp.StatusBadRequest, msg))
+			log.Debug(msg)
+			return
+		}
 		// merge metadata from URL query parameters
 		if reqs[i].Metadata == nil {
 			reqs[i].Metadata = metadata

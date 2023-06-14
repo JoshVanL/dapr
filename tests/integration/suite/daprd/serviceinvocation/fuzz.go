@@ -14,6 +14,7 @@ limitations under the License.
 package serviceinvocation
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -45,13 +46,14 @@ type fuzzhttp struct {
 	daprd2 *procdaprd.Daprd
 
 	methods []string
-	//bodies  [][]byte
-	bodies  []string
+	bodies  [][]byte
 	headers [][]header
 	queries []map[string]string
 }
 
 func (f *fuzzhttp) Setup(t *testing.T) []framework.Option {
+	const numTests = 1000
+
 	handler := http.NewServeMux()
 	handler.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
@@ -131,14 +133,13 @@ func (f *fuzzhttp) Setup(t *testing.T) []framework.Option {
 		}
 	}
 
-	f.methods = make([]string, 1000)
-	//f.bodies = make([][]byte, 1000)
-	f.bodies = make([]string, 1000)
-	f.headers = make([][]header, 1000)
-	f.queries = make([]map[string]string, 1000)
+	f.methods = make([]string, numTests)
+	f.bodies = make([][]byte, numTests)
+	f.headers = make([][]header, numTests)
+	f.queries = make([]map[string]string, numTests)
 	t.Run("", func(t *testing.T) {
 		t.Parallel()
-		for i := 0; i < 1000; i++ {
+		for i := 0; i < numTests; i++ {
 			fz := fuzz.New()
 			fz.NumElements(0, 100).Funcs(methodFuzz).Fuzz(&f.methods[i])
 			fz.NumElements(0, 100).Fuzz(&f.bodies[i])
@@ -156,7 +157,7 @@ func (f *fuzzhttp) Run(t *testing.T, ctx context.Context) {
 	f.daprd1.WaitUntilRunning(t)
 	f.daprd2.WaitUntilRunning(t)
 
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < len(f.methods); i++ {
 		method := f.methods[i]
 		body := f.bodies[i]
 		headers := f.headers[i]
@@ -170,7 +171,7 @@ func (f *fuzzhttp) Run(t *testing.T, ctx context.Context) {
 				{url: fmt.Sprintf("http://localhost:%d/v1.0/invoke/%s/method/%s", f.daprd2.HTTPPort(), f.daprd1.AppID(), method)},
 				{url: fmt.Sprintf("http://localhost:%d/%s", f.daprd2.HTTPPort(), method), headers: map[string]string{"dapr-app-id": f.daprd1.AppID()}},
 			} {
-				req, err := http.NewRequestWithContext(ctx, http.MethodPost, ts.url, strings.NewReader(body))
+				req, err := http.NewRequestWithContext(ctx, http.MethodPost, ts.url, bytes.NewReader(body))
 				require.NoError(t, err)
 				for _, header := range headers {
 					req.Header.Set(header.name, header.value)
