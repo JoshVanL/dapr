@@ -22,6 +22,7 @@ type options struct {
 	logLevel                string
 	appID                   string
 	appPort                 int
+	appProtocol             string
 	grpcPort                int
 	httpPort                int
 	internalGRPCPort        int
@@ -56,6 +57,12 @@ func WithAppID(appID string) Option {
 func WithAppPort(port int) Option {
 	return func(o *options) {
 		o.appPort = port
+	}
+}
+
+func WithAppProtocol(protocol string) Option {
+	return func(o *options) {
+		o.appProtocol = protocol
 	}
 }
 

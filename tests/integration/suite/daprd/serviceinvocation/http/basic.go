@@ -11,7 +11,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package serviceinvocation
+package http
 
 import (
 	"context"
@@ -40,49 +40,53 @@ type basic struct {
 }
 
 func (b *basic) Setup(t *testing.T) []framework.Option {
-	handler := http.NewServeMux()
-	handler.HandleFunc("/foo", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodPatch:
-			w.WriteHeader(http.StatusBadGateway)
-		case http.MethodPost:
-			w.WriteHeader(http.StatusCreated)
-		case http.MethodGet:
+	newHTTPServer := func() *prochttp.HTTP {
+		handler := http.NewServeMux()
+		handler.HandleFunc("/foo", func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case http.MethodPatch:
+				w.WriteHeader(http.StatusBadGateway)
+			case http.MethodPost:
+				w.WriteHeader(http.StatusCreated)
+			case http.MethodGet:
+				w.WriteHeader(http.StatusOK)
+			case http.MethodPut:
+				w.WriteHeader(http.StatusAccepted)
+			case http.MethodDelete:
+				w.WriteHeader(http.StatusConflict)
+			}
+			w.Write([]byte(r.Method))
+		})
+		handler.HandleFunc("/with-headers-and-body", func(w http.ResponseWriter, r *http.Request) {
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			if string(body) != "hello" {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if r.Header.Get("foo") != "bar" {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
 			w.WriteHeader(http.StatusOK)
-		case http.MethodPut:
-			w.WriteHeader(http.StatusAccepted)
-		case http.MethodDelete:
-			w.WriteHeader(http.StatusConflict)
-		}
-		w.Write([]byte(r.Method))
-	})
-	handler.HandleFunc("/with-headers-and-body", func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		if string(body) != "hello" {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		if r.Header.Get("foo") != "bar" {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	})
-	handler.HandleFunc("/multiple/segments", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/multiple/segments" {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
-	})
+		})
+		handler.HandleFunc("/multiple/segments", func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/multiple/segments" {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("ok"))
+		})
 
-	srv1 := prochttp.New(t, prochttp.WithHandler(handler))
-	srv2 := prochttp.New(t, prochttp.WithHandler(handler))
+		return prochttp.New(t, prochttp.WithHandler(handler))
+	}
+
+	srv1 := newHTTPServer()
+	srv2 := newHTTPServer()
 	b.daprd1 = procdaprd.New(t, procdaprd.WithAppPort(srv1.Port()))
 	b.daprd2 = procdaprd.New(t, procdaprd.WithAppPort(srv2.Port()))
 
