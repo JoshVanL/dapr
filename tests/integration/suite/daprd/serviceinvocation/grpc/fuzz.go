@@ -93,7 +93,7 @@ func (f *fuzzgrpc) Run(t *testing.T, ctx context.Context) {
 			t.Parallel()
 			conn, err := grpc.DialContext(ctx, fmt.Sprintf("127.0.0.1:%d", f.daprd2.GRPCPort()), grpc.WithInsecure(), grpc.WithBlock())
 			require.NoError(t, err)
-			defer func() { require.NoError(t, conn.Close()) }()
+			t.Cleanup(func() { require.NoError(t, conn.Close()) })
 
 			resp, err := rtv1.NewDaprClient(conn).InvokeService(ctx, &rtv1.InvokeServiceRequest{
 				Id: f.daprd1.AppID(),

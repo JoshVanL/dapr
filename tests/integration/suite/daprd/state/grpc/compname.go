@@ -11,14 +11,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package state
+package grpc
 
 import (
 	"context"
 	"fmt"
-	"io"
-	"net/http"
-	"net/url"
 	"regexp"
 	"strings"
 	"testing"
@@ -26,8 +23,11 @@ import (
 	fuzz "github.com/google/gofuzz"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 	"k8s.io/apimachinery/pkg/api/validation/path"
 
+	commonv1 "github.com/dapr/dapr/pkg/proto/common/v1"
+	rtv1 "github.com/dapr/dapr/pkg/proto/runtime/v1"
 	"github.com/dapr/dapr/tests/integration/framework"
 	procdaprd "github.com/dapr/dapr/tests/integration/framework/process/daprd"
 	"github.com/dapr/dapr/tests/integration/suite"
@@ -92,27 +92,44 @@ func (c *componentName) Run(t *testing.T, ctx context.Context) {
 		storeName := storeName
 		t.Run(storeName, func(t *testing.T) {
 			t.Parallel()
-			reqURL := fmt.Sprintf("http://localhost:%d/v1.0/state/%s", c.daprd.HTTPPort(), url.QueryEscape(storeName))
-			req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, strings.NewReader(`[{"key": "key1", "value": "value1"}]`))
-			require.NoError(t, err)
-			resp, err := http.DefaultClient.Do(req)
-			require.NoError(t, err)
-			assert.Equal(t, http.StatusNoContent, resp.StatusCode, reqURL)
-			respBody, err := io.ReadAll(resp.Body)
-			require.NoError(t, err)
-			require.NoError(t, resp.Body.Close())
-			assert.Empty(t, string(respBody))
 
-			getURL := fmt.Sprintf("http://localhost:%d/v1.0/state/%s/key1", c.daprd.HTTPPort(), url.QueryEscape(storeName))
-			req, err = http.NewRequestWithContext(ctx, http.MethodGet, getURL, nil)
+			conn, err := grpc.DialContext(ctx, fmt.Sprintf("localhost:%d", c.daprd.GRPCPort()), grpc.WithInsecure(), grpc.WithBlock())
 			require.NoError(t, err)
-			resp, err = http.DefaultClient.Do(req)
+			t.Cleanup(func() { require.NoError(t, conn.Close()) })
+
+			_, err = rtv1.NewDaprClient(conn).SaveState(ctx, &rtv1.SaveStateRequest{
+				StoreName: storeName,
+				States: []*commonv1.StateItem{
+					{Key: "key1", Value: []byte("value1")},
+					{Key: "key2", Value: []byte("value2")},
+				},
+			})
 			require.NoError(t, err)
-			assert.Equal(t, http.StatusOK, resp.StatusCode)
-			respBody, err = io.ReadAll(resp.Body)
+
+			client := rtv1.NewDaprClient(conn)
+
+			_, err = client.SaveState(ctx, &rtv1.SaveStateRequest{
+				StoreName: storeName,
+				States: []*commonv1.StateItem{
+					{Key: "key1", Value: []byte("value1")},
+					{Key: "key2", Value: []byte("value2")},
+				},
+			})
 			require.NoError(t, err)
-			require.NoError(t, resp.Body.Close())
-			assert.Equal(t, `"value1"`, string(respBody))
+
+			resp, err := client.GetState(ctx, &rtv1.GetStateRequest{
+				StoreName: storeName,
+				Key:       "key1",
+			})
+			require.NoError(t, err)
+			assert.Equal(t, "value1", string(resp.Data))
+
+			resp, err = client.GetState(ctx, &rtv1.GetStateRequest{
+				StoreName: storeName,
+				Key:       "key2",
+			})
+			require.NoError(t, err)
+			assert.Equal(t, "value2", string(resp.Data))
 		})
 	}
 }

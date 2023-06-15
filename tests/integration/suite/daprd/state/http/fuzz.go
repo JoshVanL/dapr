@@ -11,7 +11,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package state
+package http
 
 import (
 	"bytes"
@@ -193,7 +193,8 @@ func (f *fuzzstate) Run(t *testing.T, ctx context.Context) {
 				resp, err := http.DefaultClient.Do(req)
 				require.NoError(t, err)
 				assert.Equal(t, http.StatusOK, resp.StatusCode)
-				// Value is base64 encoded when in binary format.
+				// TODO: @joshvanl: document the fact that saving binary state will HTTP will be base64
+				// encoded.
 				respBody, err := io.ReadAll(resp.Body)
 				require.NoError(t, err)
 				val := `"` + base64.StdEncoding.EncodeToString(s.Value) + `"`

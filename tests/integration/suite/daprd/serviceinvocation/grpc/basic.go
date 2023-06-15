@@ -100,7 +100,7 @@ func (b *basic) Run(t *testing.T, ctx context.Context) {
 		doReq := func(host, hostID string, verb commonv1.HTTPExtension_Verb) ([]byte, string) {
 			conn, err := grpc.DialContext(ctx, host, grpc.WithInsecure(), grpc.WithBlock())
 			require.NoError(t, err)
-			defer func() { require.NoError(t, conn.Close()) }()
+			t.Cleanup(func() { require.NoError(t, conn.Close()) })
 
 			resp, err := rtv1.NewDaprClient(conn).InvokeService(ctx, &rtv1.InvokeServiceRequest{
 				Id: hostID,
@@ -149,7 +149,7 @@ func (b *basic) Run(t *testing.T, ctx context.Context) {
 		host := fmt.Sprintf("localhost:%d", b.daprd1.GRPCPort())
 		conn, err := grpc.DialContext(ctx, host, grpc.WithInsecure(), grpc.WithBlock())
 		require.NoError(t, err)
-		defer func() { require.NoError(t, conn.Close()) }()
+		t.Cleanup(func() { require.NoError(t, conn.Close()) })
 
 		resp, err := rtv1.NewDaprClient(conn).InvokeService(ctx, &rtv1.InvokeServiceRequest{
 			Id: b.daprd2.AppID(),
@@ -169,7 +169,7 @@ func (b *basic) Run(t *testing.T, ctx context.Context) {
 		host := fmt.Sprintf("localhost:%d", b.daprd1.GRPCPort())
 		conn, err := grpc.DialContext(ctx, host, grpc.WithInsecure(), grpc.WithBlock())
 		require.NoError(t, err)
-		defer func() { require.NoError(t, conn.Close()) }()
+		t.Cleanup(func() { require.NoError(t, conn.Close()) })
 
 		resp, err := rtv1.NewDaprClient(conn).InvokeService(ctx, &rtv1.InvokeServiceRequest{
 			Id: b.daprd2.AppID(),
@@ -189,7 +189,7 @@ func (b *basic) Run(t *testing.T, ctx context.Context) {
 		host := fmt.Sprintf("localhost:%d", b.daprd1.GRPCPort())
 		conn, err := grpc.DialContext(ctx, host, grpc.WithInsecure(), grpc.WithBlock())
 		require.NoError(t, err)
-		defer func() { require.NoError(t, conn.Close()) }()
+		t.Cleanup(func() { require.NoError(t, conn.Close()) })
 
 		resp, err := rtv1.NewDaprClient(conn).InvokeService(ctx, &rtv1.InvokeServiceRequest{
 			Id: b.daprd2.AppID(),
@@ -209,7 +209,7 @@ func (b *basic) Run(t *testing.T, ctx context.Context) {
 			host := fmt.Sprintf("localhost:%d", b.daprd1.GRPCPort())
 			conn, err := grpc.DialContext(ctx, host, grpc.WithInsecure(), grpc.WithBlock())
 			require.NoError(t, err)
-			defer func() { require.NoError(t, conn.Close()) }()
+			t.Cleanup(func() { require.NoError(t, conn.Close()) })
 
 			resp, err := rtv1.NewDaprClient(conn).InvokeService(ctx, &rtv1.InvokeServiceRequest{
 				Id: b.daprd2.AppID(),
