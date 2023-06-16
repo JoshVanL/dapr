@@ -223,5 +223,7 @@ func (f *fuzzstate) Run(t *testing.T, ctx context.Context) {
 				assert.Equalf(t, orig.Bytes(), respBody, "orig=%s got=%s", orig, respBody)
 			}
 		})
+
+		// TODO: Delete, eTag & Bulk APIs
 	}
 }
