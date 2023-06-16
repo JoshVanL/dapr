@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/anypb"
 
 	commonv1 "github.com/dapr/dapr/pkg/proto/common/v1"
@@ -91,7 +92,7 @@ func (f *fuzzgrpc) Run(t *testing.T, ctx context.Context) {
 
 		t.Run("method="+method, func(t *testing.T) {
 			t.Parallel()
-			conn, err := grpc.DialContext(ctx, fmt.Sprintf("127.0.0.1:%d", f.daprd2.GRPCPort()), grpc.WithInsecure(), grpc.WithBlock())
+			conn, err := grpc.DialContext(ctx, fmt.Sprintf("127.0.0.1:%d", f.daprd2.GRPCPort()), grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, conn.Close()) })
 

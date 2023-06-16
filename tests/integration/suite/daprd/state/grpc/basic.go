@@ -20,6 +20,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 
 	commonv1 "github.com/dapr/dapr/pkg/proto/common/v1"
 	rtv1 "github.com/dapr/dapr/pkg/proto/runtime/v1"
@@ -55,7 +56,7 @@ spec:
 func (b *basic) Run(t *testing.T, ctx context.Context) {
 	b.daprd.WaitUntilRunning(t)
 
-	conn, err := grpc.DialContext(ctx, fmt.Sprintf("localhost:%d", b.daprd.GRPCPort()), grpc.WithInsecure(), grpc.WithBlock())
+	conn, err := grpc.DialContext(ctx, fmt.Sprintf("localhost:%d", b.daprd.GRPCPort()), grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, conn.Close()) })
 	client := rtv1.NewDaprClient(conn)
@@ -63,10 +64,10 @@ func (b *basic) Run(t *testing.T, ctx context.Context) {
 	t.Run("bad request", func(t *testing.T) {
 		for _, req := range []*rtv1.SaveStateRequest{
 			nil,
-			&rtv1.SaveStateRequest{},
-			&rtv1.SaveStateRequest{StoreName: "mystore", States: []*commonv1.StateItem{{}}},
-			&rtv1.SaveStateRequest{StoreName: "mystore", States: []*commonv1.StateItem{{Key: "key1"}}},
-			&rtv1.SaveStateRequest{StoreName: "mystore", States: []*commonv1.StateItem{{Value: []byte("value1")}}},
+			{},
+			{StoreName: "mystore", States: []*commonv1.StateItem{{}}},
+			{StoreName: "mystore", States: []*commonv1.StateItem{{Key: "key1"}}},
+			{StoreName: "mystore", States: []*commonv1.StateItem{{Value: []byte("value1")}}},
 		} {
 			t.Run(fmt.Sprintf("%+v", req), func(t *testing.T) {
 				_, err = client.SaveState(ctx, req)
@@ -77,13 +78,15 @@ func (b *basic) Run(t *testing.T, ctx context.Context) {
 
 	t.Run("good request", func(t *testing.T) {
 		for _, req := range []*rtv1.SaveStateRequest{
-			&rtv1.SaveStateRequest{StoreName: "mystore"},
-			&rtv1.SaveStateRequest{StoreName: "mystore", States: []*commonv1.StateItem{}},
-			&rtv1.SaveStateRequest{StoreName: "mystore", States: []*commonv1.StateItem{{Key: "key1", Value: []byte("value1")}}},
-			&rtv1.SaveStateRequest{StoreName: "mystore", States: []*commonv1.StateItem{{Key: "key1", Value: []byte("value1")}, {Key: "key2", Value: []byte("value2")}}},
-			&rtv1.SaveStateRequest{StoreName: "mystore", States: []*commonv1.StateItem{
-				{Key: "key1", Value: []byte("value1")}, {Key: "key2", Value: []byte("value2")},
-				{Key: "key1", Value: []byte("value1")}, {Key: "key2", Value: []byte("value2")},
+			{StoreName: "mystore"},
+			{StoreName: "mystore", States: []*commonv1.StateItem{}},
+			{StoreName: "mystore", States: []*commonv1.StateItem{{Key: "key1", Value: []byte("value1")}}},
+			{StoreName: "mystore", States: []*commonv1.StateItem{{Key: "key1", Value: []byte("value1")}, {Key: "key2", Value: []byte("value2")}}},
+			{StoreName: "mystore", States: []*commonv1.StateItem{
+				{Key: "key1", Value: []byte("value1")},
+				{Key: "key2", Value: []byte("value2")},
+				{Key: "key1", Value: []byte("value1")},
+				{Key: "key2", Value: []byte("value2")},
 			}},
 		} {
 			t.Run(fmt.Sprintf("%v", req), func(t *testing.T) {

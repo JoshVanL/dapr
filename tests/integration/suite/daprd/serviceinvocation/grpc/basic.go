@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/anypb"
 
@@ -98,7 +99,7 @@ func (b *basic) Run(t *testing.T, ctx context.Context) {
 
 	t.Run("invoke host", func(t *testing.T) {
 		doReq := func(host, hostID string, verb commonv1.HTTPExtension_Verb) ([]byte, string) {
-			conn, err := grpc.DialContext(ctx, host, grpc.WithInsecure(), grpc.WithBlock())
+			conn, err := grpc.DialContext(ctx, host, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, conn.Close()) })
 
@@ -147,7 +148,7 @@ func (b *basic) Run(t *testing.T, ctx context.Context) {
 
 	t.Run("method doesn't exist", func(t *testing.T) {
 		host := fmt.Sprintf("localhost:%d", b.daprd1.GRPCPort())
-		conn, err := grpc.DialContext(ctx, host, grpc.WithInsecure(), grpc.WithBlock())
+		conn, err := grpc.DialContext(ctx, host, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, conn.Close()) })
 
@@ -167,7 +168,7 @@ func (b *basic) Run(t *testing.T, ctx context.Context) {
 
 	t.Run("no method", func(t *testing.T) {
 		host := fmt.Sprintf("localhost:%d", b.daprd1.GRPCPort())
-		conn, err := grpc.DialContext(ctx, host, grpc.WithInsecure(), grpc.WithBlock())
+		conn, err := grpc.DialContext(ctx, host, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, conn.Close()) })
 
@@ -187,7 +188,7 @@ func (b *basic) Run(t *testing.T, ctx context.Context) {
 
 	t.Run("multiple segments", func(t *testing.T) {
 		host := fmt.Sprintf("localhost:%d", b.daprd1.GRPCPort())
-		conn, err := grpc.DialContext(ctx, host, grpc.WithInsecure(), grpc.WithBlock())
+		conn, err := grpc.DialContext(ctx, host, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, conn.Close()) })
 
@@ -207,7 +208,7 @@ func (b *basic) Run(t *testing.T, ctx context.Context) {
 		t.Run("parallel requests", func(t *testing.T) {
 			t.Parallel()
 			host := fmt.Sprintf("localhost:%d", b.daprd1.GRPCPort())
-			conn, err := grpc.DialContext(ctx, host, grpc.WithInsecure(), grpc.WithBlock())
+			conn, err := grpc.DialContext(ctx, host, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, conn.Close()) })
 

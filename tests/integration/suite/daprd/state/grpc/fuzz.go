@@ -31,6 +31,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"k8s.io/apimachinery/pkg/api/validation/path"
 
 	commonv1 "github.com/dapr/dapr/pkg/proto/common/v1"
@@ -121,7 +122,6 @@ spec:
 
 	fz := fuzz.New().Funcs(fuzzFuncs...)
 	for i := 0; i < numTests; i++ {
-
 		fz.Fuzz(&f.getFuzzKeys[i])
 		if strings.Contains(f.getFuzzKeys[i], "||") || len(path.IsValidPathSegmentName(f.getFuzzKeys[i])) > 0 {
 			f.getFuzzKeys[i] = ""
@@ -169,7 +169,7 @@ spec:
 func (f *fuzzstate) Run(t *testing.T, ctx context.Context) {
 	f.daprd.WaitUntilRunning(t)
 
-	conn, err := grpc.DialContext(ctx, fmt.Sprintf("localhost:%d", f.daprd.GRPCPort()), grpc.WithInsecure(), grpc.WithBlock())
+	conn, err := grpc.DialContext(ctx, fmt.Sprintf("localhost:%d", f.daprd.GRPCPort()), grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, conn.Close()) })
 	client := rtv1.NewDaprClient(conn)

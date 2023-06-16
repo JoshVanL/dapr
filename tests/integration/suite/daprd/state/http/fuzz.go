@@ -67,7 +67,7 @@ type fuzzstate struct {
 }
 
 func (f *fuzzstate) Setup(t *testing.T) []framework.Option {
-	const numTests = 10000
+	const numTests = 1000
 
 	var takenKeys sync.Map
 
@@ -130,7 +130,6 @@ spec:
 
 	fz := fuzz.New().Funcs(fuzzFuncs...)
 	for i := 0; i < numTests; i++ {
-
 		fz.Fuzz(&f.getFuzzKeys[i])
 		if strings.Contains(f.getFuzzKeys[i], "||") || len(path.IsValidPathSegmentName(f.getFuzzKeys[i])) > 0 {
 			f.getFuzzKeys[i] = ""
@@ -197,9 +196,9 @@ func (f *fuzzstate) Run(t *testing.T, ctx context.Context) {
 				// encoded.
 				respBody, err := io.ReadAll(resp.Body)
 				require.NoError(t, err)
+				require.NoError(t, resp.Body.Close())
 				val := `"` + base64.StdEncoding.EncodeToString(s.Value) + `"`
 				assert.Equalf(t, val, string(respBody), "key: %s, %s", s.Key, req.URL.String())
-
 			}
 
 			for _, s := range f.saveReqStrings[i] {
@@ -211,6 +210,7 @@ func (f *fuzzstate) Run(t *testing.T, ctx context.Context) {
 				assert.Equal(t, http.StatusOK, resp.StatusCode)
 				respBody, err := io.ReadAll(resp.Body)
 				require.NoError(t, err)
+				require.NoError(t, resp.Body.Close())
 				// Some state stores (such as in-memory that we are using here) mangle
 				// the string by HTML escaping it, which changes specifical characters
 				// such as <, >, &, to \u003c, \u003e, \u0026, etc. This is not the

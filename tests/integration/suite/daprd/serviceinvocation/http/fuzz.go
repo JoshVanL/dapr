@@ -179,9 +179,11 @@ func (f *fuzzhttp) Run(t *testing.T, ctx context.Context) {
 				for k, v := range ts.headers {
 					req.Header.Set(k, v)
 				}
+				q := req.URL.Query()
 				for k, v := range query {
-					req.URL.Query().Set(k, v)
+					q.Set(k, v)
 				}
+				req.URL.RawQuery = q.Encode()
 
 				resp, err := http.DefaultClient.Do(req)
 				require.NoError(t, err)

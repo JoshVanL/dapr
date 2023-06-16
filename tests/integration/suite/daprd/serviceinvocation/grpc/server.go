@@ -53,7 +53,7 @@ func (g *gServer) ListTopicSubscriptions(context.Context, *emptypb.Empty) (*rtv1
 	return nil, nil
 }
 
-func (s *gServer) OnBindingEvent(context.Context, *rtv1.BindingEventRequest) (*rtv1.BindingEventResponse, error) {
+func (g *gServer) OnBindingEvent(context.Context, *rtv1.BindingEventRequest) (*rtv1.BindingEventResponse, error) {
 	return nil, nil
 }
 

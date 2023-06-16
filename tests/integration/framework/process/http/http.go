@@ -19,6 +19,7 @@ import (
 	"net"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -55,7 +56,8 @@ func New(t *testing.T, fopts ...Option) *HTTP {
 		srvErrCh: make(chan error, 2),
 		stopCh:   make(chan struct{}),
 		server: &http.Server{
-			Handler: opts.handler,
+			ReadHeaderTimeout: time.Second,
+			Handler:           opts.handler,
 		},
 	}
 }

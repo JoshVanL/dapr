@@ -11,11 +11,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package grpc
+package http
 
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"testing"
@@ -23,12 +26,8 @@ import (
 	fuzz "github.com/google/gofuzz"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"k8s.io/apimachinery/pkg/api/validation/path"
 
-	commonv1 "github.com/dapr/dapr/pkg/proto/common/v1"
-	rtv1 "github.com/dapr/dapr/pkg/proto/runtime/v1"
 	"github.com/dapr/dapr/tests/integration/framework"
 	procdaprd "github.com/dapr/dapr/tests/integration/framework/process/daprd"
 	"github.com/dapr/dapr/tests/integration/suite"
@@ -41,7 +40,8 @@ func init() {
 type componentName struct {
 	daprd *procdaprd.Daprd
 
-	storeNames []string
+	pubsubNames []string
+	topicNames  []string
 }
 
 func (c *componentName) Setup(t *testing.T) []framework.Option {
@@ -61,10 +61,12 @@ func (c *componentName) Setup(t *testing.T) []framework.Option {
 		takenNames[*s] = true
 	})
 
-	c.storeNames = make([]string, numTests)
+	c.pubsubNames = make([]string, numTests)
+	c.topicNames = make([]string, numTests)
 	files := make([]string, numTests)
 	for i := 0; i < numTests; i++ {
-		fz.Fuzz(&c.storeNames[i])
+		fz.Fuzz(&c.pubsubNames[i])
+		fz.Fuzz(&c.topicNames[i])
 
 		files[i] = fmt.Sprintf(`
 apiVersion: dapr.io/v1alpha1
@@ -72,11 +74,11 @@ kind: Component
 metadata:
   name: '%s'
 spec:
-  type: state.in-memory
+  type: pubsub.in-memory
   version: v1
 `,
 			// Escape single quotes in the store name.
-			strings.ReplaceAll(c.storeNames[i], "'", "''"))
+			strings.ReplaceAll(c.pubsubNames[i], "'", "''"))
 	}
 
 	c.daprd = procdaprd.New(t, procdaprd.WithComponentFiles(files...))
@@ -89,48 +91,23 @@ spec:
 func (c *componentName) Run(t *testing.T, ctx context.Context) {
 	c.daprd.WaitUntilRunning(t)
 
-	for _, storeName := range c.storeNames {
-		storeName := storeName
-		t.Run(storeName, func(t *testing.T) {
+	for i := range c.pubsubNames {
+		pubsubName := c.pubsubNames[i]
+		topicName := c.topicNames[i]
+		t.Run(pubsubName, func(t *testing.T) {
 			t.Parallel()
 
-			conn, err := grpc.DialContext(ctx, fmt.Sprintf("localhost:%d", c.daprd.GRPCPort()), grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
+			reqURL := fmt.Sprintf("http://localhost:%d/v1.0/publish/%s/%s", c.daprd.HTTPPort(), url.QueryEscape(pubsubName), url.QueryEscape(topicName))
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, strings.NewReader(`{"status": "completed"}`))
 			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, conn.Close()) })
-
-			_, err = rtv1.NewDaprClient(conn).SaveState(ctx, &rtv1.SaveStateRequest{
-				StoreName: storeName,
-				States: []*commonv1.StateItem{
-					{Key: "key1", Value: []byte("value1")},
-					{Key: "key2", Value: []byte("value2")},
-				},
-			})
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(req)
 			require.NoError(t, err)
-
-			client := rtv1.NewDaprClient(conn)
-
-			_, err = client.SaveState(ctx, &rtv1.SaveStateRequest{
-				StoreName: storeName,
-				States: []*commonv1.StateItem{
-					{Key: "key1", Value: []byte("value1")},
-					{Key: "key2", Value: []byte("value2")},
-				},
-			})
+			assert.Equal(t, http.StatusNoContent, resp.StatusCode, reqURL)
+			respBody, err := io.ReadAll(resp.Body)
 			require.NoError(t, err)
-
-			resp, err := client.GetState(ctx, &rtv1.GetStateRequest{
-				StoreName: storeName,
-				Key:       "key1",
-			})
-			require.NoError(t, err)
-			assert.Equal(t, "value1", string(resp.Data))
-
-			resp, err = client.GetState(ctx, &rtv1.GetStateRequest{
-				StoreName: storeName,
-				Key:       "key2",
-			})
-			require.NoError(t, err)
-			assert.Equal(t, "value2", string(resp.Data))
+			require.NoError(t, resp.Body.Close())
+			assert.Empty(t, string(respBody))
 		})
 	}
 }

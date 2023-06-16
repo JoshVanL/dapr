@@ -6,24 +6,13 @@ You may obtain a copy of the License at
     http://www.apache.org/licenses/LICENSE-2.0
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implieh.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package grpc
+package state
 
 import (
-	"google.golang.org/grpc"
+	_ "github.com/dapr/dapr/tests/integration/suite/daprd/pubsub/http"
 )
-
-// options contains the options for running a GRPC server in integration tests.
-type options struct {
-	registerFns []func(*grpc.Server)
-}
-
-func WithRegister(f func(*grpc.Server)) Option {
-	return func(o *options) {
-		o.registerFns = append(o.registerFns, f)
-	}
-}

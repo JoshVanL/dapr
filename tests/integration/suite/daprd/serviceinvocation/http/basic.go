@@ -157,6 +157,7 @@ func (b *basic) Run(t *testing.T, ctx context.Context) {
 		resp, err := http.DefaultClient.Do(req)
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		assert.NoError(t, resp.Body.Close())
 	})
 
 	t.Run("method doesn't exist", func(t *testing.T) {
@@ -166,6 +167,7 @@ func (b *basic) Run(t *testing.T, ctx context.Context) {
 		resp, err := http.DefaultClient.Do(req)
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+		assert.NoError(t, resp.Body.Close())
 	})
 
 	t.Run("no method", func(t *testing.T) {
@@ -175,6 +177,7 @@ func (b *basic) Run(t *testing.T, ctx context.Context) {
 		resp, err := http.DefaultClient.Do(req)
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+		assert.NoError(t, resp.Body.Close())
 
 		reqURL = fmt.Sprintf("http://localhost:%d/", b.daprd1.HTTPPort())
 		req, err = http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
@@ -183,6 +186,7 @@ func (b *basic) Run(t *testing.T, ctx context.Context) {
 		resp, err = http.DefaultClient.Do(req)
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+		assert.NoError(t, resp.Body.Close())
 	})
 
 	t.Run("multiple segments", func(t *testing.T) {
@@ -196,6 +200,7 @@ func (b *basic) Run(t *testing.T, ctx context.Context) {
 		require.NoError(t, err)
 		require.NoError(t, resp.Body.Close())
 		assert.Equal(t, "ok", string(body))
+		assert.NoError(t, resp.Body.Close())
 	})
 
 	for i := 0; i < 100; i++ {
@@ -211,6 +216,7 @@ func (b *basic) Run(t *testing.T, ctx context.Context) {
 			require.NoError(t, err)
 			require.NoError(t, resp.Body.Close())
 			assert.Equal(t, "POST", string(body))
+			assert.NoError(t, resp.Body.Close())
 		})
 	}
 }
