@@ -211,8 +211,16 @@ func (f *fuzzstate) Run(t *testing.T, ctx context.Context) {
 				assert.Equal(t, http.StatusOK, resp.StatusCode)
 				respBody, err := io.ReadAll(resp.Body)
 				require.NoError(t, err)
-				orig := `"` + strings.ReplaceAll(s.Value, `"`, `\"`) + `"`
-				assert.Equalf(t, []byte(orig), respBody, "orig=%s got=%s", orig, respBody)
+				// Some state stores (such as in-memory that we are using here) mangle
+				// the string by HTML escaping it, which changes specifical characters
+				// such as <, >, &, to \u003c, \u003e, \u0026, etc. This is not the
+				// case for other state stores.
+				// https://pkg.go.dev/encoding/json#HTMLEscape
+				js, err := json.Marshal(s.Value)
+				require.NoError(t, err)
+				var orig bytes.Buffer
+				json.HTMLEscape(&orig, js)
+				assert.Equalf(t, orig.Bytes(), respBody, "orig=%s got=%s", orig, respBody)
 			}
 		})
 	}

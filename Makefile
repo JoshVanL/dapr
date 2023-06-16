@@ -352,7 +352,7 @@ test-integration: test-deps
 			--jsonfile $(TEST_OUTPUT_FILE_PREFIX)_integration.json \
 			--format dots \
 			-- \
-			./tests/integration $(COVERAGE_OPTS) -v -race -tags="integration"
+			./tests/integration $(COVERAGE_OPTS) -v -race -count=1 -tags="integration"
 
 ################################################################################
 # Target: lint                                                                 #
