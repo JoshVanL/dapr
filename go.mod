@@ -41,10 +41,8 @@ require (
 	github.com/prometheus/common v0.44.0
 	github.com/redis/go-redis/v9 v9.0.4
 	github.com/sony/gobreaker v0.5.0
-	github.com/spf13/cast v1.5.0
 	github.com/spf13/cast v1.5.1
 	github.com/spiffe/go-spiffe/v2 v2.1.4
-	github.com/stretchr/testify v1.8.2
 	github.com/stretchr/testify v1.8.4
 	github.com/tidwall/transform v0.0.0-20201103190739-32f242e2dbde
 	github.com/valyala/fasthttp v1.47.0
@@ -219,8 +217,6 @@ require (
 	github.com/gofrs/uuid v3.3.0+incompatible // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang-jwt/jwt v3.2.2+incompatible // indirect
-	github.com/golang-jwt/jwt v3.2.2+incompatible
-	github.com/golang-jwt/jwt/v4 v4.4.3
 	github.com/golang-jwt/jwt/v4 v4.5.0 // indirect
 	github.com/golang-sql/civil v0.0.0-20190719163853-cb61b32ac6fe // indirect
 	github.com/golang-sql/sqlexp v0.1.0 // indirect
