@@ -15,9 +15,6 @@ package sentry
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -26,8 +23,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/dapr/dapr/pkg/sentry/ca"
-	"github.com/dapr/dapr/pkg/sentry/certs"
+	"github.com/dapr/dapr/pkg/sentry/server/ca"
 	"github.com/dapr/dapr/tests/integration/framework/binary"
 	"github.com/dapr/dapr/tests/integration/framework/freeport"
 	"github.com/dapr/dapr/tests/integration/framework/process"
@@ -38,10 +34,7 @@ import (
 type options struct {
 	execOpts []exec.Option
 
-	ca          *certs.Credentials
-	rootPEM     []byte
-	certPEM     []byte
-	keyPEM      []byte
+	bundle      ca.CABundle
 	port        int
 	healthzPort int
 	metricsPort int
@@ -54,7 +47,7 @@ type Sentry struct {
 	exec     process.Interface
 	freeport *freeport.FreePort
 
-	ca          *certs.Credentials
+	bundle      ca.CABundle
 	port        int
 	healthzPort int
 	metricsPort int
@@ -63,18 +56,12 @@ type Sentry struct {
 func New(t *testing.T, fopts ...Option) *Sentry {
 	t.Helper()
 
-	caPK, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	creds, rootPEM, certPEM, issuerKeyPEM, err := ca.GetNewSelfSignedCertificates(caPK, time.Minute, time.Second*5)
+	bundle, err := ca.GenerateCABundle("integration.test.dapr.io", time.Second*5)
 	require.NoError(t, err)
 
 	fp := freeport.New(t, 3)
 	opts := options{
-		ca:          creds,
-		rootPEM:     rootPEM,
-		certPEM:     certPEM,
-		keyPEM:      issuerKeyPEM,
+		bundle:      bundle,
 		port:        fp.Port(t, 0),
 		healthzPort: fp.Port(t, 1),
 		metricsPort: fp.Port(t, 2),
@@ -96,9 +83,9 @@ func New(t *testing.T, fopts ...Option) *Sentry {
 		path string
 		data []byte
 	}{
-		{caPath, opts.rootPEM},
-		{issuerKeyPath, opts.keyPEM},
-		{issuerCertPath, opts.certPEM},
+		{caPath, opts.bundle.TrustAnchors},
+		{issuerKeyPath, opts.bundle.IssKeyPEM},
+		{issuerCertPath, opts.bundle.IssChainPEM},
 	} {
 		require.NoError(t, os.WriteFile(pair.path, pair.data, 0o600))
 	}
@@ -118,7 +105,7 @@ func New(t *testing.T, fopts ...Option) *Sentry {
 	return &Sentry{
 		exec:        exec.New(t, binary.EnvValue("sentry"), args, opts.execOpts...),
 		freeport:    fp,
-		ca:          opts.ca,
+		bundle:      opts.bundle,
 		port:        opts.port,
 		metricsPort: opts.metricsPort,
 		healthzPort: opts.healthzPort,
@@ -134,8 +121,8 @@ func (s *Sentry) Cleanup(t *testing.T) {
 	s.exec.Cleanup(t)
 }
 
-func (s *Sentry) CA() *certs.Credentials {
-	return s.ca
+func (s *Sentry) CABundle() ca.CABundle {
+	return s.bundle
 }
 
 func (s *Sentry) Port() int {

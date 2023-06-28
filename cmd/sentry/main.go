@@ -22,6 +22,7 @@ import (
 	"github.com/dapr/dapr/cmd/sentry/options"
 	"github.com/dapr/dapr/pkg/buildinfo"
 	"github.com/dapr/dapr/pkg/concurrency"
+	"github.com/dapr/dapr/pkg/credentials"
 	"github.com/dapr/dapr/pkg/health"
 	"github.com/dapr/dapr/pkg/metrics"
 	"github.com/dapr/dapr/pkg/sentry"
@@ -40,7 +41,14 @@ func main() {
 
 	opts := options.New()
 
-	metricsExporter := metrics.NewExporterWithOptions(metrics.DefaultMetricNamespace, opts.Metrics)
+	// Apply options to all loggers
+	if err := logger.ApplyOptionsToLoggers(&opts.Logger); err != nil {
+		log.Fatal(err)
+	}
+
+	if len(opts.TokenAudience) > 0 {
+		log.Warn("--token-audience is deprecated and will be removed in v1.14")
+	}
 
 	if err := utils.SetEnvVariables(map[string]string{
 		utils.KubeConfigVar: opts.Kubeconfig,
@@ -48,12 +56,9 @@ func main() {
 		log.Fatalf("error set env failed:  %s", err.Error())
 	}
 
-	// Apply options to all loggers
-	if err := logger.ApplyOptionsToLoggers(&opts.Logger); err != nil {
-		log.Fatal(err)
-	}
-
 	log.Infof("log level set to: %s", opts.Logger.OutputLevel)
+
+	metricsExporter := metrics.NewExporterWithOptions(metrics.DefaultMetricNamespace, opts.Metrics)
 
 	// Initialize dapr metrics exporter
 	if err := metricsExporter.Init(); err != nil {
@@ -78,9 +83,6 @@ func main() {
 	config.RootCertPath = rootCertPath
 	config.TrustDomain = opts.TrustDomain
 	config.Port = opts.Port
-	if opts.TokenAudience != "" {
-		config.TokenAudience = &opts.TokenAudience
-	}
 
 	var (
 		watchDir    = filepath.Dir(config.IssuerCertPath)
