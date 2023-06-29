@@ -102,8 +102,8 @@ func main() {
 	)
 
 	if err := mngr.Run(ctx); err != nil {
-		log.Fatalf("error running injector: %s", err)
+		log.Fatalf("Error running injector: %v", err)
 	}
 
-	log.Infof("Dapr sidecar injector shut down gracefully")
+	log.Info("Dapr sidecar injector shut down gracefully")
 }
