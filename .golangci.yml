@@ -140,6 +140,9 @@ linters-settings:
       - "github.com/ghodss/yaml": "must use sigs.k8s.io/yaml"
       # Commonly auto-completed by gopls
       - "github.com/gogo/status": "must use google.golang.org/grpc/status"
+      - "github.com/gogo/protobuf": "must use google.golang.org/protobuf"
+      - "github.com/lestrrat-go/jwx/jwa": "must use github.com/lestrrat-go/jwx/v2"
+      - "github.com/lestrrat-go/jwx/jwt": "must use github.com/lestrrat-go/jwx/v2"
   misspell:
     # Correct spellings using locale preferences for US or UK.
     # Default is to use a neutral variety of English.
