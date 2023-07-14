@@ -18,6 +18,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"fmt"
 	"testing"
 	"time"
 
@@ -94,6 +95,8 @@ func (m *insecureValidator) Run(t *testing.T, parentCtx context.Context) {
 		})
 		require.NoError(t, err)
 		require.NotEmpty(t, res.WorkloadCertificate)
+
+		validateCertificateResponse(t, res, m.proc.CABundle(), fmt.Sprintf("%s.%s.svc.cluster.local", defaultAppID, defaultNamespace))
 	})
 
 	t.Run("insecure validator is the default", func(t *testing.T) {
@@ -107,6 +110,8 @@ func (m *insecureValidator) Run(t *testing.T, parentCtx context.Context) {
 		})
 		require.NoError(t, err)
 		require.NotEmpty(t, res.WorkloadCertificate)
+
+		validateCertificateResponse(t, res, m.proc.CABundle(), fmt.Sprintf("%s.%s.svc.cluster.local", defaultAppID, defaultNamespace))
 	})
 
 	t.Run("fails with missing CSR", func(t *testing.T) {
