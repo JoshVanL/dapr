@@ -14,6 +14,7 @@ limitations under the License.
 package sentry
 
 import (
+	configv1alpha1 "github.com/dapr/dapr/pkg/apis/configuration/v1alpha1"
 	"github.com/dapr/dapr/pkg/sentry/server/ca"
 	"github.com/dapr/dapr/tests/integration/framework/process/exec"
 )
@@ -45,5 +46,11 @@ func WithHealthzPort(port int) Option {
 func WithCABundle(bundle ca.CABundle) Option {
 	return func(o *options) {
 		o.bundle = bundle
+	}
+}
+
+func WithConfiguration(config *configv1alpha1.ConfigurationSpec) Option {
+	return func(o *options) {
+		o.configuration = config
 	}
 }

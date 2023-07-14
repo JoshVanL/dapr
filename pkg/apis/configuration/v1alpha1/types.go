@@ -132,7 +132,7 @@ type MTLSSpec struct {
 // ValidatorSpec contains additional token validators to use.
 type ValidatorSpec struct {
 	// Name of the validator
-	// +kubebuilder:validation:Enum={"jwk"}
+	// +kubebuilder:validation:Enum={"jwks"}
 	Name string `json:"name"`
 	// Options for the validator, if any
 	Options *DynamicValue `json:"options,omitempty"`

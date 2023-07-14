@@ -15,6 +15,7 @@ package sentry
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -22,7 +23,9 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	configurationv1alpha1 "github.com/dapr/dapr/pkg/apis/configuration/v1alpha1"
 	"github.com/dapr/dapr/pkg/sentry/server/ca"
 	"github.com/dapr/dapr/tests/integration/framework/binary"
 	"github.com/dapr/dapr/tests/integration/framework/freeport"
@@ -34,10 +37,11 @@ import (
 type options struct {
 	execOpts []exec.Option
 
-	bundle      ca.CABundle
-	port        int
-	healthzPort int
-	metricsPort int
+	bundle        ca.CABundle
+	port          int
+	healthzPort   int
+	metricsPort   int
+	configuration *configurationv1alpha1.ConfigurationSpec
 }
 
 // Option is a function that configures the process.
@@ -71,8 +75,25 @@ func New(t *testing.T, fopts ...Option) *Sentry {
 		fopt(&opts)
 	}
 
+	var configData []byte
+	if opts.configuration != nil {
+		configObj := configurationv1alpha1.Configuration{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "Configuration",
+				APIVersion: "v1alpha1",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "sentryconfig",
+			},
+			Spec: *opts.configuration,
+		}
+
+		configData, err = json.Marshal(configObj)
+		require.NoError(t, err)
+	}
+
 	configPath := filepath.Join(t.TempDir(), "sentry-config.yaml")
-	require.NoError(t, os.WriteFile(configPath, nil, 0o600))
+	require.NoError(t, os.WriteFile(configPath, configData, 0o600))
 
 	tmpDir := t.TempDir()
 	caPath := filepath.Join(tmpDir, "ca.crt")
