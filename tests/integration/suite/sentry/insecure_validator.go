@@ -54,6 +54,8 @@ func (m *insecureValidator) Run(t *testing.T, parentCtx context.Context) {
 		defaultAppID     = "myapp"
 		defaultNamespace = "default"
 	)
+	defaultAppSpiffeID := fmt.Sprintf("spiffe://public/ns/%s/%s", defaultNamespace, defaultAppID)
+	defaultAppDNSName := fmt.Sprintf("%s.%s.svc.cluster.local", defaultAppID, defaultNamespace)
 
 	// Generate a private privKey that we'll need for tests
 	privKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -96,7 +98,7 @@ func (m *insecureValidator) Run(t *testing.T, parentCtx context.Context) {
 		require.NoError(t, err)
 		require.NotEmpty(t, res.WorkloadCertificate)
 
-		validateCertificateResponse(t, res, m.proc.CABundle(), fmt.Sprintf("%s.%s.svc.cluster.local", defaultAppID, defaultNamespace))
+		validateCertificateResponse(t, res, m.proc.CABundle(), defaultAppSpiffeID, defaultAppDNSName)
 	})
 
 	t.Run("insecure validator is the default", func(t *testing.T) {
@@ -111,7 +113,7 @@ func (m *insecureValidator) Run(t *testing.T, parentCtx context.Context) {
 		require.NoError(t, err)
 		require.NotEmpty(t, res.WorkloadCertificate)
 
-		validateCertificateResponse(t, res, m.proc.CABundle(), fmt.Sprintf("%s.%s.svc.cluster.local", defaultAppID, defaultNamespace))
+		validateCertificateResponse(t, res, m.proc.CABundle(), defaultAppSpiffeID, defaultAppDNSName)
 	})
 
 	t.Run("fails with missing CSR", func(t *testing.T) {
