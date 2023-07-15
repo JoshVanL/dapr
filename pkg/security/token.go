@@ -15,22 +15,12 @@ package security
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/dapr/dapr/pkg/security/consts"
 )
 
-const (
-	kubeTknPath = "/var/run/secrets/dapr.io/sentrytoken/token"
-)
-
-var (
-	excludedRoutes = []string{"/healthz"}
-
-	// used for testing.
-	rootFS = "/"
-)
+var excludedRoutes = []string{"/healthz"}
 
 // GetAPIToken returns the value of the api token from an environment variable.
 func GetAPIToken() string {
@@ -50,15 +40,4 @@ func ExcludedRoute(route string) bool {
 		}
 	}
 	return false
-}
-
-// getKubernetesIdentityToken returns the value of the Kubernetes identity
-// token.
-func getKubernetesIdentityToken() (string, error) {
-	b, err := os.ReadFile(filepath.Join(rootFS, kubeTknPath))
-	if err != nil {
-		return "", err
-	}
-
-	return string(b), err
 }

@@ -16,15 +16,11 @@ limitations under the License.
 package security
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	"github.com/dapr/dapr/pkg/security/consts"
-	"github.com/dapr/kit/ptr"
 )
 
 func TestAPIToken(t *testing.T) {
@@ -71,66 +67,4 @@ func TestExcludedRoute(t *testing.T) {
 		excluded := ExcludedRoute(route)
 		assert.False(t, excluded)
 	})
-}
-
-func TestGetKubernetesIdentityToken(t *testing.T) {
-	tests := map[string]struct {
-		kubeToken  *string
-		boundToken *string
-		exp        string
-		expErr     bool
-	}{
-		"if neither token is present, expect an error": {
-			kubeToken:  nil,
-			boundToken: nil,
-			exp:        "",
-			expErr:     true,
-		},
-		"if only kube token is present, expect error": {
-			kubeToken:  ptr.Of("kube-token"),
-			boundToken: nil,
-			exp:        "",
-			expErr:     true,
-		},
-		"if only boundToken, expect bound token": {
-			kubeToken:  nil,
-			boundToken: ptr.Of("bound-token"),
-			exp:        "bound-token",
-			expErr:     false,
-		},
-		"if both tokens are present, expect bound token": {
-			kubeToken:  ptr.Of("kube-token"),
-			boundToken: ptr.Of("bound-token"),
-			exp:        "bound-token",
-			expErr:     false,
-		},
-	}
-
-	origFS := rootFS
-	t.Cleanup(func() {
-		rootFS = origFS
-	})
-
-	for name, test := range tests {
-		t.Run(name, func(t *testing.T) {
-			rootFS = t.TempDir()
-			for _, tt := range []struct {
-				path  string
-				token *string
-			}{
-				{path: "/var/run/secrets/kubernetes.io/serviceaccount/token", token: test.kubeToken},
-				{path: "/var/run/secrets/dapr.io/sentrytoken/token", token: test.boundToken},
-			} {
-				if tt.token != nil {
-					path := filepath.Join(rootFS, tt.path)
-					require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
-					require.NoError(t, os.WriteFile(path, []byte(*tt.token), 0o600))
-				}
-			}
-
-			got, err := getKubernetesIdentityToken()
-			assert.Equal(t, test.expErr, err != nil, err)
-			assert.Equal(t, test.exp, got)
-		})
-	}
 }
