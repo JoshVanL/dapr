@@ -19,8 +19,8 @@ import (
 
 	chi "github.com/go-chi/chi/v5"
 
-	auth "github.com/dapr/dapr/pkg/runtime/security"
-	authConsts "github.com/dapr/dapr/pkg/runtime/security/consts"
+	"github.com/dapr/dapr/pkg/security"
+	securityConsts "github.com/dapr/dapr/pkg/security/consts"
 	"github.com/dapr/dapr/utils/streams"
 )
 
@@ -38,9 +38,9 @@ func MaxBodySizeMiddleware(maxSize int64) func(next http.Handler) http.Handler {
 func APITokenAuthMiddleware(token string) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			v := r.Header.Get(authConsts.APITokenHeader)
-			if auth.ExcludedRoute(r.URL.String()) || v == token {
-				r.Header.Del(authConsts.APITokenHeader)
+			v := r.Header.Get(securityConsts.APITokenHeader)
+			if security.ExcludedRoute(r.URL.String()) || v == token {
+				r.Header.Del(securityConsts.APITokenHeader)
 				next.ServeHTTP(w, r)
 			} else {
 				http.Error(w, "invalid api token", http.StatusUnauthorized)

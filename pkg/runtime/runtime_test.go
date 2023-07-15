@@ -100,9 +100,8 @@ import (
 	runtimePubsub "github.com/dapr/dapr/pkg/runtime/pubsub"
 	"github.com/dapr/dapr/pkg/runtime/registry"
 	"github.com/dapr/dapr/pkg/runtime/security"
-	authConsts "github.com/dapr/dapr/pkg/runtime/security/consts"
 	"github.com/dapr/dapr/pkg/scopes"
-	"github.com/dapr/dapr/pkg/security/consts"
+	securityConsts "github.com/dapr/dapr/pkg/security/consts"
 	daprt "github.com/dapr/dapr/pkg/testing"
 	"github.com/dapr/kit/logger"
 	"github.com/dapr/kit/ptr"
@@ -4142,9 +4141,9 @@ func TestMTLS(t *testing.T) {
 		rt.runtimeConfig.mTLSEnabled = true
 		rt.runtimeConfig.sentryServiceAddress = "1.1.1.1"
 
-		t.Setenv(consts.TrustAnchorsEnvVar, testCertRoot)
-		t.Setenv(consts.CertChainEnvVar, "a")
-		t.Setenv(consts.CertKeyEnvVar, "b")
+		t.Setenv(securityConsts.TrustAnchorsEnvVar, testCertRoot)
+		t.Setenv(securityConsts.CertChainEnvVar, "a")
+		t.Setenv(securityConsts.CertKeyEnvVar, "b")
 
 		certChain, err := security.GetCertChain()
 		assert.NoError(t, err)
@@ -5877,7 +5876,7 @@ func TestIsEnvVarAllowed(t *testing.T) {
 	})
 
 	t.Run("with allowlist", func(t *testing.T) {
-		t.Setenv(authConsts.EnvKeysEnvVar, "FOO BAR TEST")
+		t.Setenv(securityConsts.EnvKeysEnvVar, "FOO BAR TEST")
 
 		tests := []struct {
 			name string
