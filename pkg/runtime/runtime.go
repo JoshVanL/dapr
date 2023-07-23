@@ -57,6 +57,9 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 
 	"github.com/dapr/dapr/pkg/actors"
+	"github.com/dapr/dapr/pkg/api/grpc"
+	"github.com/dapr/dapr/pkg/api/http"
+	"github.com/dapr/dapr/pkg/api/universal"
 	commonapi "github.com/dapr/dapr/pkg/apis/common"
 	componentsV1alpha1 "github.com/dapr/dapr/pkg/apis/components/v1alpha1"
 	httpEndpointV1alpha1 "github.com/dapr/dapr/pkg/apis/httpEndpoint/v1alpha1"
@@ -68,9 +71,6 @@ import (
 	"github.com/dapr/dapr/pkg/config/protocol"
 	diag "github.com/dapr/dapr/pkg/diagnostics"
 	diagUtils "github.com/dapr/dapr/pkg/diagnostics/utils"
-	"github.com/dapr/dapr/pkg/grpc"
-	"github.com/dapr/dapr/pkg/grpc/universalapi"
-	"github.com/dapr/dapr/pkg/http"
 	"github.com/dapr/dapr/pkg/httpendpoint"
 	"github.com/dapr/dapr/pkg/internal/apis"
 	"github.com/dapr/dapr/pkg/messaging"
@@ -451,7 +451,17 @@ func (a *DaprRuntime) initRuntime(ctx context.Context) error {
 	a.initProxy()
 
 	// Create and start the external gRPC server
-	univAPI := a.getUniversalAPI()
+	univAPI := universal.New(universal.Options{
+		Logger:                      log,
+		AppID:                       a.runtimeConfig.id,
+		CompStore:                   a.compStore,
+		Resiliency:                  a.resiliency,
+		Actors:                      a.actor,
+		ShutdownFn:                  a.ShutdownWithWait,
+		GetComponentsCapabilitiesFn: a.getComponentsCapabilitesMap,
+		AppConnectionConfig:         a.runtimeConfig.appConnectionConfig,
+		GlobalConfig:                a.globalConfig,
+	})
 	a.daprGRPCAPI = a.getGRPCAPI(univAPI)
 
 	err = a.startGRPCAPIServer(a.daprGRPCAPI, a.runtimeConfig.apiGRPCPort)
@@ -550,9 +560,6 @@ func (a *DaprRuntime) appHealthReadyInit(ctx context.Context) {
 		if err != nil {
 			log.Warn(err)
 		} else {
-			a.daprHTTPAPI.SetActorRuntime(a.actor)
-			a.daprGRPCAPI.SetActorRuntime(a.actor)
-
 			// Workflow engine depends on actor runtime being initialized
 			a.initWorkflowEngine(ctx)
 		}
@@ -1545,9 +1552,9 @@ func (a *DaprRuntime) readFromBinding(readCtx context.Context, name string, bind
 	})
 }
 
-func (a *DaprRuntime) startHTTPServer(port int, publicPort *int, profilePort int, allowedOrigins string, pipeline httpMiddleware.Pipeline, univAPI *universalapi.UniversalAPI) error {
+func (a *DaprRuntime) startHTTPServer(port int, publicPort *int, profilePort int, allowedOrigins string, pipeline httpMiddleware.Pipeline, univAPI *universal.Universal) error {
 	a.daprHTTPAPI = http.NewAPI(http.APIOpts{
-		UniversalAPI:          univAPI,
+		Universal:             univAPI,
 		AppChannel:            a.appChannel,
 		DirectMessaging:       a.directMessaging,
 		PubsubAdapter:         a.getPublishAdapter(),
@@ -1633,22 +1640,10 @@ func (a *DaprRuntime) getNewServerConfig(apiListenAddresses []string, port int) 
 	}
 }
 
-func (a *DaprRuntime) getUniversalAPI() *universalapi.UniversalAPI {
-	return &universalapi.UniversalAPI{
-		AppID:                       a.runtimeConfig.id,
-		CompStore:                   a.compStore,
-		Resiliency:                  a.resiliency,
-		Actors:                      a.actor,
-		ShutdownFn:                  a.ShutdownWithWait,
-		GetComponentsCapabilitiesFn: a.getComponentsCapabilitesMap,
-		AppConnectionConfig:         a.runtimeConfig.appConnectionConfig,
-		GlobalConfig:                a.globalConfig,
-	}
-}
-
-func (a *DaprRuntime) getGRPCAPI(univAPI *universalapi.UniversalAPI) grpc.API {
-	return grpc.NewAPI(grpc.APIOpts{
-		UniversalAPI:          univAPI,
+func (a *DaprRuntime) getGRPCAPI(univAPI *universal.Universal) grpc.API {
+	return grpc.NewAPI(grpc.Options{
+		Logger:                log,
+		Universal:             univAPI,
 		AppChannel:            a.appChannel,
 		PubsubAdapter:         a.getPublishAdapter(),
 		DirectMessaging:       a.directMessaging,
