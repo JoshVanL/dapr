@@ -192,6 +192,8 @@ func newDaprRuntime(ctx context.Context,
 	})
 
 	rt := &DaprRuntime{
+		closeCh:                    make(chan struct{}),
+		stopped:                    make(chan struct{}),
 		runtimeConfig:              runtimeConfig,
 		globalConfig:               globalConfig,
 		accessControlList:          accessControlList,
@@ -224,6 +226,9 @@ func newDaprRuntime(ctx context.Context,
 			GRPC:             grpc,
 			Channels:         channels,
 		}),
+		fatalShutdownFn: func() {
+			log.Fatal("Graceful shutdown timeout exceeded")
+		},
 	}
 
 	rt.componentAuthorizers = []ComponentAuthorizer{rt.namespaceComponentAuthorizer}
