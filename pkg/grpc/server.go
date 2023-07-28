@@ -201,14 +201,13 @@ func (s *server) Close() error {
 		}(server)
 	}
 
-	var errs []error
 	if s.api != nil {
 		if closer, ok := s.api.(io.Closer); ok {
-			errs = append(errs, closer.Close())
+			return closer.Close()
 		}
 	}
 
-	return errors.Join(errs...)
+	return nil
 }
 
 func (s *server) generateWorkloadCert() error {
