@@ -1659,16 +1659,9 @@ func assertBuiltInSecretStore(t *testing.T, rt *DaprRuntime) {
 			}
 		}
 	}()
-<<<<<<< HEAD
 	rt.appendBuiltinSecretStore(context.Background())
 	wg.Wait()
 	assert.NoError(t, rt.runnerCloser.Close())
-=======
-	wg.Add(1)
-	rt.appendBuiltinSecretStore(context.Background())
-	wg.Wait()
-	assert.NoError(t, rt.shutdown())
->>>>>>> e4626f37 (Gracefully shutdown Dapr, waiting for all go routines and servers to)
 }
 
 func NewTestDaprRuntime(mode modes.DaprMode) (*DaprRuntime, error) {
@@ -2366,16 +2359,12 @@ func TestCloseWithErrors(t *testing.T) {
 		errCh <- rt.Run(context.Background())
 	}()
 
-<<<<<<< HEAD
 	rt.addPendingComponent(context.Background(), mockOutputBindingComponent)
 	rt.addPendingComponent(context.Background(), mockPubSubComponent)
 	rt.addPendingComponent(context.Background(), mockStateComponent)
 	rt.addPendingComponent(context.Background(), mockSecretsComponent)
 
 	err = rt.runnerCloser.Close()
-=======
-	err = rt.shutdown()
->>>>>>> e4626f37 (Gracefully shutdown Dapr, waiting for all go routines and servers to)
 	require.Error(t, err)
 	assert.Len(t, strings.Split(err.Error(), "\n"), 4)
 	select {
@@ -2387,11 +2376,7 @@ func TestCloseWithErrors(t *testing.T) {
 }
 
 func stopRuntime(t *testing.T, rt *DaprRuntime) {
-<<<<<<< HEAD
 	assert.NoError(t, rt.runnerCloser.Close())
-=======
-	assert.NoError(t, rt.shutdown())
->>>>>>> e4626f37 (Gracefully shutdown Dapr, waiting for all go routines and servers to)
 }
 
 func TestComponentsCallback(t *testing.T) {
@@ -2595,15 +2580,6 @@ spec:
 		}
 
 		select {
-<<<<<<< HEAD
-=======
-		case <-rt.stopped:
-		case <-time.After(5 * time.Second):
-			t.Error("timed out waiting for runtime to be marked as stopped")
-		}
-
-		select {
->>>>>>> e4626f37 (Gracefully shutdown Dapr, waiting for all go routines and servers to)
 		case err := <-errCh:
 			assert.NoError(t, err)
 		case <-time.After(5 * time.Second):
@@ -2658,11 +2634,6 @@ spec:
 		select {
 		case <-errCh:
 			t.Fatal("runtime returned stopped before secret Close() returned")
-<<<<<<< HEAD
-=======
-		case <-rt.closeCh:
-			t.Fatal("close channels closed before secret Close() returned")
->>>>>>> e4626f37 (Gracefully shutdown Dapr, waiting for all go routines and servers to)
 		default:
 		}
 
@@ -2688,11 +2659,7 @@ spec:
 		}
 
 		select {
-<<<<<<< HEAD
 		case <-shutdownCh:
-=======
-		case <-rt.stopped:
->>>>>>> e4626f37 (Gracefully shutdown Dapr, waiting for all go routines and servers to)
 		case <-time.After(5 * time.Second):
 			t.Error("timed out waiting for runtime to be marked as stopped")
 		}
@@ -2702,13 +2669,9 @@ spec:
 		rt, err := NewTestDaprRuntime(modes.StandaloneMode)
 		require.NoError(t, err)
 
-<<<<<<< HEAD
 		secretInited := make(chan struct{})
 		m := NewMockKubernetesStoreWithInitCallback(func(ctx context.Context) error {
 			close(secretInited)
-=======
-		m := NewMockKubernetesStoreWithInitCallback(func(ctx context.Context) error {
->>>>>>> e4626f37 (Gracefully shutdown Dapr, waiting for all go routines and servers to)
 			return errors.New("this is an error")
 		})
 
@@ -2734,11 +2697,7 @@ metadata:
 spec:
   type: secretstores.kubernetesMock
   version: v1
-<<<<<<< HEAD
   ignoreErrors: true
-=======
-	ignoreErrors: true
->>>>>>> e4626f37 (Gracefully shutdown Dapr, waiting for all go routines and servers to)
 `), 0o600))
 
 		// Use a background context since this is not closed by the test.
@@ -2748,15 +2707,12 @@ spec:
 			errCh <- rt.Run(ctx)
 		}()
 
-<<<<<<< HEAD
 		select {
 		case <-secretInited:
 		case <-time.After(3 * time.Second):
 			t.Fatal("timed out waiting for secret store to be inited")
 		}
 
-=======
->>>>>>> e4626f37 (Gracefully shutdown Dapr, waiting for all go routines and servers to)
 		shutdownCh := make(chan struct{})
 		go func() {
 			rt.ShutdownWithWait()
@@ -2860,15 +2816,9 @@ spec:
 		rt.runtimeConfig.gracefulShutdownDuration = time.Millisecond * 10
 
 		fatalShutdownCalled := make(chan struct{})
-<<<<<<< HEAD
 		rt.runnerCloser.WithFatalShutdown(func() {
 			close(fatalShutdownCalled)
 		})
-=======
-		rt.fatalShutdownFn = func() {
-			close(fatalShutdownCalled)
-		}
->>>>>>> e4626f37 (Gracefully shutdown Dapr, waiting for all go routines and servers to)
 
 		rt.runtimeConfig.registry.SecretStores().RegisterComponent(
 			func(_ logger.Logger) secretstores.SecretStore {
@@ -3147,16 +3097,6 @@ func TestGracefulShutdownPubSub(t *testing.T) {
 		Channels:         rt.channels,
 		GRPC:             rt.grpc,
 	})
-<<<<<<< HEAD
-=======
-	rt.processor.SetAppChannel(mockAppChannel)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	errCh := make(chan error)
-	go func() {
-		errCh <- rt.Run(ctx)
-	}()
->>>>>>> e4626f37 (Gracefully shutdown Dapr, waiting for all go routines and servers to)
 
 	require.NoError(t, rt.processor.Init(context.Background(), cPubSub))
 
