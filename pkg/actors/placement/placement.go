@@ -142,7 +142,7 @@ func (p *actorPlacement) AddHostedActorType(actorType string) error {
 
 // Start connects placement service to register to membership and send heartbeat
 // to report the current member status periodically.
-func (p *actorPlacement) Start() {
+func (p *actorPlacement) Start(ctx context.Context) {
 	p.serverIndex.Store(0)
 	p.shutdown.Store(false)
 
