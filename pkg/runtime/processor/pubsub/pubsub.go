@@ -78,7 +78,6 @@ type Options struct {
 	GRPC           *manager.Manager
 	Channels       *channels.Channels
 	OperatorClient operatorv1.OperatorClient
-	Outbox         outbox.Outbox
 }
 
 type pubsub struct {
@@ -129,7 +128,6 @@ func New(opts Options) *pubsub {
 		grpc:           opts.GRPC,
 		channels:       opts.Channels,
 		operatorClient: opts.OperatorClient,
-		outbox:         opts.Outbox,
 		topicCancels:   make(map[string]context.CancelFunc),
 	}
 

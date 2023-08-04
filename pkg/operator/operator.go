@@ -45,6 +45,7 @@ import (
 	"github.com/dapr/dapr/pkg/operator/api"
 	operatorcache "github.com/dapr/dapr/pkg/operator/cache"
 	"github.com/dapr/dapr/pkg/operator/handlers"
+	operatorv1pb "github.com/dapr/dapr/pkg/proto/operator/v1"
 	"github.com/dapr/kit/fswatcher"
 	"github.com/dapr/kit/logger"
 )
@@ -167,22 +168,28 @@ func (o *operator) prepareConfig() error {
 	return nil
 }
 
-func (o *operator) syncComponent(ctx context.Context) func(obj interface{}) {
+func (o *operator) syncComponent(ctx context.Context, eventType operatorv1pb.ResourceEventType) func(obj interface{}) {
 	return func(obj interface{}) {
 		c, ok := obj.(*componentsapi.Component)
 		if ok {
-			log.Debugf("Observed component to be synced: %s/%s", c.Namespace, c.Name)
-			o.apiServer.OnComponentUpdated(ctx, c)
+			log.Debugf("Observed component to be synced: (%s) %s/%s", eventType, c.Namespace, c.Name)
+			o.apiServer.OnComponentUpdated(ctx, &api.ComponentUpdateEvent{
+				Component: c,
+				Type:      eventType,
+			})
 		}
 	}
 }
 
-func (o *operator) syncHTTPEndpoint(ctx context.Context) func(obj interface{}) {
+func (o *operator) syncHTTPEndpoint(ctx context.Context, eventType operatorv1pb.ResourceEventType) func(obj interface{}) {
 	return func(obj interface{}) {
 		e, ok := obj.(*httpendpointsapi.HTTPEndpoint)
 		if ok {
 			log.Debugf("Observed http endpoint to be synced: %s/%s", e.Namespace, e.Name)
-			o.apiServer.OnHTTPEndpointUpdated(ctx, e)
+			o.apiServer.OnHTTPEndpointUpdated(ctx, &api.HTTPEndpointUpdateEvent{
+				Endpoint: e,
+				Type:     eventType,
+			})
 		}
 	}
 }
@@ -320,10 +327,11 @@ func (o *operator) Run(ctx context.Context) error {
 		}
 
 		_, rErr = componentInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-			AddFunc: o.syncComponent(ctx),
+			AddFunc: o.syncComponent(ctx, operatorv1pb.ResourceEventType_CREATED),
 			UpdateFunc: func(_, newObj interface{}) {
-				o.syncComponent(ctx)(newObj)
+				o.syncComponent(ctx, operatorv1pb.ResourceEventType_UPDATED)(newObj)
 			},
+			DeleteFunc: o.syncComponent(ctx, operatorv1pb.ResourceEventType_DELETED),
 		})
 		if rErr != nil {
 			return fmt.Errorf("unable to add components informer event handler: %w", rErr)
@@ -346,10 +354,11 @@ func (o *operator) Run(ctx context.Context) error {
 		}
 
 		_, rErr = httpEndpointInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-			AddFunc: o.syncHTTPEndpoint(ctx),
+			AddFunc: o.syncHTTPEndpoint(ctx, operatorv1pb.ResourceEventType_CREATED),
 			UpdateFunc: func(_, newObj interface{}) {
-				o.syncHTTPEndpoint(ctx)(newObj)
+				o.syncHTTPEndpoint(ctx, operatorv1pb.ResourceEventType_UPDATED)(newObj)
 			},
+			DeleteFunc: o.syncHTTPEndpoint(ctx, operatorv1pb.ResourceEventType_DELETED),
 		})
 		if rErr != nil {
 			return fmt.Errorf("unable to add http endpoint informer event handler: %w", rErr)
