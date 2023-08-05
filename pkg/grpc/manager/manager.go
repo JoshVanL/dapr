@@ -271,20 +271,13 @@ func (g *Manager) StartCollector() {
 	}()
 }
 
-<<<<<<< HEAD:pkg/grpc/manager/manager.go
 func (g *Manager) Close() error {
-=======
-func (g *Manager) Close() {
->>>>>>> e4626f37 (Gracefully shutdown Dapr, waiting for all go routines and servers to):pkg/grpc/grpc.go
 	defer g.wg.Wait()
 	if g.closed.CompareAndSwap(false, true) {
 		close(g.closeCh)
 	}
-<<<<<<< HEAD:pkg/grpc/manager/manager.go
 
 	return nil
-=======
->>>>>>> e4626f37 (Gracefully shutdown Dapr, waiting for all go routines and servers to):pkg/grpc/grpc.go
 }
 
 func nopTeardown(destroy bool) {
