@@ -190,6 +190,7 @@ func newDaprRuntime(ctx context.Context,
 	switch runtimeConfig.mode {
 	case modes.KubernetesMode:
 		reloader = hotreload.NewOperator(hotreload.OptionsOperator{
+			Config:         globalConfig,
 			PodName:        podName,
 			Namespace:      namespace,
 			OperatorClient: operatorClient,
@@ -200,6 +201,7 @@ func newDaprRuntime(ctx context.Context,
 		})
 	case modes.StandaloneMode:
 		reloader, err = hotreload.NewDisk(hotreload.OptionsDisk{
+			Config:         globalConfig,
 			Dirs:           runtimeConfig.standalone.ResourcesPath,
 			ComponentStore: compStore,
 			Authorizer:     authz,
