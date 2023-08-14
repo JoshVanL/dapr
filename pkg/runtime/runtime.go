@@ -111,6 +111,8 @@ type DaprRuntime struct {
 	meta                *meta.Meta
 	runnerCloser        *concurrency.RunnerCloserManager
 	reloader            *hotreload.Reloader
+	// Used for testing.
+	initComplete chan struct{}
 
 	proxy messaging.Proxy
 
@@ -170,7 +172,7 @@ func newDaprRuntime(ctx context.Context,
 
 	processor := processor.New(processor.Options{
 		ID:               runtimeConfig.id,
-		Namespace:        getNamespace(),
+		Namespace:        namespace,
 		IsHTTP:           runtimeConfig.appConnectionConfig.Protocol.IsHTTP(),
 		PlacementEnabled: len(runtimeConfig.placementAddresses) > 0,
 		Registry:         runtimeConfig.registry,
@@ -179,7 +181,7 @@ func newDaprRuntime(ctx context.Context,
 		GlobalConfig:     globalConfig,
 		Resiliency:       resiliencyProvider,
 		Mode:             runtimeConfig.mode,
-		PodName:          getPodName(),
+		PodName:          podName,
 		Standalone:       runtimeConfig.standalone,
 		OperatorClient:   operatorClient,
 		GRPC:             grpc,
@@ -231,6 +233,9 @@ func newDaprRuntime(ctx context.Context,
 		authz:             authz,
 		processor:         processor,
 		reloader:          reloader,
+		namespace:         namespace,
+		podName:           podName,
+		initComplete:      make(chan struct{}),
 	}
 
 	var gracePeriod *time.Duration
@@ -259,6 +264,7 @@ func newDaprRuntime(ctx context.Context,
 				rt.daprHTTPAPI.MarkStatusAsReady()
 			}
 
+			close(rt.initComplete)
 			<-ctx.Done()
 
 			return nil
@@ -397,13 +403,10 @@ func (a *DaprRuntime) setupTracing(ctx context.Context, hostAddress string, tpSt
 }
 
 func (a *DaprRuntime) initRuntime(ctx context.Context) error {
-	a.namespace = getNamespace()
-
 	err := a.establishSecurity(a.runtimeConfig.sentryServiceAddress)
 	if err != nil {
 		return err
 	}
-	a.podName = getPodName()
 
 	if a.hostAddress, err = utils.GetHostAddress(); err != nil {
 		return fmt.Errorf("failed to determine host address: %w", err)
@@ -885,25 +888,6 @@ func (a *DaprRuntime) initActors(ctx context.Context) error {
 		return nil
 	}
 	return rterrors.NewInit(rterrors.InitFailure, "actors", err)
-}
-
-func (a *DaprRuntime) namespaceComponentAuthorizer(component componentsV1alpha1.Component) bool {
-	if a.namespace == "" || component.ObjectMeta.Namespace == "" || (a.namespace != "" && component.ObjectMeta.Namespace == a.namespace) {
-		return component.IsAppScoped(a.runtimeConfig.id)
-	}
-
-	return false
-}
-
-func (a *DaprRuntime) namespaceHTTPEndpointAuthorizer(endpoint httpEndpointV1alpha1.HTTPEndpoint) bool {
-	switch {
-	case a.namespace == "",
-		endpoint.ObjectMeta.Namespace == "",
-		(a.namespace != "" && endpoint.ObjectMeta.Namespace == a.namespace):
-		return endpoint.IsAppScoped(a.runtimeConfig.id)
-	default:
-		return false
-	}
 }
 
 func (a *DaprRuntime) loadComponents(ctx context.Context) error {
