@@ -10,7 +10,7 @@ require (
 	github.com/cenkalti/backoff/v4 v4.2.1
 	github.com/cloudevents/sdk-go/v2 v2.14.0
 	github.com/dapr/components-contrib v1.11.3-0.20230814210647-01646b8833e1
-	github.com/dapr/kit v0.11.4-0.20230807225040-b6b141aa3e32
+	github.com/dapr/kit v0.11.4-0.20230814200438-569cc87ddb9b
 	github.com/evanphx/json-patch/v5 v5.6.0
 	github.com/fsnotify/fsnotify v1.6.0
 	github.com/go-chi/chi/v5 v5.0.10
@@ -161,7 +161,7 @@ require (
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
 	github.com/chebyrash/promise v0.0.0-20230709133807-42ec49ba1459 // indirect
 	github.com/chenzhuoyu/iasm v0.0.0-20230222070914-0b1b64b0e762 // indirect
-	github.com/choleraehyq/pid v0.0.16 // indirect
+	github.com/choleraehyq/pid v0.0.17 // indirect
 	github.com/clbanning/mxj/v2 v2.5.6 // indirect
 	github.com/cloudevents/sdk-go/binding/format/protobuf/v2 v2.14.0 // indirect
 	github.com/cloudwego/fastpb v0.0.4-0.20230131074846-6fc453d58b96 // indirect
@@ -446,12 +446,12 @@ replace (
 // check for retracted versions: go list -mod=mod -f '{{if .Retracted}}{{.}}{{end}}' -u -m all
 replace github.com/microcosm-cc/bluemonday => github.com/microcosm-cc/bluemonday v1.0.24
 
+replace github.com/dapr/components-contrib => github.com/joshvanl/components-contrib v0.0.0-20230823221256-714760f02ee3
+
 // Uncomment for local development for testing with changes in the components-contrib repository.
 // Don't commit with this uncommented!
 //
-//replace github.com/dapr/components-contrib => ../components-contrib
-replace github.com/dapr/kit => github.com/joshvanl/kit v0.0.0-20230816151812-765fa3d3d75d
-
+// replace github.com/dapr/components-contrib => ../components-contrib
 //
 // Then, run `make modtidy` in this repository.
 // This ensures that go.mod and go.sum are up-to-date.
