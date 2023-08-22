@@ -24,7 +24,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"sync"
 	"time"
@@ -93,10 +92,8 @@ func newX509Source(ctx context.Context, clock clock.Clock, opts Options) (*x509s
 	rootPEMs := opts.TrustAnchors
 
 	if len(rootPEMs) == 0 {
-		var err error
-		var f *os.File
 		for {
-			f, err = os.Open(opts.TrustAnchorsFile)
+			_, err := os.Stat(opts.TrustAnchorsFile)
 			if err == nil {
 				break
 			}
@@ -113,10 +110,12 @@ func newX509Source(ctx context.Context, clock clock.Clock, opts Options) (*x509s
 			}
 		}
 
-		defer f.Close()
-		rootPEMs, err = io.ReadAll(f)
+		log.Infof("Trust anchors file '%s' found", opts.TrustAnchorsFile)
+
+		var err error
+		rootPEMs, err = os.ReadFile(opts.TrustAnchorsFile)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read trust anchors file %q: %w", opts.TrustAnchorsFile, err)
+			return nil, fmt.Errorf("failed to read trust anchors file '%s': %w", opts.TrustAnchorsFile, err)
 		}
 	}
 
