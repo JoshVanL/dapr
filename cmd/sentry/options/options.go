@@ -15,9 +15,6 @@ package options
 
 import (
 	"flag"
-	"path/filepath"
-
-	"k8s.io/client-go/util/homedir"
 
 	"github.com/dapr/dapr/pkg/metrics"
 	"github.com/dapr/dapr/pkg/sentry/config"
@@ -61,11 +58,11 @@ func New() *Options {
 	flag.IntVar(&opts.Port, "port", config.DefaultPort, "The port for the sentry server to listen on")
 	flag.IntVar(&opts.HealthzPort, "healthz-port", 8080, "The port for the healthz server to listen on")
 
-	if home := homedir.HomeDir(); home != "" {
-		flag.StringVar(&opts.Kubeconfig, "kubeconfig", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeconfig file")
-	} else {
-		flag.StringVar(&opts.Kubeconfig, "kubeconfig", "", "absolute path to the kubeconfig file")
-	}
+	//if home := homedir.HomeDir(); home != "" {
+	//	flag.StringVar(&opts.Kubeconfig, "kubeconfig", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeconfig file")
+	//} else {
+	//	flag.StringVar(&opts.Kubeconfig, "kubeconfig", "", "absolute path to the kubeconfig file")
+	//}
 
 	opts.Logger = logger.DefaultOptions()
 	opts.Logger.AttachCmdFlags(flag.StringVar, flag.BoolVar)
@@ -74,6 +71,8 @@ func New() *Options {
 	opts.Metrics.AttachCmdFlags(flag.StringVar, flag.BoolVar)
 
 	flag.Parse()
+
+	opts.Kubeconfig = flag.Lookup("kubeconfig").Value.String()
 
 	return &opts
 }

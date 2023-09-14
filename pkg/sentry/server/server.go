@@ -28,9 +28,9 @@ import (
 	sentryv1pb "github.com/dapr/dapr/pkg/proto/sentry/v1"
 	"github.com/dapr/dapr/pkg/security"
 	secpem "github.com/dapr/dapr/pkg/security/pem"
+	"github.com/dapr/dapr/pkg/sentry/ca"
 	"github.com/dapr/dapr/pkg/sentry/monitoring"
-	"github.com/dapr/dapr/pkg/sentry/server/ca"
-	"github.com/dapr/dapr/pkg/sentry/server/validator"
+	"github.com/dapr/dapr/pkg/sentry/validator"
 	"github.com/dapr/kit/logger"
 )
 
@@ -192,9 +192,6 @@ func (s *server) signCertificate(ctx context.Context, req *sentryv1pb.SignCertif
 
 	return &sentryv1pb.SignCertificateResponse{
 		WorkloadCertificate: chainPEM,
-		// We only populate the trust chain and valid until for clients pre-1.12.
-		// TODO: Remove fields in 1.14.
-		TrustChainCertificates: [][]byte{s.ca.TrustAnchors()},
-		ValidUntil:             timestamppb.New(chain[0].NotAfter),
+		ValidUntil:          timestamppb.New(chain[0].NotAfter),
 	}, nil
 }

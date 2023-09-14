@@ -57,10 +57,6 @@ metadata:
     {{ $key }}: {{ tpl $value $ }}
     {{- end }}
 rules:
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["get"]
-    resourceNames: ["dapr-trust-bundle"]
 {{- if eq .Values.global.rbac.namespaced true }}
   - apiGroups: ["dapr.io"]
     resources: ["configurations", "components"]

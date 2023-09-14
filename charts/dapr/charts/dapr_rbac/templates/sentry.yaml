@@ -25,8 +25,11 @@ rules:
     resources: ["configurations"]
     verbs: ["list", "get", "watch"]
   - apiGroups: [""]
-    resources: ["pods"]
+    resources: ["pods","namespaces"]
     verbs: ["list", "get", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["list", "get", "watch","update","create"]
 {{- end }}
 ---
 kind: ClusterRoleBinding
@@ -58,12 +61,18 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get", "update","delete"]
+    verbs: ["get", "update","delete","list","watch"]
     resourceNames: ["dapr-trust-bundle"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "update"]
+    resourceNames: ["configmap.distributor.trust.sentry.dapr.io"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["create"]
   - apiGroups: [""]
-    resources: ["configmaps"]
-    verbs: ["get", "update", "watch", "list"]
-    resourceNames: ["dapr-trust-bundle"]
+    resources: ["events"]
+    verbs: ["create"]
 {{- if eq .Values.global.rbac.namespaced true }}
   - apiGroups: ["dapr.io"]
     resources: ["configurations"]

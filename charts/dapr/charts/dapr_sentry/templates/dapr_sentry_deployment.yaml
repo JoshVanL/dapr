@@ -15,20 +15,6 @@ data:
   ca.crt: {{ b64enc .Values.tls.root.certPEM | trim }}
 {{ end }}
 ---
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: dapr-trust-bundle
-  labels:
-    app: dapr-sentry
-    {{- range $key, $value := .Values.global.k8sLabels }}
-    {{ $key }}: {{ tpl $value $ }}
-    {{- end }}
-{{ if .Values.tls.root.certPEM }}
-data:
-  ca.crt: {{ b64enc .Values.tls.root.certPEM | trim }}
-{{end}}
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:

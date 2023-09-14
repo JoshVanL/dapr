@@ -24,8 +24,8 @@ import (
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 
 	sentryv1pb "github.com/dapr/dapr/pkg/proto/sentry/v1"
-	"github.com/dapr/dapr/pkg/sentry/server/validator"
-	"github.com/dapr/dapr/pkg/sentry/server/validator/internal"
+	"github.com/dapr/dapr/pkg/sentry/validator"
+	"github.com/dapr/dapr/pkg/sentry/validator/internal"
 	"github.com/dapr/kit/jwkscache"
 	"github.com/dapr/kit/logger"
 )

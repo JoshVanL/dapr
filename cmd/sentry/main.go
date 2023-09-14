@@ -91,7 +91,13 @@ func main() {
 	// events (as well as wanting to terminate the program on signals).
 	caMngrFactory := func() *concurrency.RunnerManager {
 		return concurrency.NewRunnerManager(
-			sentry.New(cfg).Start,
+			func(ctx context.Context) error {
+				sentry, err := sentry.New(cfg)
+				if err != nil {
+					return err
+				}
+				return sentry.Start(ctx)
+			},
 			func(ctx context.Context) error {
 				select {
 				case <-ctx.Done():

@@ -65,9 +65,6 @@ type Signer interface {
 	// TODO: @joshvanl: Remove bool value in v1.13 as the inject no longer needs
 	// to request other identities.
 	SignIdentity(context.Context, *SignRequest, bool) ([]*x509.Certificate, error)
-
-	// TrustAnchors returns the trust anchors for the CA in PEM format.
-	TrustAnchors() []byte
 }
 
 // store is the interface for the trust bundle backend store.
@@ -171,9 +168,4 @@ func (c *ca) SignIdentity(ctx context.Context, req *SignRequest, overrideDuratio
 	}
 
 	return append([]*x509.Certificate{cert}, c.bundle.IssChain...), nil
-}
-
-// TODO: Remove this method in v1.12 since it is not used any more.
-func (c *ca) TrustAnchors() []byte {
-	return c.bundle.TrustAnchors
 }

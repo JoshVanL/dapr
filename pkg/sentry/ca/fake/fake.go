@@ -20,7 +20,7 @@ import (
 	"context"
 	"crypto/x509"
 
-	"github.com/dapr/dapr/pkg/sentry/server/ca"
+	"github.com/dapr/dapr/pkg/sentry/ca"
 )
 
 type Fake struct {

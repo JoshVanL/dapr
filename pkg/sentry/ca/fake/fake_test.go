@@ -19,9 +19,9 @@ package fake
 import (
 	"testing"
 
-	"github.com/dapr/dapr/pkg/sentry/server/validator"
+	"github.com/dapr/dapr/pkg/sentry/ca"
 )
 
 func TestNew(t *testing.T) {
-	var _ validator.Validator = New()
+	var _ ca.Signer = New()
 }

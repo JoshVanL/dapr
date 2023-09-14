@@ -58,15 +58,6 @@ func (k *kube) get(ctx context.Context) (Bundle, bool, error) {
 		return Bundle{}, false, nil
 	}
 
-	// Ensure ConfigMap is up to date also.
-	cm, err := k.client.CoreV1().ConfigMaps(k.namespace).Get(ctx, TrustBundleK8sName, metav1.GetOptions{})
-	if err != nil {
-		return Bundle{}, false, err
-	}
-	if cm.Data[filepath.Base(k.config.RootCertPath)] != string(trustAnchors) {
-		return Bundle{}, false, nil
-	}
-
 	bundle, err := verifyBundle(trustAnchors, issChainPEM, issKeyPEM)
 	if err != nil {
 		return Bundle{}, false, err
@@ -88,20 +79,6 @@ func (k *kube) store(ctx context.Context, bundle Bundle) error {
 	}
 
 	_, err = k.client.CoreV1().Secrets(k.namespace).Update(ctx, s, metav1.UpdateOptions{})
-	if err != nil {
-		return err
-	}
-
-	cm, err := k.client.CoreV1().ConfigMaps(k.namespace).Get(ctx, TrustBundleK8sName, metav1.GetOptions{})
-	if err != nil {
-		return err
-	}
-
-	cm.Data = map[string]string{
-		filepath.Base(k.config.RootCertPath): string(bundle.TrustAnchors),
-	}
-
-	_, err = k.client.CoreV1().ConfigMaps(k.namespace).Update(ctx, cm, metav1.UpdateOptions{})
 	if err != nil {
 		return err
 	}

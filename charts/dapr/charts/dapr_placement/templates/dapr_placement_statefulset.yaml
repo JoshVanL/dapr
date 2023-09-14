@@ -74,7 +74,7 @@ spec:
         resources:
 {{ toYaml .Values.resources | indent 10 }}
         volumeMounts:
-          - name: dapr-trust-bundle
+          - name: dapr-root-ca-crt
             mountPath: /var/run/secrets/dapr.io/tls
             readOnly: true
         {{- if .Values.global.mtls.mountSentryVolume }}
@@ -186,9 +186,9 @@ spec:
                 fieldPath: metadata.namespace
       serviceAccountName: dapr-placement
       volumes:
-      - name: dapr-trust-bundle
+      - name: dapr-root-ca-crt
         configMap:
-          name: dapr-trust-bundle
+          name: dapr-root-ca.crt
     {{- if .Values.global.mtls.mountSentryVolume }}
       - name: dapr-identity-token
         projected:

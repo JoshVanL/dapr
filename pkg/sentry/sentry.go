@@ -28,14 +28,16 @@ import (
 	"github.com/dapr/dapr/pkg/concurrency"
 	sentryv1pb "github.com/dapr/dapr/pkg/proto/sentry/v1"
 	"github.com/dapr/dapr/pkg/security"
+	"github.com/dapr/dapr/pkg/sentry/ca"
 	"github.com/dapr/dapr/pkg/sentry/config"
 	"github.com/dapr/dapr/pkg/sentry/monitoring"
 	"github.com/dapr/dapr/pkg/sentry/server"
-	"github.com/dapr/dapr/pkg/sentry/server/ca"
-	"github.com/dapr/dapr/pkg/sentry/server/validator"
-	validatorInsecure "github.com/dapr/dapr/pkg/sentry/server/validator/insecure"
-	validatorJWKS "github.com/dapr/dapr/pkg/sentry/server/validator/jwks"
-	validatorKube "github.com/dapr/dapr/pkg/sentry/server/validator/kubernetes"
+	"github.com/dapr/dapr/pkg/sentry/trust"
+	trustoptions "github.com/dapr/dapr/pkg/sentry/trust/options"
+	"github.com/dapr/dapr/pkg/sentry/validator"
+	validatorInsecure "github.com/dapr/dapr/pkg/sentry/validator/insecure"
+	validatorJWKS "github.com/dapr/dapr/pkg/sentry/validator/jwks"
+	validatorKube "github.com/dapr/dapr/pkg/sentry/validator/kubernetes"
 	"github.com/dapr/kit/logger"
 )
 
@@ -50,26 +52,57 @@ type CertificateAuthority interface {
 type sentry struct {
 	conf    config.Config
 	running atomic.Bool
+	trust   trust.Manager
 }
 
 // New returns a new Sentry Certificate Authority instance.
-func New(conf config.Config) CertificateAuthority {
-	return &sentry{
-		conf: conf,
+func New(conf config.Config) (CertificateAuthority, error) {
+	restConfig, err := rest.InClusterConfig()
+	if err != nil {
+		return nil, fmt.Errorf("error getting in cluster config: %s", err)
 	}
+
+	kubeOpts := trustoptions.Kube{
+		Namespace:  security.CurrentNamespace(),
+		RestConfig: restConfig,
+	}
+
+	trustMngr, err := trust.New(trustoptions.Options{
+		BuilderSource: trustoptions.SourceKube{
+			Kube:         kubeOpts,
+			SourceKind:   trustoptions.SourceKindKubernetesSecret,
+			ResourceName: "dapr-trust-bundle",
+		},
+		BuilderDistributor: trustoptions.DistributionKube{
+			Kube: kubeOpts,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("error creating trust manager: %s", err)
+	}
+
+	return &sentry{
+		conf:  conf,
+		trust: trustMngr,
+	}, nil
 }
 
 // Start the server in background.
 func (s *sentry) Start(parentCtx context.Context) error {
+	// If the server is already running, return an error
+	if !s.running.CompareAndSwap(false, true) {
+		return errors.New("sentry is already running")
+	}
+
 	ctx, cancel := context.WithCancel(parentCtx)
 	defer cancel()
 
-	// If the server is already running, return an error
-	if !s.running.CompareAndSwap(false, true) {
-		return errors.New("CertificateAuthority server is already running")
-	}
-
 	ns := security.CurrentNamespace()
+
+	errCh := make(chan error)
+	go func() {
+		errCh <- s.trust.Run(ctx)
+	}()
 
 	camngr, err := ca.New(ctx, s.conf)
 	if err != nil {
@@ -77,11 +110,16 @@ func (s *sentry) Start(parentCtx context.Context) error {
 	}
 	log.Info("CA certificate key pair ready")
 
+	trustAnchors, err := s.trust.Latest(ctx)
+	if err != nil {
+		return fmt.Errorf("error getting trust anchors: %s", err)
+	}
+
 	provider, err := security.New(ctx, security.Options{
 		ControlPlaneTrustDomain: s.conf.TrustDomain,
 		ControlPlaneNamespace:   ns,
 		AppID:                   "dapr-sentry",
-		TrustAnchors:            camngr.TrustAnchors(),
+		TrustAnchors:            trustAnchors.PEMBytes(),
 		MTLSEnabled:             true,
 		// Override the request source to our in memory CA since _we_ are sentry!
 		OverrideCertRequestSource: func(ctx context.Context, csrDER []byte) ([]*x509.Certificate, error) {
@@ -120,6 +158,11 @@ func (s *sentry) Start(parentCtx context.Context) error {
 	// Start all background processes
 	runners := concurrency.NewRunnerManager(
 		provider.Run,
+		func(ctx context.Context) error {
+			<-ctx.Done()
+			cancel()
+			return <-errCh
+		},
 		func(ctx context.Context) error {
 			sec, secErr := provider.Handler(ctx)
 			if secErr != nil {
