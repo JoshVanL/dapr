@@ -1,5 +1,5 @@
 /*
-Copyright 2021 The Dapr Authors
+Copyright 2023 The Dapr Authors
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
@@ -28,6 +28,7 @@ import (
 
 var startOfTime = time.Date(2022, 1, 1, 12, 0, 0, 0, time.UTC)
 
+<<<<<<< HEAD
 func TestHealthCheck(t *testing.T) {
 	ts := &testServer{}
 	server := httptest.NewServer(ts)
@@ -150,37 +151,43 @@ func TestHealthCheck(t *testing.T) {
 	})
 }
 
+=======
+>>>>>>> 22882a74b (Updates pkgs/health to use more aggressive trys)
 func TestApplyOptions(t *testing.T) {
-	t.Run("valid defaults", func(t *testing.T) {
-		opts := healthCheckOptions{}
-		applyDefaults(&opts)
+	assert.Equal(t, int32(2), int32(defaultFailureThreshold))
+	assert.Equal(t, time.Second, defaultInitialDelay)
+	assert.Equal(t, time.Second*3, defaultHealthyInterval)
+	assert.Equal(t, time.Second/2, defaultUnhealthyInterval)
+	assert.Equal(t, time.Second*2, defaultRequestTimeout)
+	assert.Equal(t, 200, defaultSuccessStatusCode)
 
-		assert.Equal(t, opts.failureThreshold, int32(failureThreshold))
-		assert.Equal(t, opts.initialDelay, initialDelay)
-		assert.Equal(t, opts.interval, interval)
-		assert.Equal(t, opts.requestTimeout, requestTimeout)
-		assert.Equal(t, opts.successStatusCode, successStatusCode)
+	t.Run("valid defaults", func(t *testing.T) {
+		r := New("")
+
+		assert.Equal(t, r.failureThreshold, int32(defaultFailureThreshold))
+		assert.Equal(t, r.initialDelay, defaultInitialDelay)
+		assert.Equal(t, r.healthyInterval, defaultHealthyInterval)
+		assert.Equal(t, r.unhealthyInterval, defaultUnhealthyInterval)
+		assert.Equal(t, r.requestTimeout, defaultRequestTimeout)
+		assert.Equal(t, r.successStatusCode, defaultSuccessStatusCode)
 	})
 
 	t.Run("valid custom options", func(t *testing.T) {
-		opts := healthCheckOptions{}
-		applyDefaults(&opts)
-
-		customOpts := []Option{
+		r := New("",
 			WithFailureThreshold(10),
-			WithInitialDelay(time.Second * 11),
-			WithInterval(time.Second * 12),
-			WithRequestTimeout(time.Second * 13),
+			WithInitialDelay(time.Second*11),
+			WithHealthyInterval(time.Second*12),
+			WithUnhealthyInterval(time.Second*16),
+			WithRequestTimeout(time.Second*13),
 			WithSuccessStatusCode(201),
-		}
-		for _, o := range customOpts {
-			o(&opts)
-		}
-		assert.Equal(t, opts.failureThreshold, int32(10))
-		assert.Equal(t, opts.initialDelay, time.Second*11)
-		assert.Equal(t, opts.interval, time.Second*12)
-		assert.Equal(t, opts.requestTimeout, time.Second*13)
-		assert.Equal(t, opts.successStatusCode, 201)
+		)
+
+		assert.Equal(t, r.failureThreshold, int32(10))
+		assert.Equal(t, r.initialDelay, time.Second*11)
+		assert.Equal(t, r.healthyInterval, time.Second*12)
+		assert.Equal(t, r.unhealthyInterval, time.Second*16)
+		assert.Equal(t, r.requestTimeout, time.Second*13)
+		assert.Equal(t, r.successStatusCode, 201)
 	})
 }
 
@@ -200,6 +207,7 @@ func (t *testServer) SetStatusCode(statusCode int32) {
 
 func TestResponses(t *testing.T) {
 	t.Run("default success status", func(t *testing.T) {
+<<<<<<< HEAD
 		clock := &clocktesting.FakeClock{}
 		clock.SetTime(startOfTime)
 
@@ -213,10 +221,27 @@ func TestResponses(t *testing.T) {
 		ch := StartEndpointHealthCheck(ctx,
 			WithAddress(server.URL),
 			WithClock(clock),
+=======
+		t.Parallel()
+
+		server := httptest.NewServer(&testServer{
+			statusCode: 200,
+		})
+		t.Cleanup(server.Close)
+
+		clock, ch := runReporter(t, server.URL,
+>>>>>>> 22882a74b (Updates pkgs/health to use more aggressive trys)
 			WithInitialDelay(0),
 			WithFailureThreshold(1),
 		)
 
+<<<<<<< HEAD
+=======
+		// Step the initial delay of 0.
+		clock.Step(1)
+		require.Eventually(t, clock.HasWaiters, time.Second, time.Microsecond)
+		clock.Step(time.Second / 2)
+>>>>>>> 22882a74b (Updates pkgs/health to use more aggressive trys)
 		healthy := assertHealthSignal(t, clock, ch)
 		assert.False(t, healthy)
 
@@ -226,6 +251,7 @@ func TestResponses(t *testing.T) {
 	})
 
 	t.Run("custom success status", func(t *testing.T) {
+<<<<<<< HEAD
 		clock := &clocktesting.FakeClock{}
 		clock.SetTime(startOfTime)
 
@@ -239,11 +265,28 @@ func TestResponses(t *testing.T) {
 		ch := StartEndpointHealthCheck(ctx,
 			WithAddress(server.URL),
 			WithClock(clock),
+=======
+		t.Parallel()
+
+		server := httptest.NewServer(&testServer{
+			statusCode: 201,
+		})
+		t.Cleanup(server.Close)
+
+		clock, ch := runReporter(t, server.URL,
+>>>>>>> 22882a74b (Updates pkgs/health to use more aggressive trys)
 			WithInitialDelay(0),
 			WithFailureThreshold(1),
 			WithSuccessStatusCode(201),
 		)
 
+<<<<<<< HEAD
+=======
+		// Step the initial delay of 0.
+		clock.Step(1)
+		require.Eventually(t, clock.HasWaiters, time.Second, time.Microsecond)
+		clock.Step(time.Second / 2)
+>>>>>>> 22882a74b (Updates pkgs/health to use more aggressive trys)
 		healthy := assertHealthSignal(t, clock, ch)
 		assert.False(t, healthy)
 
@@ -253,6 +296,7 @@ func TestResponses(t *testing.T) {
 	})
 
 	t.Run("test fail", func(t *testing.T) {
+<<<<<<< HEAD
 		clock := &clocktesting.FakeClock{}
 		clock.SetTime(startOfTime)
 
@@ -273,10 +317,29 @@ func TestResponses(t *testing.T) {
 		assert.False(t, healthy)
 
 		clock.Step(5 * time.Second)
+=======
+		t.Parallel()
+
+		server := httptest.NewServer(&testServer{
+			statusCode: 500,
+		})
+		t.Cleanup(server.Close)
+
+		clock, ch := runReporter(t, server.URL,
+			WithInitialDelay(0),
+			WithFailureThreshold(1),
+		)
+
+		// Step the initial delay of 0.
+		clock.Step(1)
+		require.Eventually(t, clock.HasWaiters, time.Second, time.Microsecond)
+		clock.Step(time.Second / 2)
+>>>>>>> 22882a74b (Updates pkgs/health to use more aggressive trys)
 		assertNoHealthSignal(t, clock, ch)
 	})
 
 	t.Run("test app recovery", func(t *testing.T) {
+<<<<<<< HEAD
 		clock := &clocktesting.FakeClock{}
 		clock.SetTime(startOfTime)
 
@@ -290,10 +353,22 @@ func TestResponses(t *testing.T) {
 		ch := StartEndpointHealthCheck(ctx,
 			WithAddress(server.URL),
 			WithClock(clock),
+=======
+		t.Parallel()
+
+		test := &testServer{
+			statusCode: 200,
+		}
+		server := httptest.NewServer(test)
+		t.Cleanup(server.Close)
+
+		clock, ch := runReporter(t, server.URL,
+>>>>>>> 22882a74b (Updates pkgs/health to use more aggressive trys)
 			WithInitialDelay(0),
 			WithFailureThreshold(1),
 		)
 
+<<<<<<< HEAD
 		healthy := assertHealthSignal(t, clock, ch)
 		assert.False(t, healthy)
 
@@ -306,8 +381,57 @@ func TestResponses(t *testing.T) {
 				healthy = assertHealthSignal(t, clock, ch)
 				assert.True(t, healthy)
 			}
+=======
+		clock.Step(1)
+		require.Eventually(t, clock.HasWaiters, time.Second, time.Microsecond)
+		clock.Step(time.Second / 2)
+		healthy := assertHealthSignal(t, clock, ch)
+		assert.True(t, healthy)
+
+		test.statusCode = 500
+		require.Eventually(t, clock.HasWaiters, time.Second, time.Microsecond)
+		clock.Step(time.Second * 3)
+		healthy = assertHealthSignal(t, clock, ch)
+		assert.False(t, healthy)
+
+		test.statusCode = 200
+		require.Eventually(t, clock.HasWaiters, time.Second, time.Microsecond)
+		clock.Step(time.Second / 2)
+		healthy = assertHealthSignal(t, clock, ch)
+		assert.True(t, healthy)
+	})
+}
+
+func runReporter(t *testing.T, endpoint string, opts ...Option) (*clocktesting.FakeClock, <-chan bool) {
+	t.Helper()
+
+	clock := new(clocktesting.FakeClock)
+	clock.SetTime(startOfTime)
+
+	reporter := New(endpoint, append(opts, WithClock(clock))...)
+
+	ch := reporter.Ch()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		reporter.Run(ctx)
+	}()
+
+	require.Eventually(t, clock.HasWaiters, time.Second, time.Millisecond*50, "ticker in program not created in time")
+
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			assert.Fail(t, "timed out waiting for reporter to stop")
+>>>>>>> 22882a74b (Updates pkgs/health to use more aggressive trys)
 		}
 	})
+
+	return clock, ch
 }
 
 func assertHealthSignal(t *testing.T, clock *clocktesting.FakeClock, ch <-chan bool) bool {
@@ -315,9 +439,7 @@ func assertHealthSignal(t *testing.T, clock *clocktesting.FakeClock, ch <-chan b
 	// Wait to ensure ticker in health server is setup.
 	// Wait for the clock to have tickers before stepping, since they are likely
 	// being created in another go routine to this test.
-	require.Eventually(t, func() bool {
-		return clock.HasWaiters()
-	}, time.Second, time.Microsecond, "ticker in program not created in time")
+	require.Eventually(t, clock.HasWaiters, time.Second, time.Microsecond, "ticker in program not created in time")
 
 	select {
 	case v := <-ch:
@@ -334,9 +456,7 @@ func assertNoHealthSignal(t *testing.T, clock *clocktesting.FakeClock, ch <-chan
 	// Wait to ensure ticker in health server is setup.
 	// Wait for the clock to have tickers before stepping, since they are likely
 	// being created in another go routine to this test.
-	require.Eventually(t, func() bool {
-		return clock.HasWaiters()
-	}, time.Second, time.Microsecond, "ticker in program not created in time")
+	require.Eventually(t, clock.HasWaiters, time.Second, time.Microsecond, "ticker in program not created in time")
 
 	// The signal is sent in a background goroutine, so we need to use a wall clock here
 	select {

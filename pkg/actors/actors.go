@@ -156,6 +156,12 @@ func NewActors(opts ActorsOpts) ActorRuntime {
 }
 
 func newActorsWithClock(opts ActorsOpts, clock clock.WithTicker) ActorRuntime {
+<<<<<<< HEAD
+=======
+	appHealthy := &atomic.Bool{}
+	appHealthy.Store(false)
+
+>>>>>>> 22882a74b (Updates pkgs/health to use more aggressive trys)
 	remindersProvider := reminders.NewRemindersProvider(clock, internal.RemindersProviderOpts{
 		StoreName: opts.StateStoreName,
 		Config:    opts.Config.Config,
@@ -279,6 +285,7 @@ func (a *actorsRuntime) getAppHealthCheckChan(ctx context.Context) <-chan bool {
 	// disconnect from placement to remove the node from consistent hashing ring.
 	// i.e if app is busy state, the healthz status would be flaky, which leads to frequent
 	// actor rebalancing. It will impact the entire service.
+<<<<<<< HEAD
 	return a.getAppHealthCheckChanWithOptions(ctx,
 		health.WithFailureThreshold(4),
 		health.WithInterval(5*time.Second),
@@ -290,6 +297,50 @@ func (a *actorsRuntime) getAppHealthCheckChan(ctx context.Context) <-chan bool {
 func (a *actorsRuntime) getAppHealthCheckChanWithOptions(ctx context.Context, opts ...health.Option) <-chan bool {
 	opts = append(opts, health.WithAddress(a.actorsConfig.HealthEndpoint+"/healthz"))
 	return health.StartEndpointHealthCheck(ctx, opts...)
+=======
+	go func() {
+		defer a.wg.Done()
+		a.startAppHealthCheck(ctx,
+			health.WithFailureThreshold(2),
+			health.WithHealthyInterval(3*time.Second),
+			health.WithUnhealthyInterval(time.Second/2),
+			health.WithRequestTimeout(2*time.Second),
+			health.WithHTTPClient(a.actorsConfig.HealthHTTPClient),
+		)
+	}()
+
+	return nil
+}
+
+func (a *actorsRuntime) startAppHealthCheck(ctx context.Context, opts ...health.Option) {
+	if len(a.actorsConfig.Config.HostedActorTypes.ListActorTypes()) == 0 || a.appChannel == nil {
+		a.appHealthy.Store(true)
+		return
+	}
+
+	reporter := health.New(a.actorsConfig.HealthEndpoint+"/healthz", opts...)
+	ch := reporter.Ch()
+
+	ctx, cancel := context.WithCancel(ctx)
+	a.wg.Add(1)
+	defer a.wg.Done()
+	go func() {
+		defer cancel()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-a.closeCh:
+				cancel()
+				return
+			case appHealthy := <-ch:
+				a.appHealthy.Store(appHealthy)
+			}
+		}
+	}()
+
+	reporter.Run(ctx)
+>>>>>>> 22882a74b (Updates pkgs/health to use more aggressive trys)
 }
 
 func constructCompositeKey(keys ...string) string {

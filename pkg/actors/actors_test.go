@@ -17,6 +17,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -1029,6 +1031,7 @@ func TestActorsAppHealthCheck(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
+<<<<<<< HEAD
 			opts := []health.Option{
 				health.WithClock(clock),
 				health.WithFailureThreshold(1),
@@ -1044,6 +1047,18 @@ func TestActorsAppHealthCheck(t *testing.T) {
 					healthy.Store(v)
 				}
 			}()
+=======
+	testActorsRuntime.actorsConfig.Config.HostedActorTypes = internal.NewHostedActors([]string{"actor1"})
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go testActorsRuntime.startAppHealthCheck(ctx,
+		health.WithClock(clock),
+		health.WithFailureThreshold(1),
+		health.WithHealthyInterval(1*time.Second),
+		health.WithUnhealthyInterval(1*time.Second),
+		health.WithRequestTimeout(100*time.Millisecond),
+	)
+>>>>>>> 22882a74b (Updates pkgs/health to use more aggressive trys)
 
 			clock.Step(time.Second)
 
@@ -1052,6 +1067,7 @@ func TestActorsAppHealthCheck(t *testing.T) {
 				return !healthy.Load()
 			}, time.Second, time.Microsecond*10)
 
+<<<<<<< HEAD
 			// Cancel now which should cause the shutdown
 			cancel()
 			<-closingCh
@@ -1059,9 +1075,39 @@ func TestActorsAppHealthCheck(t *testing.T) {
 	}
 
 	t.Run("with state store", testFn(newTestActorsRuntime()))
+=======
+	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		rw.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	testActorsRuntime.actorsConfig.Config.HostedActorTypes = internal.NewHostedActors([]string{"actor1"})
+	testActorsRuntime.appChannel = new(mockAppChannel)
+	testActorsRuntime.actorsConfig.HealthEndpoint = server.URL
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go testActorsRuntime.startAppHealthCheck(ctx,
+		health.WithClock(clock),
+		health.WithFailureThreshold(1),
+		health.WithHealthyInterval(1*time.Second),
+		health.WithUnhealthyInterval(1*time.Second),
+		health.WithRequestTimeout(100*time.Millisecond),
+	)
+
+	assert.False(t, testActorsRuntime.appHealthy.Load())
+
+	assert.Eventually(t, clock.HasWaiters, time.Second, time.Microsecond*10)
+	clock.Step(1 * time.Second)
+	assert.Eventually(t, clock.HasWaiters, time.Second, time.Microsecond*10)
+	clock.Step(1 * time.Second)
+
+	assert.Eventually(t, testActorsRuntime.appHealthy.Load, time.Second, time.Microsecond*10)
+}
+>>>>>>> 22882a74b (Updates pkgs/health to use more aggressive trys)
 
 	t.Run("without state store", testFn(newTestActorsRuntimeWithoutStore()))
 
+<<<<<<< HEAD
 	t.Run("no hosted actors without state store", func(t *testing.T) {
 		testActorsRuntime := newTestActorsRuntimeWithoutStore()
 		defer testActorsRuntime.Close()
@@ -1096,6 +1142,27 @@ func TestActorsAppHealthCheck(t *testing.T) {
 		cancel()
 		<-closingCh
 	})
+=======
+	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		rw.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	testActorsRuntime.actorsConfig.HostedActorTypes = internal.NewHostedActors([]string{})
+	testActorsRuntime.appChannel = new(mockAppChannel)
+	testActorsRuntime.actorsConfig.HealthEndpoint = server.URL
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go testActorsRuntime.startAppHealthCheck(ctx,
+		health.WithClock(clock),
+		health.WithFailureThreshold(1),
+		health.WithHealthyInterval(1*time.Second),
+		health.WithUnhealthyInterval(1*time.Second),
+		health.WithRequestTimeout(100*time.Millisecond),
+	)
+
+	assert.False(t, testActorsRuntime.appHealthy.Load())
+>>>>>>> 22882a74b (Updates pkgs/health to use more aggressive trys)
 }
 
 func TestShutdown(t *testing.T) {
