@@ -18,6 +18,8 @@ go test -v -race -count -tags="integration" ./tests/integration` -run="Test_Inte
 Rather than building from source, you can also set a custom daprd binary path
 with the environment variable `DAPR_INTEGRATION_DAPRD_PATH`.
 
+You can override the directory that is used to read the CRD definitions that are served by the Kubernetes process with the environment variable `DAPR_INTEGRATION_CRD_DIRECTORY`.
+
 ## Adding a new test
 
 To add a new test scenario, either create a new subject directory in
