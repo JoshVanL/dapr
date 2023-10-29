@@ -21,9 +21,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 
+	operatorv1pb "github.com/dapr/dapr/pkg/proto/operator/v1"
+	"github.com/dapr/dapr/pkg/security"
 	"github.com/dapr/dapr/tests/integration/framework/binary"
 	"github.com/dapr/dapr/tests/integration/framework/process"
 	"github.com/dapr/dapr/tests/integration/framework/process/exec"
@@ -37,6 +41,7 @@ type Operator struct {
 	port        int
 	metricsPort int
 	healthzPort int
+	namespace   string
 }
 
 func New(t *testing.T, fopts ...Option) *Operator {
@@ -56,7 +61,7 @@ func New(t *testing.T, fopts ...Option) *Operator {
 	}
 
 	require.NotNil(t, opts.trustAnchorsFile, "trustAnchorsFile is required")
-	require.NotNil(t, opts.trustAnchorsFile, "trustAnchorsFile is required")
+	require.NotNil(t, opts.kubeconfigPath, "kubeconfigPath is required")
 	require.NotNil(t, opts.namespace, "namespace is required")
 
 	args := []string{
@@ -86,6 +91,7 @@ func New(t *testing.T, fopts ...Option) *Operator {
 		port:        opts.port,
 		metricsPort: opts.metricsPort,
 		healthzPort: opts.healthzPort,
+		namespace:   *opts.namespace,
 	}
 }
 
@@ -124,4 +130,15 @@ func (o *Operator) MetricsPort() int {
 
 func (o *Operator) HealthzPort() int {
 	return o.healthzPort
+}
+
+func (o *Operator) Dial(t *testing.T, ctx context.Context, sec security.Handler) operatorv1pb.OperatorClient {
+	id, err := spiffeid.FromSegments(sec.ControlPlaneTrustDomain(), "ns", o.namespace, "dapr-operator")
+	require.NoError(t, err)
+
+	conn, err := grpc.DialContext(ctx, "localhost:"+strconv.Itoa(o.Port()), sec.GRPCDialOptionMTLS(id))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, conn.Close()) })
+
+	return operatorv1pb.NewOperatorClient(conn)
 }

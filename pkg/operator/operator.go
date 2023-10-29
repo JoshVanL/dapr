@@ -49,6 +49,7 @@ import (
 	"github.com/dapr/dapr/pkg/operator/handlers"
 	"github.com/dapr/dapr/pkg/security"
 	"github.com/dapr/kit/logger"
+	"github.com/dapr/kit/ptr"
 )
 
 var log = logger.NewLogger("dapr.operator")
@@ -212,7 +213,10 @@ func (o *operator) syncHTTPEndpoint(ctx context.Context) func(obj interface{}) {
 
 func (o *operator) Run(ctx context.Context) error {
 	log.Info("Dapr Operator is starting")
-	healthzServer := health.NewServer(log)
+	healthzServer := health.NewServer(health.Options{
+		Log:     log,
+		Targets: ptr.Of(5),
+	})
 
 	/*
 		Make sure to set `ENABLE_WEBHOOKS=false` when we run locally.
@@ -242,6 +246,7 @@ func (o *operator) Run(ctx context.Context) error {
 			if rErr != nil {
 				return rErr
 			}
+			healthzServer.Ready()
 			return o.mgr.Start(ctx)
 		},
 		func(ctx context.Context) error {
@@ -285,6 +290,8 @@ func (o *operator) Run(ctx context.Context) error {
 					return rErr
 				}
 
+				healthzServer.Ready()
+
 				select {
 				case caBundle = <-caBundleCh:
 				case <-ctx.Done():
@@ -318,6 +325,7 @@ func (o *operator) Run(ctx context.Context) error {
 			if rErr != nil {
 				return fmt.Errorf("unable to add components informer event handler: %w", rErr)
 			}
+			healthzServer.Ready()
 			<-ctx.Done()
 			return nil
 		},
@@ -340,6 +348,7 @@ func (o *operator) Run(ctx context.Context) error {
 			if rErr != nil {
 				return fmt.Errorf("unable to add http endpoint informer event handler: %w", rErr)
 			}
+			healthzServer.Ready()
 			<-ctx.Done()
 			return nil
 		},

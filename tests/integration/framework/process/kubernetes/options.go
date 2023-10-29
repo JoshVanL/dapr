@@ -20,13 +20,18 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 
 	compapi "github.com/dapr/dapr/pkg/apis/components/v1alpha1"
 	configapi "github.com/dapr/dapr/pkg/apis/configuration/v1alpha1"
 	httpendapi "github.com/dapr/dapr/pkg/apis/httpEndpoint/v1alpha1"
+	resapi "github.com/dapr/dapr/pkg/apis/resiliency/v1alpha1"
+	subapi "github.com/dapr/dapr/pkg/apis/subscriptions/v1alpha1"
 )
 
 type handleRoute struct {
@@ -50,6 +55,14 @@ func WithPath(path string, handler http.HandlerFunc) Option {
 
 func WithClusterDaprConfigurationList(t *testing.T, configs *configapi.ConfigurationList) Option {
 	return handleClusterListResource(t, "/apis/dapr.io/v1alpha1/configurations", configs)
+}
+
+func WithClusterDaprResiliencyList(t *testing.T, res *resapi.ResiliencyList) Option {
+	return handleClusterListResource(t, "/apis/dapr.io/v1alpha1/resiliencies", res)
+}
+
+func WithClusterDaprSubscriptionList(t *testing.T, subs *subapi.SubscriptionList) Option {
+	return handleClusterListResource(t, "/apis/dapr.io/v2alpha1/subscriptions", subs)
 }
 
 func WithClusterDaprComponentList(t *testing.T, comps *compapi.ComponentList) Option {
@@ -80,6 +93,10 @@ func WithDaprConfigurationGet(t *testing.T, ns, name string, config *configapi.C
 	return handleGetResource(t, "/apis/dapr.io/v1alpha1", "configurations", ns, name, config)
 }
 
+func WithDaprResiliencyGet(t *testing.T, ns, name string, res *resapi.Resiliency) Option {
+	return handleGetResource(t, "/apis/dapr.io/v1alpha1", "resiliencies", ns, name, res)
+}
+
 func WithSecretGet(t *testing.T, ns, name string, secret *corev1.Secret) Option {
 	return handleGetResource(t, "/api/v1", "secrets", ns, name, secret)
 }
@@ -88,32 +105,55 @@ func WithConfigMapGet(t *testing.T, ns, name string, configmap *corev1.ConfigMap
 	return handleGetResource(t, "/api/v1", "configmaps", ns, name, configmap)
 }
 
-func handleClusterListResource(t *testing.T, path string, obj any) Option {
+func WithBaseOperatorAPI(t *testing.T, td spiffeid.TrustDomain, ns string, sentryPort int) Option {
 	return func(o *options) {
-		obj, err := json.Marshal(obj)
-		require.NoError(t, err)
+		for _, op := range []Option{
+			WithDaprConfigurationGet(t, ns, "daprsystem", &configapi.Configuration{
+				TypeMeta:   metav1.TypeMeta{APIVersion: "dapr.io/v1alpha1", Kind: "Configuration"},
+				ObjectMeta: metav1.ObjectMeta{Name: "daprsystem", Namespace: ns},
+				Spec: configapi.ConfigurationSpec{
+					MTLSSpec: &configapi.MTLSSpec{
+						ControlPlaneTrustDomain: td.String(),
+						SentryAddress:           "localhost:" + strconv.Itoa(sentryPort),
+					},
+				},
+			}),
+			WithClusterServiceList(t, &corev1.ServiceList{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ServiceList"}}),
+			WithClusterStatefulSetList(t, &appsv1.StatefulSetList{TypeMeta: metav1.TypeMeta{APIVersion: "apps/v1", Kind: "StatefulSetList"}}),
+			WithClusterDeploymentList(t, &appsv1.DeploymentList{TypeMeta: metav1.TypeMeta{APIVersion: "apps/v1", Kind: "DeploymentList"}}),
+			WithClusterDaprComponentList(t, &compapi.ComponentList{TypeMeta: metav1.TypeMeta{APIVersion: "dapr.io/v1alpha1", Kind: "ComponentList"}}),
+			WithClusterDaprHTTPEndpointList(t, &httpendapi.HTTPEndpointList{TypeMeta: metav1.TypeMeta{APIVersion: "dapr.io/v1alpha1", Kind: "HTTPEndpointList"}}),
+		} {
+			op(o)
+		}
+	}
+}
+
+func handleClusterListResource(t *testing.T, path string, obj runtime.Object) Option {
+	return func(o *options) {
 		o.handlers = append(o.handlers, handleRoute{
-			path: path,
-			handler: func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Add("Content-Length", strconv.Itoa(len(obj)))
-				w.Header().Add("Content-Type", "application/json")
-				w.Write(obj)
-			},
+			path:    path,
+			handler: handleObj(t, obj),
 		})
 	}
 }
 
-func handleGetResource(t *testing.T, apigv, resource, ns, name string, obj any) Option {
+func handleGetResource(t *testing.T, apigv, resource, ns, name string, obj runtime.Object) Option {
 	return func(o *options) {
-		obj, err := json.Marshal(obj)
-		require.NoError(t, err)
 		o.handlers = append(o.handlers, handleRoute{
-			path: path.Join(apigv, "namespaces", ns, resource, name),
-			handler: func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Add("Content-Length", strconv.Itoa(len(obj)))
-				w.Header().Add("Content-Type", "application/json")
-				w.Write(obj)
-			},
+			path:    path.Join(apigv, "namespaces", ns, resource, name),
+			handler: handleObj(t, obj),
 		})
+	}
+}
+
+// func handleObj(t *testing.T, gvk metav1.GroupVersionKind, obj runtime.Object) http.HandlerFunc {
+func handleObj(t *testing.T, obj runtime.Object) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		objB, err := json.Marshal(obj)
+		require.NoError(t, err)
+		w.Header().Add("Content-Length", strconv.Itoa(len(objB)))
+		w.Header().Add("Content-Type", "application/json")
+		w.Write(objB)
 	}
 }
