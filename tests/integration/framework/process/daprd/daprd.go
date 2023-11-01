@@ -127,6 +127,9 @@ func New(t *testing.T, fopts ...Option) *Daprd {
 	if opts.disableK8sSecretStore != nil {
 		args = append(args, "--disable-builtin-k8s-secret-store="+strconv.FormatBool(*opts.disableK8sSecretStore))
 	}
+	if opts.trustAnchorsFile != nil {
+		args = append(args, "--trust-anchors-file="+*opts.trustAnchorsFile)
+	}
 
 	return &Daprd{
 		exec:             exec.New(t, binary.EnvValue("daprd"), args, opts.execOpts...),

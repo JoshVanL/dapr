@@ -38,6 +38,7 @@ type Options struct {
 	ControlPlaneNamespace        string
 	SentryAddress                string
 	TrustAnchors                 []byte
+	TrustAnchorsFile             string
 	AllowedOrigins               string
 	EnableProfiling              bool
 	AppMaxConcurrency            int
@@ -117,6 +118,7 @@ func New(args []string) *Options {
 	flag.IntVar(&opts.AppHealthProbeTimeout, "app-health-probe-timeout", int(config.AppHealthConfigDefaultProbeTimeout/time.Millisecond), "Timeout for app health probes in milliseconds")
 	flag.IntVar(&opts.AppHealthThreshold, "app-health-threshold", int(config.AppHealthConfigDefaultThreshold), "Number of consecutive failures for the app to be considered unhealthy")
 	flag.StringVar(&opts.AppChannelAddress, "app-channel-address", runtime.DefaultChannelAddress, "The network address the application listens on")
+	flag.StringVar(&opts.TrustAnchorsFile, "trust-anchors-file", "", "Path to trust anchors file")
 
 	opts.Logger = logger.DefaultOptions()
 	opts.Logger.AttachCmdFlags(flag.StringVar, flag.BoolVar)
@@ -126,8 +128,6 @@ func New(args []string) *Options {
 
 	// Ignore errors; CommandLine is set for ExitOnError.
 	flag.CommandLine.Parse(args)
-
-	opts.TrustAnchors = []byte(os.Getenv(consts.TrustAnchorsEnvVar))
 
 	// flag.Parse() will always set a value to "enableAPILogging", and it will be false whether it's explicitly set to false or unset
 	// For this flag, we need the third state (unset) so we need to do a bit more work here to check if it's unset, then mark "enableAPILogging" as nil
@@ -147,6 +147,15 @@ func New(args []string) *Options {
 		td, ok := os.LookupEnv(consts.ControlPlaneTrustDomainEnvVar)
 		if ok {
 			opts.ControlPlaneTrustDomain = td
+		}
+	}
+
+	// If trust anchors file CLI flag is not passed, fall back to env var
+	if !isFlagPassed("trust-anchors-file") {
+		var ok bool
+		opts.TrustAnchorsFile, ok = os.LookupEnv(consts.TrustAnchorsFileEnvVar)
+		if !ok {
+			opts.TrustAnchors = []byte(os.Getenv(consts.TrustAnchorsEnvVar))
 		}
 	}
 

@@ -44,6 +44,7 @@ type options struct {
 	sentryAddress           string
 	controlPlaneAddress     string
 	disableK8sSecretStore   *bool
+	trustAnchorsFile        *string
 }
 
 func WithExecOptions(execOptions ...exec.Option) Option {
@@ -181,5 +182,11 @@ func WithControlPlaneAddress(address string) Option {
 func WithDisableK8sSecretStore(disable bool) Option {
 	return func(o *options) {
 		o.disableK8sSecretStore = &disable
+	}
+}
+
+func WithTrustAnchorsFile(file string) Option {
+	return func(o *options) {
+		o.trustAnchorsFile = &file
 	}
 }
