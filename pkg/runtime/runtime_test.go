@@ -1091,7 +1091,7 @@ func TestCloseWithErrors(t *testing.T) {
 
 	mockOutputBindingComponent := componentsV1alpha1.Component{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: TestPubsubName,
+			Name: "binding",
 		},
 		Spec: componentsV1alpha1.ComponentSpec{
 			Type:    "bindings.output",
@@ -1108,7 +1108,7 @@ func TestCloseWithErrors(t *testing.T) {
 	}
 	mockPubSubComponent := componentsV1alpha1.Component{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: TestPubsubName,
+			Name: "pubsub",
 		},
 		Spec: componentsV1alpha1.ComponentSpec{
 			Type:    "pubsub.pubsub",
@@ -1125,7 +1125,7 @@ func TestCloseWithErrors(t *testing.T) {
 	}
 	mockStateComponent := componentsV1alpha1.Component{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: TestPubsubName,
+			Name: "state",
 		},
 		Spec: componentsV1alpha1.ComponentSpec{
 			Type:    "state.statestore",
@@ -1142,7 +1142,7 @@ func TestCloseWithErrors(t *testing.T) {
 	}
 	mockSecretsComponent := componentsV1alpha1.Component{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: TestPubsubName,
+			Name: "secret",
 		},
 		Spec: componentsV1alpha1.ComponentSpec{
 			Type:    "secretstores.secretstore",
