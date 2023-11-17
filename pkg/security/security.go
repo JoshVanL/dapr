@@ -340,8 +340,7 @@ func (s *security) ControlPlaneNamespace() string {
 	return s.controlPlaneNamespace
 }
 
-// WatchTrustAnchors watches for changes to the trust domains and returns the
-// PEM encoded trust domain roots.
+// WatchTrustAnchors watches for changes to the trust domains.
 // Returns when the given context is canceled.
 func (s *security) WatchTrustAnchors(ctx context.Context, trustAnchors chan<- []byte) {
 	sub := make(chan struct{})

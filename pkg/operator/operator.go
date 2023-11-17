@@ -34,6 +34,8 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	ctrl "sigs.k8s.io/controller-runtime"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	componentsapi "github.com/dapr/dapr/pkg/apis/components/v1alpha1"
 	configurationapi "github.com/dapr/dapr/pkg/apis/configuration/v1alpha1"
@@ -46,6 +48,7 @@ import (
 	"github.com/dapr/dapr/pkg/operator/api"
 	operatorcache "github.com/dapr/dapr/pkg/operator/cache"
 	"github.com/dapr/dapr/pkg/operator/handlers"
+	"github.com/dapr/dapr/pkg/operator/trust"
 	"github.com/dapr/dapr/pkg/security"
 	"github.com/dapr/kit/concurrency"
 	"github.com/dapr/kit/logger"
@@ -125,27 +128,30 @@ func NewOperator(ctx context.Context, opts Options) (Operator, error) {
 	}
 
 	mgr, err := ctrl.NewManager(conf, ctrl.Options{
-		Scheme:                        scheme,
-		Port:                          19443,
-		HealthProbeBindAddress:        "0",
-		MetricsBindAddress:            "0",
+		Scheme: scheme,
+		WebhookServer: webhook.NewServer(webhook.Options{
+			Port:    19443,
+			CertDir: certDir,
+			TLSOpts: []func(*tls.Config){
+				func(tlsConfig *tls.Config) {
+					sec, sErr := secProvider.Handler(ctx)
+					// Error here means that the context has been cancelled before security
+					// is ready.
+					if sErr != nil {
+						return
+					}
+					*tlsConfig = *sec.TLSServerConfigNoClientAuth()
+				},
+			},
+		}),
+		HealthProbeBindAddress: "0",
+		Metrics: metricsserver.Options{
+			BindAddress: "0",
+		},
 		LeaderElection:                opts.LeaderElection,
 		LeaderElectionID:              "operator.dapr.io",
-		Namespace:                     opts.WatchNamespace,
-		NewCache:                      operatorcache.GetFilteredCache(watchdogPodSelector),
-		CertDir:                       certDir,
+		NewCache:                      operatorcache.GetFilteredCache(opts.WatchNamespace, watchdogPodSelector),
 		LeaderElectionReleaseOnCancel: true,
-		TLSOpts: []func(*tls.Config){
-			func(tlsConfig *tls.Config) {
-				sec, sErr := secProvider.Handler(ctx)
-				// Error here means that the context has been cancelled before security
-				// is ready.
-				if sErr != nil {
-					return
-				}
-				*tlsConfig = *sec.TLSServerConfigNoClientAuth()
-			},
-		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("unable to start manager: %w", err)
@@ -175,6 +181,13 @@ func NewOperator(ctx context.Context, opts Options) (Operator, error) {
 		if err := daprHandler.Init(ctx); err != nil {
 			return nil, fmt.Errorf("unable to initialize handler: %w", err)
 		}
+	}
+
+	if err := trust.AddController(trust.Options{
+		Manager:  mgr,
+		Security: secProvider,
+	}); err != nil {
+		return nil, fmt.Errorf("unable to add trust controller: %w", err)
 	}
 
 	return &operator{

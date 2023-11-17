@@ -64,4 +64,7 @@ const (
 
 	// ControlPlaneDefaultTrustAnchorsPath is the default path where the trust anchors are placed for control plane services.
 	ControlPlaneDefaultTrustAnchorsPath = "/var/run/secrets/dapr.io/tls/ca.crt"
+
+	// DaprRootCAConfigMapName is the name of the ConfigMap that holds the root CA.
+	DaprRootCAConfigMapName = "dapr-root-ca.crt"
 )

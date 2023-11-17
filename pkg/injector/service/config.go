@@ -19,6 +19,7 @@ import (
 	"github.com/kelseyhightower/envconfig"
 	corev1 "k8s.io/api/core/v1"
 
+	"github.com/dapr/dapr/pkg/security/consts"
 	"github.com/dapr/dapr/utils"
 	kitutils "github.com/dapr/kit/utils"
 )
@@ -51,7 +52,7 @@ func NewConfigWithDefaults() Config {
 	return Config{
 		SidecarImagePullPolicy:  "Always",
 		ControlPlaneTrustDomain: "cluster.local",
-		TrustAnchorsFile:        "/var/run/dapr.io/tls/ca.crt",
+		TrustAnchorsFile:        consts.ControlPlaneDefaultTrustAnchorsPath,
 	}
 }
 
