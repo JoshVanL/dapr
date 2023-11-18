@@ -81,7 +81,7 @@ spec:
 		),
 	)
 	return []framework.Option{
-		framework.WithProcesses(u.daprd, u.logline),
+		framework.WithProcesses(u.logline, u.daprd),
 	}
 }
 

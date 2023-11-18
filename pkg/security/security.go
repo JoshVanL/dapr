@@ -211,7 +211,13 @@ func (p *provider) Run(ctx context.Context) error {
 		err = mngr.Add(
 			func(ctx context.Context) error {
 				log.Infof("Watching trust anchors file '%s' for changes", p.trustAnchorsFile)
-				return fswatcher.Watch(ctx, filepath.Dir(p.trustAnchorsFile), caEvent)
+				fs, err := fswatcher.New(fswatcher.Options{
+					Targets: []string{filepath.Dir(p.trustAnchorsFile)},
+				})
+				if err != nil {
+					return err
+				}
+				return fs.Run(ctx, caEvent)
 			},
 			func(ctx context.Context) error {
 				for {

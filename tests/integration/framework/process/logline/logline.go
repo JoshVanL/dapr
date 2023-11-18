@@ -39,6 +39,8 @@ type LogLine struct {
 	stderr            io.Reader
 	stderrExp         io.WriteCloser
 	stderrLinContains map[string]bool
+
+	outCheck chan map[string]bool
 }
 
 func New(t *testing.T, fopts ...Option) *LogLine {
@@ -70,26 +72,26 @@ func New(t *testing.T, fopts ...Option) *LogLine {
 		stderr:             io.TeeReader(stderrReader, iowriter.New(t, "logline:stderr")),
 		stderrExp:          stderrWriter,
 		stderrLinContains:  stderrLineContains,
+		outCheck:           make(chan map[string]bool),
 	}
 }
 
 func (l *LogLine) Run(t *testing.T, ctx context.Context) {
-	outCheck := make(chan map[string]bool)
 	go func() {
-		outCheck <- l.checkOut(t, ctx, l.stdoutLineContains, l.stdoutExp, l.stdout)
+		l.outCheck <- l.checkOut(t, ctx, l.stdoutLineContains, l.stdoutExp, l.stdout)
 	}()
 	go func() {
-		outCheck <- l.checkOut(t, ctx, l.stderrLinContains, l.stderrExp, l.stderr)
+		l.outCheck <- l.checkOut(t, ctx, l.stderrLinContains, l.stderrExp, l.stderr)
 	}()
-
-	for i := 0; i < 2; i++ {
-		for expLine := range <-outCheck {
-			assert.Fail(t, "expected to log line: %s", expLine)
-		}
-	}
 }
 
 func (l *LogLine) Cleanup(t *testing.T) {
+	for i := 0; i < 2; i++ {
+		for expLine := range <-l.outCheck {
+			assert.Fail(t, "expected to log line: %s", expLine)
+		}
+	}
+
 	l.stdoutExp.Close()
 	l.stderrExp.Close()
 }

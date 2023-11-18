@@ -66,6 +66,7 @@ import (
 	"github.com/dapr/dapr/pkg/runtime/channels"
 	"github.com/dapr/dapr/pkg/runtime/compstore"
 	rterrors "github.com/dapr/dapr/pkg/runtime/errors"
+	"github.com/dapr/dapr/pkg/runtime/hotreload"
 	"github.com/dapr/dapr/pkg/runtime/meta"
 	"github.com/dapr/dapr/pkg/runtime/processor"
 	"github.com/dapr/dapr/pkg/runtime/registry"
@@ -107,6 +108,8 @@ type DaprRuntime struct {
 	authz               *authorizer.Authorizer
 	sec                 security.Handler
 	runnerCloser        *concurrency.RunnerCloserManager
+	reloader            *hotreload.Reloader
+
 	// Used for testing.
 	initComplete chan struct{}
 
@@ -187,6 +190,25 @@ func newDaprRuntime(ctx context.Context,
 		Channels:         channels,
 	})
 
+	var reloader *hotreload.Reloader
+	switch runtimeConfig.mode {
+	case modes.KubernetesMode:
+		log.Warnf("hot reloading is not supported in Kubernetes mode")
+	case modes.StandaloneMode:
+		reloader, err = hotreload.NewDisk(ctx, hotreload.OptionsDisk{
+			Config:         globalConfig,
+			Dirs:           runtimeConfig.standalone.ResourcesPath,
+			ComponentStore: compStore,
+			Authorizer:     authz,
+			Processor:      processor,
+		})
+		if err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("invalid mode: %s", runtimeConfig.mode)
+	}
+
 	rt := &DaprRuntime{
 		runtimeConfig:     runtimeConfig,
 		globalConfig:      globalConfig,
@@ -203,6 +225,7 @@ func newDaprRuntime(ctx context.Context,
 		sec:               sec,
 		processor:         processor,
 		authz:             authz,
+		reloader:          reloader,
 		namespace:         namespace,
 		podName:           podName,
 		initComplete:      make(chan struct{}),
@@ -239,6 +262,15 @@ func newDaprRuntime(ctx context.Context,
 			return nil
 		},
 	)
+
+	if rt.reloader != nil {
+		if err := rt.runnerCloser.Add(rt.reloader.Run); err != nil {
+			return nil, err
+		}
+		if err := rt.runnerCloser.AddCloser(rt.reloader); err != nil {
+			return nil, err
+		}
+	}
 
 	if err := rt.runnerCloser.AddCloser(
 		func() error {
@@ -394,7 +426,7 @@ func (a *DaprRuntime) initRuntime(ctx context.Context) error {
 	a.appendBuiltinSecretStore(ctx)
 	err = a.loadComponents(ctx)
 	if err != nil {
-		log.Warnf("failed to load components: %s", err)
+		return fmt.Errorf("failed to load components: %s", err)
 	}
 
 	a.flushOutstandingComponents(ctx)
@@ -530,7 +562,9 @@ func (a *DaprRuntime) appHealthReadyInit(ctx context.Context) error {
 		} else {
 			// Workflow engine depends on actor runtime being initialized
 			// This needs to be called before "SetActorsInitDone" on the universal API object to prevent a race condition in workflow methods
-			a.initWorkflowEngine(ctx)
+			if err = a.initWorkflowEngine(ctx); err != nil {
+				return err
+			}
 
 			a.daprUniversalAPI.SetActorRuntime(a.actor)
 		}
@@ -554,19 +588,20 @@ func (a *DaprRuntime) appHealthReadyInit(ctx context.Context) error {
 	return nil
 }
 
-func (a *DaprRuntime) initWorkflowEngine(ctx context.Context) {
+func (a *DaprRuntime) initWorkflowEngine(ctx context.Context) error {
 	wfComponentFactory := wfengine.BuiltinWorkflowFactory(a.workflowEngine)
 
 	a.workflowEngine.SetActorRuntime(a.actor)
 	if reg := a.runtimeConfig.registry.Workflows(); reg != nil {
 		log.Infof("Registering component for dapr workflow engine...")
 		reg.RegisterComponent(wfComponentFactory, "dapr")
-		if componentInitErr := a.processor.Init(ctx, wfengine.ComponentDefinition); componentInitErr != nil {
-			log.Warnf("Failed to initialize Dapr workflow component: %v", componentInitErr)
+		if !a.processor.AddPendingComponent(ctx, wfengine.ComponentDefinition) {
+			log.Warn("failed to initialize Dapr workflow component")
 		}
 	} else {
 		log.Infof("No workflow registry available, not registering Dapr workflow component...")
 	}
+	return nil
 }
 
 // initPluggableComponents discover pluggable components and initialize with their respective registries.
@@ -695,6 +730,13 @@ func (a *DaprRuntime) startHTTPServer(port int, publicPort *int, profilePort int
 		return err
 	}
 	if err := a.runnerCloser.AddCloser(server); err != nil {
+		return err
+	}
+
+	if err := a.runnerCloser.AddCloser(a.processor.PubSub().StopSubscriptions); err != nil {
+		return err
+	}
+	if err := a.runnerCloser.AddCloser(a.processor.Binding().StopReadingFromBindings); err != nil {
 		return err
 	}
 
@@ -908,18 +950,16 @@ func (a *DaprRuntime) flushOutstandingHTTPEndpoints(ctx context.Context) {
 	log.Info("Waiting for all outstanding http endpoints to be processed…")
 	// We flush by sending a no-op http endpoint. Since the processHTTPEndpoints goroutine only reads one http endpoint at a time,
 	// We know that once the no-op http endpoint is read from the channel, all previous http endpoints will have been fully processed.
-	if a.processor.AddPendingEndpoint(ctx, httpEndpointV1alpha1.HTTPEndpoint{}) {
-		log.Info("All outstanding http endpoints processed")
-	}
+	a.processor.AddPendingEndpoint(ctx, httpEndpointV1alpha1.HTTPEndpoint{})
+	log.Info("All outstanding http endpoints processed")
 }
 
 func (a *DaprRuntime) flushOutstandingComponents(ctx context.Context) {
 	log.Info("Waiting for all outstanding components to be processed…")
 	// We flush by sending a no-op component. Since the processComponents goroutine only reads one component at a time,
 	// We know that once the no-op component is read from the channel, all previous components will have been fully processed.
-	if a.processor.AddPendingComponent(ctx, componentsV1alpha1.Component{}) {
-		log.Info("All outstanding components processed")
-	}
+	a.processor.AddPendingComponent(ctx, componentsV1alpha1.Component{})
+	log.Info("All outstanding components processed")
 }
 
 func (a *DaprRuntime) loadHTTPEndpoints(ctx context.Context) error {
