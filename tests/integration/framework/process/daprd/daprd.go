@@ -110,6 +110,9 @@ func New(t *testing.T, fopts ...Option) *Daprd {
 	if len(opts.resourceFiles) > 0 {
 		args = append(args, "--resources-path="+dir)
 	}
+	for _, dir := range opts.resourceDirs {
+		args = append(args, "--resources-path="+dir)
+	}
 	if len(opts.configs) > 0 {
 		for _, c := range opts.configs {
 			args = append(args, "--config="+c)

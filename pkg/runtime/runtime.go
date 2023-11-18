@@ -66,6 +66,7 @@ import (
 	"github.com/dapr/dapr/pkg/runtime/channels"
 	"github.com/dapr/dapr/pkg/runtime/compstore"
 	rterrors "github.com/dapr/dapr/pkg/runtime/errors"
+	"github.com/dapr/dapr/pkg/runtime/hotreload"
 	"github.com/dapr/dapr/pkg/runtime/meta"
 	"github.com/dapr/dapr/pkg/runtime/processor"
 	"github.com/dapr/dapr/pkg/runtime/registry"
@@ -107,6 +108,8 @@ type DaprRuntime struct {
 	authz               *authorizer.Authorizer
 	sec                 security.Handler
 	runnerCloser        *concurrency.RunnerCloserManager
+	reloader            *hotreload.Reloader
+
 	// Used for testing.
 	initComplete chan struct{}
 
@@ -187,6 +190,33 @@ func newDaprRuntime(ctx context.Context,
 		Channels:         channels,
 	})
 
+	var reloader *hotreload.Reloader
+	switch runtimeConfig.mode {
+	case modes.KubernetesMode:
+		reloader = hotreload.NewOperator(hotreload.OptionsOperator{
+			Config:         globalConfig,
+			PodName:        podName,
+			Namespace:      namespace,
+			OperatorClient: operatorClient,
+			ComponentStore: compStore,
+			Authorizer:     authz,
+			Processor:      processor,
+		})
+	case modes.StandaloneMode:
+		reloader, err = hotreload.NewDisk(hotreload.OptionsDisk{
+			Config:         globalConfig,
+			Dirs:           runtimeConfig.standalone.ResourcesPath,
+			ComponentStore: compStore,
+			Authorizer:     authz,
+			Processor:      processor,
+		})
+		if err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("invalid mode: %s", runtimeConfig.mode)
+	}
+
 	rt := &DaprRuntime{
 		runtimeConfig:     runtimeConfig,
 		globalConfig:      globalConfig,
@@ -203,6 +233,7 @@ func newDaprRuntime(ctx context.Context,
 		sec:               sec,
 		processor:         processor,
 		authz:             authz,
+		reloader:          reloader,
 		namespace:         namespace,
 		podName:           podName,
 		initComplete:      make(chan struct{}),
@@ -216,6 +247,7 @@ func newDaprRuntime(ctx context.Context,
 	rt.runnerCloser = concurrency.NewRunnerCloserManager(gracePeriod,
 		rt.runtimeConfig.metricsExporter.Run,
 		rt.processor.Process,
+		rt.reloader.Run,
 		func(ctx context.Context) error {
 			start := time.Now()
 			log.Infof("%s mode configured", rt.runtimeConfig.mode)
@@ -695,6 +727,13 @@ func (a *DaprRuntime) startHTTPServer(port int, publicPort *int, profilePort int
 		return err
 	}
 	if err := a.runnerCloser.AddCloser(server); err != nil {
+		return err
+	}
+
+	if err := a.runnerCloser.AddCloser(a.processor.PubSub().StopSubscriptions); err != nil {
+		return err
+	}
+	if err := a.runnerCloser.AddCloser(a.processor.Binding().StopReadingFromBindings); err != nil {
 		return err
 	}
 

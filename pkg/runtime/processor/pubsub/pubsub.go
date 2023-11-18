@@ -177,7 +177,7 @@ func (p *pubsub) Init(ctx context.Context, comp compapi.Component) error {
 	})
 	diag.DefaultMonitoring.ComponentInitialized(comp.Spec.Type)
 
-	return nil
+	return p.beginPubSub(ctx, pubsubName)
 }
 
 func (p *pubsub) Close(comp compapi.Component) error {

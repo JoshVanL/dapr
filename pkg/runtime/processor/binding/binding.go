@@ -74,20 +74,21 @@ type binding struct {
 	lock sync.Mutex
 
 	subscribeBindingList []string
-	inputCancel          context.CancelFunc
+	inputCancels         map[string]context.CancelFunc
 	wg                   sync.WaitGroup
 }
 
 func New(opts Options) *binding {
 	return &binding{
-		registry:    opts.Registry,
-		compStore:   opts.ComponentStore,
-		meta:        opts.Meta,
-		isHTTP:      opts.IsHTTP,
-		resiliency:  opts.Resiliency,
-		tracingSpec: opts.TracingSpec,
-		grpc:        opts.GRPC,
-		channels:    opts.Channels,
+		registry:     opts.Registry,
+		compStore:    opts.ComponentStore,
+		meta:         opts.Meta,
+		isHTTP:       opts.IsHTTP,
+		resiliency:   opts.Resiliency,
+		tracingSpec:  opts.TracingSpec,
+		grpc:         opts.GRPC,
+		channels:     opts.Channels,
+		inputCancels: make(map[string]context.CancelFunc),
 	}
 }
 
@@ -127,6 +128,10 @@ func (b *binding) Close(comp compapi.Component) error {
 
 	inbinding, ok := b.compStore.GetInputBinding(comp.Name)
 	if ok {
+		if cancel := b.inputCancels[comp.Name]; cancel != nil {
+			cancel()
+		}
+		delete(b.inputCancels, comp.Name)
 		if err := inbinding.Close(); err != nil {
 			errs = append(errs, err)
 		} else {
@@ -188,7 +193,7 @@ func (b *binding) initInputBinding(ctx context.Context, comp compapi.Component) 
 	}
 	b.compStore.AddInputBinding(comp.Name, binding)
 	diag.DefaultMonitoring.ComponentInitialized(comp.Spec.Type)
-	return nil
+	return b.startInputBinding(comp, binding)
 }
 
 func (b *binding) initOutputBinding(ctx context.Context, comp compapi.Component) error {
