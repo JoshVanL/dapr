@@ -34,12 +34,12 @@ import (
 )
 
 func init() {
-	suite.Register(new(serializationJSON))
+	suite.Register(new(json))
 }
 
-// serializationJSON tests:
+// json tests:
 // - That reminders are serialized to JSON when the Actors API level in the cluster is < 20
-type serializationJSON struct {
+type json struct {
 	daprd   *daprd.Daprd
 	srv     *prochttp.HTTP
 	handler *httpServer
@@ -47,44 +47,44 @@ type serializationJSON struct {
 	db      *sqlite.SQLite
 }
 
-func (i *serializationJSON) Setup(t *testing.T) []framework.Option {
+func (j *json) Setup(t *testing.T) []framework.Option {
 	// Init placement with a maximum API level of 10
-	i.place = placement.New(t,
+	j.place = placement.New(t,
 		placement.WithMaxAPILevel(10),
 	)
 
 	// Create a SQLite database
-	i.db = sqlite.New(t, sqlite.WithActorStateStore(true))
+	j.db = sqlite.New(t, sqlite.WithActorStateStore(true))
 
 	// Init daprd and the HTTP server
-	i.handler = &httpServer{}
-	i.srv = prochttp.New(t, prochttp.WithHandler(i.handler.NewHandler()))
-	i.daprd = daprd.New(t,
-		daprd.WithResourceFiles(i.db.GetComponent()),
-		daprd.WithPlacementAddresses("localhost:"+strconv.Itoa(i.place.Port())),
-		daprd.WithAppPort(i.srv.Port()),
+	j.handler = &httpServer{}
+	j.srv = prochttp.New(t, prochttp.WithHandler(j.handler.NewHandler()))
+	j.daprd = daprd.New(t,
+		daprd.WithResourceFiles(j.db.GetComponent()),
+		daprd.WithPlacementAddresses("localhost:"+strconv.Itoa(j.place.Port())),
+		daprd.WithAppPort(j.srv.Port()),
 		// Daprd is super noisy in debug mode when connecting to placement.
 		daprd.WithLogLevel("info"),
 	)
 
 	return []framework.Option{
-		framework.WithProcesses(i.db, i.place, i.srv, i.daprd),
+		framework.WithProcesses(j.db, j.place, j.srv, j.daprd),
 	}
 }
 
-func (i *serializationJSON) Run(t *testing.T, ctx context.Context) {
+func (j *json) Run(t *testing.T, ctx context.Context) {
 	// Wait for placement to be ready
-	i.place.WaitUntilRunning(t, ctx)
+	j.place.WaitUntilRunning(t, ctx)
 
 	// Wait for daprd to be ready
-	i.daprd.WaitUntilRunning(t, ctx)
+	j.daprd.WaitUntilRunning(t, ctx)
 
 	// Wait for actors to be ready
-	err := i.handler.WaitForActorsReady(ctx)
+	err := j.handler.WaitForActorsReady(ctx)
 	require.NoError(t, err)
 
 	client := util.HTTPClient(t)
-	baseURL := fmt.Sprintf("http://localhost:%d/v1.0/actors/myactortype/myactorid", i.daprd.HTTPPort())
+	baseURL := fmt.Sprintf("http://localhost:%d/v1.0/actors/myactortype/myactorid", j.daprd.HTTPPort())
 
 	// Invoke an actor to confirm everything is ready to go
 	invokeActor(t, ctx, baseURL, client)
@@ -95,11 +95,11 @@ func (i *serializationJSON) Run(t *testing.T, ctx context.Context) {
 
 	// Check the data in the SQLite database
 	// The value must begin with `[{`, which indicates it was serialized as JSON
-	storedVal := loadRemindersFromDB(t, ctx, i.db.GetConnection(t))
+	storedVal := loadRemindersFromDB(t, ctx, j.db.GetConnection(t))
 	assert.Truef(t, strings.HasPrefix(storedVal, "[{"), "Prefix not found in value: '%v'", storedVal)
 
 	// Ensure the reminder was invoked at least once
 	assert.Eventually(t, func() bool {
-		return i.handler.remindersInvokeCount.Load() > 0
+		return j.handler.remindersInvokeCount.Load() > 0
 	}, 5*time.Second, 10*time.Millisecond, "Reminder was not invoked at least once")
 }

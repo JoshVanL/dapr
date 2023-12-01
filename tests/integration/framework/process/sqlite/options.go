@@ -15,9 +15,11 @@ package sqlite
 
 // options contains the options for using a SQLite database in integration tests.
 type options struct {
-	name            string
-	actorStateStore bool
-	metadata        map[string]string
+	name              string
+	actorStateStore   bool
+	metadata          map[string]string
+	execs             []string
+	createStateTables bool
 }
 
 // WithName sets the name for the state store.
@@ -40,5 +42,17 @@ func WithActorStateStore(enabled bool) Option {
 func WithMetadata(key, value string) Option {
 	return func(o *options) {
 		o.metadata[key] = value
+	}
+}
+
+func WithExecs(execs ...string) Option {
+	return func(o *options) {
+		o.execs = append(o.execs, execs...)
+	}
+}
+
+func WithCreateStateTables(create bool) Option {
+	return func(o *options) {
+		o.createStateTables = create
 	}
 }
