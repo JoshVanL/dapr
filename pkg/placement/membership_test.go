@@ -29,7 +29,6 @@ import (
 
 	"github.com/dapr/dapr/pkg/placement/raft"
 	v1pb "github.com/dapr/dapr/pkg/proto/placement/v1"
-	"github.com/dapr/kit/logger"
 )
 
 func cleanupStates() {
@@ -313,19 +312,12 @@ func TestPerformTableUpdate(t *testing.T) {
 }
 
 func PerformTableUpdateCostTime(t *testing.T) (wastedTime int64) {
-	// Replace the logger for this test so we reduce the noise
-	prevLog := log
-	log = logger.NewLogger("dapr.placement")
-	log.SetOutputLevel(logger.InfoLevel)
-	t.Cleanup(func() {
-		log = prevLog
-	})
-
 	const testClients = 100
-	serverAddress, testServer, _, cleanup := newTestPlacementServer(t, testRaftServer)
+	serverAddress, testServer, clock, cleanup := newTestPlacementServer(t, testRaftServer)
 	testServer.hasLeadership.Store(true)
 	var (
-		overArr [testClients]int64
+		overArrLock sync.Mutex
+		overArr     [testClients]int64
 		// arrange.
 		clientConns   []*grpc.ClientConn
 		clientStreams []v1pb.Placement_ReportDaprStatusClient
@@ -342,6 +334,7 @@ func PerformTableUpdateCostTime(t *testing.T) (wastedTime int64) {
 			defer wg.Done()
 			var start time.Time
 			for {
+				clock.Step(time.Second)
 				placementOrder, streamErr := clientStream.Recv()
 				if streamErr != nil {
 					return
@@ -349,10 +342,10 @@ func PerformTableUpdateCostTime(t *testing.T) (wastedTime int64) {
 				if placementOrder != nil {
 					if placementOrder.GetOperation() == "lock" {
 						if startFlag.Load() && placementOrder.GetTables() != nil && placementOrder.GetTables().GetVersion() == "demo" {
-							start = time.Now()
 							if clientID == 1 {
-								t.Log("client 1 lock", start)
+								fmt.Println("client 1 lock", clock.Now())
 							}
+							start = clock.Now()
 						}
 					}
 					if placementOrder.GetOperation() == "update" {
@@ -361,9 +354,11 @@ func PerformTableUpdateCostTime(t *testing.T) (wastedTime int64) {
 					if placementOrder.GetOperation() == "unlock" {
 						if startFlag.Load() && placementOrder.GetTables() != nil && placementOrder.GetTables().GetVersion() == "demo" {
 							if clientID == 1 {
-								t.Log("client 1 unlock", time.Now())
+								fmt.Println("client 1 unlock", clock.Now())
 							}
-							overArr[clientID] = time.Since(start).Milliseconds()
+							overArrLock.Lock()
+							overArr[clientID] = clock.Since(start).Milliseconds()
+							overArrLock.Unlock()
 						}
 					}
 				}
@@ -381,13 +376,12 @@ func PerformTableUpdateCostTime(t *testing.T) (wastedTime int64) {
 		}
 		require.NoError(t, clientStreams[i].Send(host))
 	}
-
 	// Wait until clientStreams[clientID].Recv() in client go routine received new table.
 	require.Eventually(t, func() bool {
 		testServer.streamConnPoolLock.RLock()
 		defer testServer.streamConnPoolLock.RUnlock()
 		return len(testServer.streamConnPool) == testClients
-	}, 15*time.Second, 100*time.Millisecond)
+	}, time.Second*5, time.Millisecond)
 
 	testServer.streamConnPoolLock.RLock()
 	streamConnPool := make([]placementGRPCStream, len(testServer.streamConnPool))
@@ -397,17 +391,19 @@ func PerformTableUpdateCostTime(t *testing.T) (wastedTime int64) {
 	mockMessage := &v1pb.PlacementTables{Version: "demo"}
 
 	for _, host := range streamConnPool {
-		require.NoError(t, testServer.disseminateOperation(context.Background(), host, "lock", mockMessage))
-		require.NoError(t, testServer.disseminateOperation(context.Background(), host, "update", mockMessage))
-		require.NoError(t, testServer.disseminateOperation(context.Background(), host, "unlock", mockMessage))
+		require.NoError(t, testServer.disseminateOperation(context.Background(), []placementGRPCStream{host}, "lock", mockMessage))
+		require.NoError(t, testServer.disseminateOperation(context.Background(), []placementGRPCStream{host}, "update", mockMessage))
+		require.NoError(t, testServer.disseminateOperation(context.Background(), []placementGRPCStream{host}, "unlock", mockMessage))
 	}
 	startFlag.Store(false)
 	var max int64
-	for i := range overArr {
-		if overArr[i] > max {
-			max = overArr[i]
+	overArrLock.Lock()
+	for _, cost := range &overArr {
+		if cost > max {
+			max = cost
 		}
 	}
+	overArrLock.Unlock()
 	// clean up resources.
 	for i := 0; i < testClients; i++ {
 		require.NoError(t, clientConns[i].Close())
