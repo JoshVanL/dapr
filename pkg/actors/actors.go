@@ -117,7 +117,6 @@ type actorsRuntime struct {
 	actorsTable          *sync.Map
 	tracingSpec          configuration.TracingSpec
 	resiliency           resiliency.Provider
-	storeName            string
 	compStore            *compstore.ComponentStore
 	clock                clock.WithTicker
 	internalActors       map[string]InternalActor
@@ -139,7 +138,6 @@ type ActorsOpts struct {
 	Config           Config
 	TracingSpec      configuration.TracingSpec
 	Resiliency       resiliency.Provider
-	StateStoreName   string
 	CompStore        *compstore.ComponentStore
 	Security         security.Handler
 
@@ -163,7 +161,6 @@ func newActorsWithClock(opts ActorsOpts, clock clock.WithTicker) ActorRuntime {
 		timers:               timers.NewTimersProvider(clock),
 		tracingSpec:          opts.TracingSpec,
 		resiliency:           opts.Resiliency,
-		storeName:            opts.StateStoreName,
 		placement:            opts.MockPlacement,
 		actorsTable:          &sync.Map{},
 		clock:                clock,
@@ -179,8 +176,8 @@ func newActorsWithClock(opts ActorsOpts, clock clock.WithTicker) ActorRuntime {
 
 	// Init reminders
 	a.actorsReminders = reminders.NewRemindersProvider(a.clock, internal.RemindersProviderOpts{
-		StoreName: a.storeName,
-		Config:    a.actorsConfig.Config,
+		ComponentStore: a.compStore,
+		Config:         a.actorsConfig.Config,
 	})
 	a.actorsReminders.SetExecuteReminderFn(a.executeReminder)
 	a.actorsReminders.SetResiliencyProvider(a.resiliency)
@@ -210,7 +207,7 @@ func (a *actorsRuntime) isActorLocallyHosted(ctx context.Context, actorType stri
 }
 
 func (a *actorsRuntime) haveCompatibleStorage() bool {
-	store, ok := a.compStore.GetStateStore(a.storeName)
+	store, _, ok := a.compStore.GetStateStoreActor()
 	if !ok {
 		// If we have hosted actors and no store, we can't initialize the actor runtime
 		return false
@@ -676,7 +673,7 @@ func (a *actorsRuntime) isActorLocal(targetActorAddress, hostAddress string, grp
 }
 
 func (a *actorsRuntime) GetState(ctx context.Context, req *GetStateRequest) (*StateResponse, error) {
-	store, err := a.stateStore()
+	store, storeName, err := a.stateStore()
 	if err != nil {
 		return nil, err
 	}
@@ -688,7 +685,7 @@ func (a *actorsRuntime) GetState(ctx context.Context, req *GetStateRequest) (*St
 	key := a.constructActorStateKey(actorKey, req.Key)
 
 	policyRunner := resiliency.NewRunner[*state.GetResponse](ctx,
-		a.resiliency.ComponentOutboundPolicy(a.storeName, resiliency.Statestore),
+		a.resiliency.ComponentOutboundPolicy(storeName, resiliency.Statestore),
 	)
 	storeReq := &state.GetRequest{
 		Key:      key,
@@ -712,7 +709,7 @@ func (a *actorsRuntime) GetState(ctx context.Context, req *GetStateRequest) (*St
 }
 
 func (a *actorsRuntime) GetBulkState(ctx context.Context, req *GetBulkStateRequest) (BulkStateResponse, error) {
-	store, err := a.stateStore()
+	store, storeName, err := a.stateStore()
 	if err != nil {
 		return nil, err
 	}
@@ -730,7 +727,7 @@ func (a *actorsRuntime) GetBulkState(ctx context.Context, req *GetBulkStateReque
 	}
 
 	policyRunner := resiliency.NewRunner[[]state.BulkGetResponse](ctx,
-		a.resiliency.ComponentOutboundPolicy(a.storeName, resiliency.Statestore),
+		a.resiliency.ComponentOutboundPolicy(storeName, resiliency.Statestore),
 	)
 	res, err := policyRunner(func(ctx context.Context) ([]state.BulkGetResponse, error) {
 		return store.BulkGet(ctx, bulkReqs, state.BulkGetOpts{})
@@ -756,7 +753,7 @@ func (a *actorsRuntime) GetBulkState(ctx context.Context, req *GetBulkStateReque
 }
 
 func (a *actorsRuntime) TransactionalStateOperation(ctx context.Context, req *TransactionalRequest) error {
-	store, err := a.stateStore()
+	store, storeName, err := a.stateStore()
 	if err != nil {
 		return err
 	}
@@ -776,10 +773,10 @@ func (a *actorsRuntime) TransactionalStateOperation(ctx context.Context, req *Tr
 		}
 	}
 
-	return a.executeStateStoreTransaction(ctx, store, operations, metadata)
+	return a.executeStateStoreTransaction(ctx, store, storeName, operations, metadata)
 }
 
-func (a *actorsRuntime) executeStateStoreTransaction(ctx context.Context, store internal.TransactionalStateStore, operations []state.TransactionalStateOperation, metadata map[string]string) error {
+func (a *actorsRuntime) executeStateStoreTransaction(ctx context.Context, store internal.TransactionalStateStore, storeName string, operations []state.TransactionalStateOperation, metadata map[string]string) error {
 	if maxMulti, ok := store.(state.TransactionalStoreMultiMaxSize); ok {
 		max := maxMulti.MultiMaxSize()
 		if max > 0 && len(operations) > max {
@@ -791,7 +788,7 @@ func (a *actorsRuntime) executeStateStoreTransaction(ctx context.Context, store 
 		Metadata:   metadata,
 	}
 	policyRunner := resiliency.NewRunner[struct{}](ctx,
-		a.resiliency.ComponentOutboundPolicy(a.storeName, resiliency.Statestore),
+		a.resiliency.ComponentOutboundPolicy(storeName, resiliency.Statestore),
 	)
 	_, err := policyRunner(func(ctx context.Context) (struct{}, error) {
 		return struct{}{}, store.Multi(ctx, stateReq)
@@ -1111,16 +1108,16 @@ func ValidateHostEnvironment(mTLSEnabled bool, mode modes.DaprMode, namespace st
 	return nil
 }
 
-func (a *actorsRuntime) stateStore() (internal.TransactionalStateStore, error) {
-	storeS, ok := a.compStore.GetStateStore(a.storeName)
+func (a *actorsRuntime) stateStore() (internal.TransactionalStateStore, string, error) {
+	storeS, name, ok := a.compStore.GetStateStoreActor()
 	if !ok {
-		return nil, errors.New(errStateStoreNotFound)
+		return nil, "", errors.New(errStateStoreNotFound)
 	}
 
 	store, ok := storeS.(internal.TransactionalStateStore)
 	if !ok || !state.FeatureETag.IsPresent(store.Features()) || !state.FeatureTransactional.IsPresent(store.Features()) {
-		return nil, errors.New(errStateStoreNotConfigured)
+		return nil, "", errors.New(errStateStoreNotConfigured)
 	}
 
-	return store, nil
+	return store, name, nil
 }

@@ -191,14 +191,13 @@ func (b *runtimeBuilder) buildActorRuntime() *actorsRuntime {
 	}
 
 	compStore := compstore.New()
-	compStore.AddStateStore(storeName, store)
+	compStore.AddStateStoreActor(storeName, store)
 	a := newActorsWithClock(ActorsOpts{
-		CompStore:      compStore,
-		AppChannel:     b.appChannel,
-		Config:         *b.config,
-		TracingSpec:    config.TracingSpec{SamplingRate: "1"},
-		Resiliency:     resiliency.FromConfigurations(log, testResiliency),
-		StateStoreName: storeName,
+		CompStore:   compStore,
+		AppChannel:  b.appChannel,
+		Config:      *b.config,
+		TracingSpec: config.TracingSpec{SamplingRate: "1"},
+		Resiliency:  resiliency.FromConfigurations(log, testResiliency),
 	}, clock)
 
 	return a.(*actorsRuntime)
@@ -216,15 +215,14 @@ func newTestActorsRuntimeWithMock(appChannel channel.AppChannel) *actorsRuntime 
 	clock := clocktesting.NewFakeClock(startOfTime)
 
 	compStore := compstore.New()
-	compStore.AddStateStore("actorStore", fakeStore())
+	compStore.AddStateStoreActor("actorStore", fakeStore())
 	a := newActorsWithClock(ActorsOpts{
-		CompStore:      compStore,
-		AppChannel:     appChannel,
-		Config:         conf,
-		TracingSpec:    config.TracingSpec{SamplingRate: "1"},
-		Resiliency:     resiliency.New(log),
-		StateStoreName: "actorStore",
-		MockPlacement:  NewMockPlacement(TestAppID),
+		CompStore:     compStore,
+		AppChannel:    appChannel,
+		Config:        conf,
+		TracingSpec:   config.TracingSpec{SamplingRate: "1"},
+		Resiliency:    resiliency.New(log),
+		MockPlacement: NewMockPlacement(TestAppID),
 	}, clock)
 
 	return a.(*actorsRuntime)
@@ -240,12 +238,11 @@ func newTestActorsRuntimeWithMockWithoutPlacement(appChannel channel.AppChannel)
 	clock := clocktesting.NewFakeClock(startOfTime)
 
 	a := newActorsWithClock(ActorsOpts{
-		CompStore:      compstore.New(),
-		AppChannel:     appChannel,
-		Config:         conf,
-		TracingSpec:    config.TracingSpec{SamplingRate: "1"},
-		Resiliency:     resiliency.New(log),
-		StateStoreName: "actorStore",
+		CompStore:   compstore.New(),
+		AppChannel:  appChannel,
+		Config:      conf,
+		TracingSpec: config.TracingSpec{SamplingRate: "1"},
+		Resiliency:  resiliency.New(log),
 	}, clock)
 
 	return a.(*actorsRuntime)
@@ -261,12 +258,11 @@ func newTestActorsRuntimeWithMockAndNoStore(appChannel channel.AppChannel) *acto
 	clock := clocktesting.NewFakeClock(startOfTime)
 
 	a := newActorsWithClock(ActorsOpts{
-		CompStore:      compstore.New(),
-		AppChannel:     appChannel,
-		Config:         conf,
-		TracingSpec:    config.TracingSpec{SamplingRate: "1"},
-		Resiliency:     resiliency.New(log),
-		StateStoreName: "actorStore",
+		CompStore:   compstore.New(),
+		AppChannel:  appChannel,
+		Config:      conf,
+		TracingSpec: config.TracingSpec{SamplingRate: "1"},
+		Resiliency:  resiliency.New(log),
 	}, clock)
 
 	return a.(*actorsRuntime)
@@ -895,7 +891,7 @@ func TestTransactionalState(t *testing.T) {
 		testActorsRuntime := newTestActorsRuntime()
 		defer testActorsRuntime.Close()
 
-		store, err := testActorsRuntime.stateStore()
+		store, _, err := testActorsRuntime.stateStore()
 		require.NoError(t, err)
 		fakeStore, ok := store.(*daprt.FakeStateStore)
 		require.True(t, ok)

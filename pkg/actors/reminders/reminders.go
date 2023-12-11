@@ -55,7 +55,6 @@ type reminders struct {
 	evaluationQueue      chan struct{}
 	stateStoreProviderFn internal.StateStoreProviderFn
 	resiliency           resiliency.Provider
-	storeName            string
 	config               internal.Config
 	lookUpActorFn        internal.LookupActorFn
 	metricsCollector     remindersMetricsCollectorFn
@@ -70,7 +69,6 @@ func NewRemindersProvider(clock clock.WithTicker, opts internal.RemindersProvide
 		activeReminders:  &sync.Map{},
 		evaluationChan:   make(chan struct{}, 1),
 		evaluationQueue:  make(chan struct{}, 1),
-		storeName:        opts.StoreName,
 		config:           opts.Config,
 		metricsCollector: diag.DefaultMonitoring.ActorReminders,
 	}
@@ -133,7 +131,7 @@ func (r *reminders) DrainRebalancedReminders(actorType string, actorID string) {
 }
 
 func (r *reminders) CreateReminder(ctx context.Context, reminder *internal.Reminder) error {
-	store, err := r.stateStoreProviderFn()
+	store, storeName, err := r.stateStoreProviderFn()
 	if err != nil {
 		return err
 	}
@@ -167,7 +165,7 @@ func (r *reminders) CreateReminder(ctx context.Context, reminder *internal.Remin
 
 	err = retry.NotifyRecover(
 		func() error {
-			innerErr := r.storeReminder(ctx, store, reminder, stop)
+			innerErr := r.storeReminder(ctx, store, storeName, reminder, stop)
 			if innerErr != nil {
 				// If the etag is mismatched, we can retry the operation.
 				if isEtagMismatchError(innerErr) {
@@ -380,7 +378,7 @@ func (r *reminders) getReminder(reminderName string, actorType string, actorID s
 }
 
 func (r *reminders) doDeleteReminder(ctx context.Context, actorType, actorID, name string) error {
-	store, err := r.stateStoreProviderFn()
+	store, storeName, err := r.stateStoreProviderFn()
 	if err != nil {
 		return err
 	}
@@ -394,7 +392,7 @@ func (r *reminders) doDeleteReminder(ctx context.Context, actorType, actorID, na
 	}
 
 	var policyDef *resiliency.PolicyDefinition
-	if r.resiliency != nil && !r.resiliency.PolicyDefined(r.storeName, resiliency.ComponentOutboundPolicy) {
+	if r.resiliency != nil && !r.resiliency.PolicyDefined(storeName, resiliency.ComponentOutboundPolicy) {
 		// If there is no policy defined, wrap the whole logic in the built-in.
 		policyDef = r.resiliency.BuiltInPolicy(resiliency.BuiltInActorReminderRetries)
 	} else {
@@ -446,7 +444,7 @@ func (r *reminders) doDeleteReminder(ctx context.Context, actorType, actorID, na
 			r.saveRemindersInPartitionRequest(stateKey, remindersInPartition, etag, stateMetadata),
 			r.saveActorTypeMetadataRequest(actorType, actorMetadata, stateMetadata),
 		}
-		rErr = r.executeStateStoreTransaction(ctx, store, stateOperations, stateMetadata)
+		rErr = r.executeStateStoreTransaction(ctx, store, storeName, stateOperations, stateMetadata)
 		if rErr != nil {
 			return false, fmt.Errorf("error saving reminders partition and metadata: %w", rErr)
 		}
@@ -465,8 +463,8 @@ func (r *reminders) doDeleteReminder(ctx context.Context, actorType, actorID, na
 		return nil
 	}
 
-	if r.resiliency != nil && !r.resiliency.PolicyDefined(r.storeName, resiliency.ComponentOutboundPolicy) {
-		policyDef = r.resiliency.ComponentOutboundPolicy(r.storeName, resiliency.Statestore)
+	if r.resiliency != nil && !r.resiliency.PolicyDefined(storeName, resiliency.ComponentOutboundPolicy) {
+		policyDef = r.resiliency.ComponentOutboundPolicy(storeName, resiliency.Statestore)
 	} else {
 		// Else, we can rely on the underlying operations all being covered by resiliency.
 		noOp := resiliency.NoOp{}
@@ -482,7 +480,7 @@ func (r *reminders) doDeleteReminder(ctx context.Context, actorType, actorID, na
 	return err
 }
 
-func (r *reminders) storeReminder(ctx context.Context, store internal.TransactionalStateStore, reminder *internal.Reminder, stopChannel chan struct{}) error {
+func (r *reminders) storeReminder(ctx context.Context, store internal.TransactionalStateStore, storeName string, reminder *internal.Reminder, stopChannel chan struct{}) error {
 	// Store the reminder in active reminders list
 	reminderKey := reminder.Key()
 
@@ -493,7 +491,7 @@ func (r *reminders) storeReminder(ctx context.Context, store internal.Transactio
 	}
 
 	var policyDef *resiliency.PolicyDefinition
-	if r.resiliency != nil && !r.resiliency.PolicyDefined(r.storeName, resiliency.ComponentOutboundPolicy) {
+	if r.resiliency != nil && !r.resiliency.PolicyDefined(storeName, resiliency.ComponentOutboundPolicy) {
 		// If there is no policy defined, wrap the whole logic in the built-in.
 		policyDef = r.resiliency.BuiltInPolicy(resiliency.BuiltInActorReminderRetries)
 	} else {
@@ -532,7 +530,7 @@ func (r *reminders) storeReminder(ctx context.Context, store internal.Transactio
 			r.saveRemindersInPartitionRequest(stateKey, remindersInPartition, etag, stateMetadata),
 			r.saveActorTypeMetadataRequest(reminder.ActorType, actorMetadata, stateMetadata),
 		}
-		rErr = r.executeStateStoreTransaction(ctx, store, stateOperations, stateMetadata)
+		rErr = r.executeStateStoreTransaction(ctx, store, storeName, stateOperations, stateMetadata)
 		if rErr != nil {
 			return struct{}{}, fmt.Errorf("error saving reminders partition and metadata: %w", rErr)
 		}
@@ -551,10 +549,10 @@ func (r *reminders) storeReminder(ctx context.Context, store internal.Transactio
 	return nil
 }
 
-func (r *reminders) executeStateStoreTransaction(ctx context.Context, store internal.TransactionalStateStore, operations []state.TransactionalStateOperation, metadata map[string]string) error {
+func (r *reminders) executeStateStoreTransaction(ctx context.Context, store internal.TransactionalStateStore, storeName string, operations []state.TransactionalStateOperation, metadata map[string]string) error {
 	var policyDef *resiliency.PolicyDefinition
-	if r.resiliency != nil && !r.resiliency.PolicyDefined(r.storeName, resiliency.ComponentOutboundPolicy) {
-		policyDef = r.resiliency.ComponentOutboundPolicy(r.storeName, resiliency.Statestore)
+	if r.resiliency != nil && !r.resiliency.PolicyDefined(storeName, resiliency.ComponentOutboundPolicy) {
+		policyDef = r.resiliency.ComponentOutboundPolicy(storeName, resiliency.Statestore)
 	} else {
 		// Else, we can rely on the underlying operations all being covered by resiliency.
 		noOp := resiliency.NoOp{}
@@ -596,7 +594,7 @@ func (r *reminders) saveActorTypeMetadataRequest(actorType string, actorMetadata
 }
 
 func (r *reminders) getRemindersForActorType(ctx context.Context, actorType string, migrate bool) ([]ActorReminderReference, *ActorMetadata, error) {
-	store, err := r.stateStoreProviderFn()
+	store, storeName, err := r.stateStoreProviderFn()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -607,8 +605,8 @@ func (r *reminders) getRemindersForActorType(ctx context.Context, actorType stri
 	}
 
 	var policyDef *resiliency.PolicyDefinition
-	if r.resiliency != nil && r.resiliency.ComponentOutboundPolicy(r.storeName, resiliency.Statestore) != nil {
-		policyDef = r.resiliency.ComponentOutboundPolicy(r.storeName, resiliency.Statestore)
+	if r.resiliency != nil && r.resiliency.ComponentOutboundPolicy(storeName, resiliency.Statestore) != nil {
+		policyDef = r.resiliency.ComponentOutboundPolicy(storeName, resiliency.Statestore)
 	} else {
 		// Else, we can rely on the underlying operations all being covered by resiliency.
 		noOp := resiliency.NoOp{}
@@ -726,13 +724,13 @@ func (r *reminders) getRemindersForActorType(ctx context.Context, actorType stri
 // getActorMetadata gets the metadata object for the given actor type.
 // If "migrate" is true, it also performs migration of reminders if needed. Note that this should be set to "true" only by a caller who owns a lock via evaluationChan.
 func (r *reminders) getActorTypeMetadata(ctx context.Context, actorType string, migrate bool) (*ActorMetadata, error) {
-	store, err := r.stateStoreProviderFn()
+	store, storeName, err := r.stateStoreProviderFn()
 	if err != nil {
 		return nil, err
 	}
 
 	var policyDef *resiliency.PolicyDefinition
-	if r.resiliency != nil && r.resiliency.PolicyDefined(r.storeName, resiliency.ComponentOutboundPolicy) {
+	if r.resiliency != nil && r.resiliency.PolicyDefined(storeName, resiliency.ComponentOutboundPolicy) {
 		// If there is no policy defined, wrap the whole logic in the built-in.
 		policyDef = r.resiliency.BuiltInPolicy(resiliency.BuiltInActorReminderRetries)
 	} else {
@@ -769,7 +767,7 @@ func (r *reminders) getActorTypeMetadata(ctx context.Context, actorType string, 
 		}
 
 		if migrate && ctx.Err() == nil {
-			rErr = r.migrateRemindersForActorType(ctx, store, actorType, actorMetadata)
+			rErr = r.migrateRemindersForActorType(ctx, store, storeName, actorType, actorMetadata)
 			if rErr != nil {
 				return nil, rErr
 			}
@@ -781,7 +779,7 @@ func (r *reminders) getActorTypeMetadata(ctx context.Context, actorType string, 
 
 // migrateRemindersForActorType migrates reminders for actors of a given type.
 // Note that this method should be invoked by a caller that owns the evaluationChan lock.
-func (r *reminders) migrateRemindersForActorType(ctx context.Context, store internal.TransactionalStateStore, actorType string, actorMetadata *ActorMetadata) error {
+func (r *reminders) migrateRemindersForActorType(ctx context.Context, store internal.TransactionalStateStore, storeName, actorType string, actorMetadata *ActorMetadata) error {
 	reminderPartitionCount := r.config.GetRemindersPartitionCountForType(actorType)
 	if actorMetadata.RemindersMetadata.PartitionCount == reminderPartitionCount {
 		return nil
@@ -838,7 +836,7 @@ func (r *reminders) migrateRemindersForActorType(ctx context.Context, store inte
 	stateOperations[len(stateOperations)-1] = r.saveActorTypeMetadataRequest(actorType, actorMetadata, stateMetadata)
 
 	// Perform all operations in a transaction
-	err = r.executeStateStoreTransaction(ctx, store, stateOperations, stateMetadata)
+	err = r.executeStateStoreTransaction(ctx, store, storeName, stateOperations, stateMetadata)
 	if err != nil {
 		return fmt.Errorf("failed to perform transaction to migrate records for actor type %s: %w", actorType, err)
 	}
@@ -962,14 +960,14 @@ func (r *reminders) startReminder(reminder *internal.Reminder, stopChannel chan 
 }
 
 func (r *reminders) getReminderTrack(ctx context.Context, key string) (*internal.ReminderTrack, error) {
-	store, err := r.stateStoreProviderFn()
+	store, storeName, err := r.stateStoreProviderFn()
 	if err != nil {
 		return nil, err
 	}
 
 	var policyDef *resiliency.PolicyDefinition
-	if r.resiliency != nil && !r.resiliency.PolicyDefined(r.storeName, resiliency.ComponentOutboundPolicy) {
-		policyDef = r.resiliency.ComponentOutboundPolicy(r.storeName, resiliency.Statestore)
+	if r.resiliency != nil && !r.resiliency.PolicyDefined(storeName, resiliency.ComponentOutboundPolicy) {
+		policyDef = r.resiliency.ComponentOutboundPolicy(storeName, resiliency.Statestore)
 	} else {
 		// Else, we can rely on the underlying operations all being covered by resiliency.
 		noOp := resiliency.NoOp{}
@@ -999,7 +997,7 @@ func (r *reminders) getReminderTrack(ctx context.Context, key string) (*internal
 }
 
 func (r *reminders) updateReminderTrack(ctx context.Context, key string, repetition int, lastInvokeTime time.Time, etag *string) error {
-	store, err := r.stateStoreProviderFn()
+	store, storeName, err := r.stateStoreProviderFn()
 	if err != nil {
 		return err
 	}
@@ -1010,8 +1008,8 @@ func (r *reminders) updateReminderTrack(ctx context.Context, key string, repetit
 	}
 
 	var policyDef *resiliency.PolicyDefinition
-	if r.resiliency != nil && !r.resiliency.PolicyDefined(r.storeName, resiliency.ComponentOutboundPolicy) {
-		policyDef = r.resiliency.ComponentOutboundPolicy(r.storeName, resiliency.Statestore)
+	if r.resiliency != nil && !r.resiliency.PolicyDefined(storeName, resiliency.ComponentOutboundPolicy) {
+		policyDef = r.resiliency.ComponentOutboundPolicy(storeName, resiliency.Statestore)
 	} else {
 		// Else, we can rely on the underlying operations all being covered by resiliency.
 		noOp := resiliency.NoOp{}

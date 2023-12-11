@@ -19,6 +19,7 @@ import (
 	"io"
 
 	"github.com/dapr/dapr/pkg/resiliency"
+	"github.com/dapr/dapr/pkg/runtime/compstore"
 )
 
 // ErrReminderCanceled is returned when the reminder has been canceled.
@@ -31,13 +32,13 @@ type ExecuteReminderFn func(reminder *Reminder) bool
 // LookupActorFn is the type of a function that returns whether an actor is locally-hosted and the address of its host.
 type LookupActorFn func(ctx context.Context, actorType string, actorID string) (isLocal bool, actorAddress string)
 
-// StateStoreProviderFn is the type of a function that returns the state store provider.
-type StateStoreProviderFn func() (TransactionalStateStore, error)
+// StateStoreProviderFn is the type of a function that returns the state store provider and store name.
+type StateStoreProviderFn func() (TransactionalStateStore, string, error)
 
 // RemindersProviderOpts contains the options for the reminders provider.
 type RemindersProviderOpts struct {
-	StoreName string
-	Config    Config
+	ComponentStore *compstore.ComponentStore
+	Config         Config
 }
 
 // RemindersProvider is the interface for the object that provides reminders services.
