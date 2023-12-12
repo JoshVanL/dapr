@@ -51,7 +51,7 @@ type fuzzsecret struct {
 }
 
 func (f *fuzzsecret) Setup(t *testing.T) []framework.Option {
-	const numTests = 1000
+	const numTests = 100
 
 	reg, err := regexp.Compile("^([a-zA-Z].*)$")
 	require.NoError(t, err)

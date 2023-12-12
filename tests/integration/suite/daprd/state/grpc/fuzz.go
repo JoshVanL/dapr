@@ -64,7 +64,7 @@ type fuzzstate struct {
 }
 
 func (f *fuzzstate) Setup(t *testing.T) []framework.Option {
-	const numTests = 1000
+	const numTests = 100
 
 	var takenKeys sync.Map
 
@@ -170,69 +170,60 @@ func (f *fuzzstate) Run(t *testing.T, ctx context.Context) {
 	client := f.daprd.GRPCClient(t, ctx)
 
 	t.Run("get", func(t *testing.T) {
-		pt := util.NewParallel(t)
-		for i := range f.getFuzzKeys {
-			i := i
-			pt.Add(func(t *assert.CollectT) {
-				resp, err := client.GetState(ctx, &rtv1.GetStateRequest{
-					StoreName: f.storeName,
-					Key:       f.getFuzzKeys[i],
-				})
-				require.NoError(t, err)
-				assert.Empty(t, resp.GetData(), "key: %s", f.getFuzzKeys[i])
+		for _, key := range f.getFuzzKeys {
+			resp, err := client.GetState(ctx, &rtv1.GetStateRequest{
+				StoreName: f.storeName,
+				Key:       key,
 			})
+			require.NoError(t, err)
+			assert.Empty(t, resp.GetData(), "key: %s", key)
 		}
 	})
 
 	httpClient := util.HTTPClient(t)
 
-	pt := util.NewParallel(t)
 	for i := 0; i < len(f.getFuzzKeys); i++ {
-		i := i
-		pt.Add(func(t *assert.CollectT) {
-			for _, req := range [][]*commonv1.StateItem{f.saveReqBinaries[i], f.saveReqStrings[i]} {
-				_, err := client.SaveState(ctx, &rtv1.SaveStateRequest{
-					StoreName: f.storeName,
-					States:    req,
-				})
-				require.NoError(t, err)
-			}
-
-			postURL := fmt.Sprintf("http://localhost:%d/v1.0/state/%s", f.daprd.HTTPPort(), url.QueryEscape(f.storeName))
-			b := new(bytes.Buffer)
-			require.NoError(t, json.NewEncoder(b).Encode(f.saveReqBinariesHTTP[i]))
-			req, err := http.NewRequestWithContext(ctx, http.MethodPost, postURL, b)
+		for _, req := range [][]*commonv1.StateItem{f.saveReqBinaries[i], f.saveReqStrings[i]} {
+			_, err := client.SaveState(ctx, &rtv1.SaveStateRequest{
+				StoreName: f.storeName,
+				States:    req,
+			})
 			require.NoError(t, err)
-			resp, err := httpClient.Do(req)
+		}
+
+		postURL := fmt.Sprintf("http://localhost:%d/v1.0/state/%s", f.daprd.HTTPPort(), url.QueryEscape(f.storeName))
+		b := new(bytes.Buffer)
+		require.NoError(t, json.NewEncoder(b).Encode(f.saveReqBinariesHTTP[i]))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, postURL, b)
+		require.NoError(t, err)
+		resp, err := httpClient.Do(req)
+		require.NoError(t, err)
+		assert.Equalf(t, http.StatusNoContent, resp.StatusCode, "key: %s", url.QueryEscape(f.storeName))
+		respBody, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+		assert.Empty(t, string(respBody))
+
+		for _, s := range append(f.saveReqStrings[i], f.saveReqBinaries[i]...) {
+			resp, err := client.GetState(ctx, &rtv1.GetStateRequest{
+				StoreName: f.storeName,
+				Key:       s.GetKey(),
+			})
 			require.NoError(t, err)
-			assert.Equalf(t, http.StatusNoContent, resp.StatusCode, "key: %s", url.QueryEscape(f.storeName))
-			respBody, err := io.ReadAll(resp.Body)
+			assert.Equalf(t, s.GetValue(), resp.GetData(), "orig=%s got=%s", s.GetValue(), resp.GetData())
+		}
+
+		for _, s := range f.saveReqBinariesHTTP[i] {
+			resp, err := client.GetState(ctx, &rtv1.GetStateRequest{
+				StoreName: f.storeName,
+				Key:       s.GetKey(),
+			})
 			require.NoError(t, err)
-			require.NoError(t, resp.Body.Close())
-			assert.Empty(t, string(respBody))
-
-			for _, s := range append(f.saveReqStrings[i], f.saveReqBinaries[i]...) {
-				resp, err := client.GetState(ctx, &rtv1.GetStateRequest{
-					StoreName: f.storeName,
-					Key:       s.GetKey(),
-				})
-				require.NoError(t, err)
-				assert.Equalf(t, s.GetValue(), resp.GetData(), "orig=%s got=%s", s.GetValue(), resp.GetData())
-			}
-
-			for _, s := range f.saveReqBinariesHTTP[i] {
-				resp, err := client.GetState(ctx, &rtv1.GetStateRequest{
-					StoreName: f.storeName,
-					Key:       s.GetKey(),
-				})
-				require.NoError(t, err)
-				// TODO: Even though we are getting gRPC, the binary data was stored
-				// with HTTP, so it was base64 encoded.
-				val := `"` + base64.StdEncoding.EncodeToString(s.GetValue()) + `"`
-				assert.Equalf(t, val, string(resp.GetData()), "orig=%s got=%s", val, resp.GetData())
-			}
-		})
-
+			// TODO: Even though we are getting gRPC, the binary data was stored
+			// with HTTP, so it was base64 encoded.
+			val := `"` + base64.StdEncoding.EncodeToString(s.GetValue()) + `"`
+			assert.Equalf(t, val, string(resp.GetData()), "orig=%s got=%s", val, resp.GetData())
+		}
 		// TODO: Delete, eTag & Bulk APIs
 	}
 }

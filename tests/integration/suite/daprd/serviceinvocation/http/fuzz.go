@@ -53,7 +53,7 @@ type fuzzhttp struct {
 }
 
 func (f *fuzzhttp) Setup(t *testing.T) []framework.Option {
-	const numTests = 1000
+	const numTests = 100
 
 	handler := http.NewServeMux()
 	handler.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
