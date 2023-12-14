@@ -40,13 +40,18 @@ jobs:
   # reference).
 
   # This workflow runs the previous releases integration tests against the
-  # current master release's service binaries. This ensures the previous
-  # assertions hold for the current HEAD.
+  # matrix of master/latest-release daprd/control-plane. This ensures the
+  # previous assertions hold for the current HEAD, and version skew works
+  # between daprd and the control plane.
   integration-version-skew:
     name: integration-version-skew
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false # Keep running if one leg fails.
+      matrix:
+        mode:
+        - control-plane-master
+        - dapr-sidecar-master
     steps:
     - name: Set up for Dapr lastest release
       run: |
@@ -84,13 +89,13 @@ jobs:
       if: env.PR_NUMBER != ''
       uses: artursouza/sticky-pull-request-comment@v2.2.0
       with:
-        header: ${{ github.run_id }}-version-skew-integration-${{ env.DAPR_PREV_VERSION }}
+        header: ${{ github.run_id }}-version-skew-integration-${{ matrix.mode }}-${{ env.DAPR_PREV_VERSION }}
         number: ${{ env.PR_NUMBER }}
         hide: true
         hide_classify: OUTDATED
         GITHUB_TOKEN: ${{ secrets.DAPR_BOT_TOKEN }}
         message: |
-          # Dapr Version Skew integration test (${{ env.DAPR_PREV_VERSION }})
+          # Dapr Version Skew integration test (${{ matrix.mode }} - ${{ env.DAPR_PREV_VERSION }})
 
           🔗 **[Link to Action run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})**
 
@@ -122,13 +127,38 @@ jobs:
       with:
         go-version-file: 'go.mod'
 
-    - name: Build binaries
+    - name: Build & download binaries
       run: |
         make build
-        echo "DAPR_INTEGRATION_DAPRD_PATH=$(pwd)/dist/linux_amd64/release/daprd" >> $GITHUB_ENV
+        mkdir -p downloads && cd downloads
+        curl -so daprd_linux_amd64.tar.gz -L https://github.com/dapr/dapr/releases/download/v${{ env.DAPR_PREV_VERSION }}/daprd_linux_amd64.tar.gz
+        curl -so sentry_linux_amd64.tar.gz -L https://github.com/dapr/dapr/releases/download/v${{ env.DAPR_PREV_VERSION }}/sentry_linux_amd64.tar.gz
+        curl -so placement_linux_amd64.tar.gz -L https://github.com/dapr/dapr/releases/download/v${{ env.DAPR_PREV_VERSION }}/placement_linux_amd64.tar.gz
+        curl -so injector_linux_amd64.tar.gz -L https://github.com/dapr/dapr/releases/download/v${{ env.DAPR_PREV_VERSION }}/injector_linux_amd64.tar.gz
+        curl -so operator_linux_amd64.tar.gz -L https://github.com/dapr/dapr/releases/download/v${{ env.DAPR_PREV_VERSION }}/operator_linux_amd64.tar.gz
+        tar xvf daprd_linux_amd64.tar.gz
+        tar xvf sentry_linux_amd64.tar.gz
+        tar xvf placement_linux_amd64.tar.gz
+        tar xvf injector_linux_amd64.tar.gz
+        tar xvf operator_linux_amd64.tar.gz
+
+    - name: Setup DAPR_INTEGRATION_X_PATH - control-plane master
+      if: matrix.mode == 'control-plane-master'
+      run: |
+        echo "DAPR_INTEGRATION_DAPRD_PATH=$(pwd)/downloads/daprd" >> $GITHUB_ENV
         echo "DAPR_INTEGRATION_PLACEMENT_PATH=$(pwd)/dist/linux_amd64/release/placement" >> $GITHUB_ENV
         echo "DAPR_INTEGRATION_OPERATOR_PATH=$(pwd)/dist/linux_amd64/release/operator" >> $GITHUB_ENV
         echo "DAPR_INTEGRATION_SENTRY_PATH=$(pwd)/dist/linux_amd64/release/sentry" >> $GITHUB_ENV
+        echo "DAPR_INTEGRATION_INJECTOR_PATH=$(pwd)/dist/linux_amd64/release/injector" >> $GITHUB_ENV
+
+    - name: Setup DAPR_INTEGRATION_X_PATH - dapr-sidecar master
+      if: matrix.mode == 'dapr-sidecar-master'
+      run: |
+        echo "DAPR_INTEGRATION_DAPRD_PATH=$(pwd)/dist/linux_amd64/release/daprd" >> $GITHUB_ENV
+        echo "DAPR_INTEGRATION_PLACEMENT_PATH=$(pwd)/downloads/placement" >> $GITHUB_ENV
+        echo "DAPR_INTEGRATION_SENTRY_PATH=$(pwd)/downloads/sentry" >> $GITHUB_ENV
+        echo "DAPR_INTEGRATION_OPERATOR_PATH=$(pwd)/downloads/operator" >> $GITHUB_ENV
+        echo "DAPR_INTEGRATION_INJECTOR_PATH=$(pwd)/downloads/injector" >> $GITHUB_ENV
 
     - name: Run make test-integration
       run: cd latest-release && make test-integration
@@ -256,7 +286,10 @@ jobs:
         export DAPR_PATCH_DIR="$(pwd)/.github/scripts/version-skew-test-patches/e2e/release-$DAPR_LATEST_MAJOR_MINOR"
         if [ -d "$DAPR_PATCH_DIR" ]; then
           echo "Applying patches from $DAPR_PATCH_DIR"
-          cd latest-release && git apply --ignore-space-change --ignore-whitespace $DAPR_PATCH_DIR/*.patch
+          cd latest-release
+          echo "Applying patches from $DAPR_PATCH_DIR to $(pwd)"
+          git apply --ignore-space-change --ignore-whitespace $DAPR_PATCH_DIR/*.patch
+          git diff
         fi
     - name: Set up Go
       id: setup-go
