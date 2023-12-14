@@ -40,7 +40,8 @@ jobs:
   # reference).
 
   # This workflow runs the previous releases integration tests against the
-  # current master release's service binaries.
+  # current master release's service binaries. This ensures the previous
+  # assertions hold for the current HEAD.
   integration-version-skew:
     name: integration-version-skew
     runs-on: ubuntu-latest
@@ -113,6 +114,7 @@ jobs:
           cd latest-release
           echo "Applying patches from $DAPR_PATCH_DIR to $(pwd)"
           git apply --ignore-space-change --ignore-whitespace $DAPR_PATCH_DIR/*.patch
+          git diff
         fi
     - name: Set up Go
       id: setup-go
