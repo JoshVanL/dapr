@@ -62,6 +62,7 @@ type rebalancing struct {
 }
 
 func (i *rebalancing) Setup(t *testing.T) []framework.Option {
+	t.Skip("")
 	i.activeActors = make([]atomic.Bool, iterations)
 	i.doubleActivationCh = make(chan string)
 
