@@ -27,10 +27,10 @@ import (
 
 	sentryv1pb "github.com/dapr/dapr/pkg/proto/sentry/v1"
 	"github.com/dapr/dapr/pkg/security"
-	secpem "github.com/dapr/dapr/pkg/security/pem"
 	"github.com/dapr/dapr/pkg/sentry/monitoring"
 	"github.com/dapr/dapr/pkg/sentry/server/ca"
 	"github.com/dapr/dapr/pkg/sentry/server/validator"
+	kitpem "github.com/dapr/kit/crypto/pem"
 	"github.com/dapr/kit/logger"
 )
 
@@ -183,7 +183,7 @@ func (s *server) signCertificate(ctx context.Context, req *sentryv1pb.SignCertif
 		return nil, status.Error(codes.Internal, "failed to sign certificate")
 	}
 
-	chainPEM, err := secpem.EncodeX509Chain(chain)
+	chainPEM, err := kitpem.EncodeX509Chain(chain)
 	if err != nil {
 		log.Errorf("Error encoding certificate chain: %v", err)
 		return nil, status.Error(codes.Internal, "failed to encode certificate chain")

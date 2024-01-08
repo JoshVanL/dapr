@@ -146,6 +146,7 @@ func newDaprRuntime(ctx context.Context,
 		Namespace:     namespace,
 		StrictSandbox: globalConfig.Spec.WasmSpec.GetStrictSandbox(),
 		Mode:          runtimeConfig.mode,
+		Security:      sec,
 	})
 
 	operatorClient, err := getOperatorClient(ctx, sec, runtimeConfig)

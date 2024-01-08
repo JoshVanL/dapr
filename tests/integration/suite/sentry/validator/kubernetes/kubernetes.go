@@ -27,12 +27,12 @@ import (
 	"github.com/stretchr/testify/require"
 
 	sentrypbv1 "github.com/dapr/dapr/pkg/proto/sentry/v1"
-	secpem "github.com/dapr/dapr/pkg/security/pem"
 	"github.com/dapr/dapr/pkg/sentry/server/ca"
 	"github.com/dapr/dapr/tests/integration/framework"
 	"github.com/dapr/dapr/tests/integration/framework/process/exec"
 	"github.com/dapr/dapr/tests/integration/framework/process/sentry"
 	"github.com/dapr/dapr/tests/integration/suite"
+	kitpem "github.com/dapr/kit/crypto/pem"
 )
 
 func init() {
@@ -90,13 +90,13 @@ func (k *kubernetes) Run(t *testing.T, ctx context.Context) {
 	require.NoError(t, err)
 	require.NotEmpty(t, resp.GetWorkloadCertificate())
 
-	certs, err := secpem.DecodePEMCertificates(resp.GetWorkloadCertificate())
+	certs, err := kitpem.DecodePEMCertificates(resp.GetWorkloadCertificate())
 	require.NoError(t, err)
 	require.Len(t, certs, 2)
 	require.NoError(t, certs[0].CheckSignatureFrom(certs[1]))
 	require.Len(t, k.sentry.CABundle().IssChain, 1)
 	assert.Equal(t, k.sentry.CABundle().IssChain[0].Raw, certs[1].Raw)
-	trustBundle, err := secpem.DecodePEMCertificates(k.sentry.CABundle().TrustAnchors)
+	trustBundle, err := kitpem.DecodePEMCertificates(k.sentry.CABundle().TrustAnchors)
 	require.NoError(t, err)
 	require.Len(t, trustBundle, 1)
 	require.NoError(t, certs[1].CheckSignatureFrom(trustBundle[0]))

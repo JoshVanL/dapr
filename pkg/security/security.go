@@ -62,6 +62,8 @@ type Handler interface {
 	ControlPlaneNamespace() string
 	CurrentTrustAnchors() ([]byte, error)
 
+	AddSVIDToMetadata(map[string]string) (map[string]string, error)
+
 	MTLSEnabled() bool
 	WatchTrustAnchors(context.Context, chan<- []byte)
 }
@@ -410,6 +412,27 @@ func (s *security) NetDialerID(ctx context.Context, spiffeID spiffeid.ID, timeou
 // MTLSEnabled returns true if mTLS is enabled.
 func (s *security) MTLSEnabled() bool {
 	return s.mtls
+}
+
+func (s *security) AddSVIDToMetadata(md map[string]string) (map[string]string, error) {
+	if s.source == nil {
+		return md, nil
+	}
+
+	svid, err := s.source.GetX509SVID()
+	if err != nil {
+		return nil, fmt.Errorf("failed to add SVID to metadata: %w", err)
+	}
+
+	certRaw, pkRaw, err := svid.MarshalRaw()
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal current Dapr SVID: %w", err)
+	}
+
+	md["__internal.dapr.io/svid-certificate-chain"] = string(certRaw)
+	md["__internal.dapr.io/svid-private-key"] = string(pkRaw)
+
+	return md, nil
 }
 
 // CurrentNamespace returns the namespace of this workload.

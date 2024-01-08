@@ -24,6 +24,7 @@ import (
 	compapi "github.com/dapr/dapr/pkg/apis/components/v1alpha1"
 	"github.com/dapr/dapr/pkg/components"
 	"github.com/dapr/dapr/pkg/modes"
+	"github.com/dapr/dapr/pkg/security"
 )
 
 const WasmStrictSandboxMetadataKey = "strictSandbox"
@@ -34,6 +35,7 @@ type Options struct {
 	Namespace     string
 	StrictSandbox bool
 	Mode          modes.DaprMode
+	Security      security.Handler
 }
 
 type Meta struct {
@@ -42,6 +44,7 @@ type Meta struct {
 	namespace     string
 	strictSandbox bool
 	mode          modes.DaprMode
+	security      security.Handler
 }
 
 func New(options Options) *Meta {
@@ -51,6 +54,7 @@ func New(options Options) *Meta {
 		strictSandbox: options.StrictSandbox,
 		id:            options.ID,
 		mode:          options.Mode,
+		security:      options.Security,
 	}
 }
 
@@ -88,6 +92,11 @@ func (m *Meta) convertItemsToProps(items []common.NameValuePair) (map[string]str
 		val = strings.ReplaceAll(val, "{appID}", m.id)
 		properties[c.Name] = val
 	}
+	properties, err := m.security.AddSVIDToMetadata(properties)
+	if err != nil {
+		return nil, err
+	}
+
 	return properties, nil
 }
 

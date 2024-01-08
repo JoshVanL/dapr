@@ -44,8 +44,8 @@ import (
 	"github.com/dapr/dapr/pkg/modes"
 	sentryv1pb "github.com/dapr/dapr/pkg/proto/sentry/v1"
 	"github.com/dapr/dapr/pkg/security/legacy"
-	secpem "github.com/dapr/dapr/pkg/security/pem"
 	sentryToken "github.com/dapr/dapr/pkg/security/token"
+	kitpem "github.com/dapr/kit/crypto/pem"
 )
 
 const (
@@ -131,7 +131,7 @@ func newX509Source(ctx context.Context, clock clock.Clock, cptd spiffeid.TrustDo
 		}
 	}
 
-	trustAnchorCerts, err := secpem.DecodePEMCertificates(rootPEMs)
+	trustAnchorCerts, err := kitpem.DecodePEMCertificates(rootPEMs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode trust anchors: %w", err)
 	}
@@ -339,7 +339,7 @@ func (x *x509source) requestFromSentry(ctx context.Context, csrDER []byte) ([]*x
 		return nil, fmt.Errorf("error parsing ValidUntil: %w", err)
 	}
 
-	workloadcert, err := secpem.DecodePEMCertificates(resp.GetWorkloadCertificate())
+	workloadcert, err := kitpem.DecodePEMCertificates(resp.GetWorkloadCertificate())
 	if err != nil {
 		return nil, fmt.Errorf("error parsing newly signed certificate: %w", err)
 	}
@@ -386,7 +386,7 @@ func (x *x509source) updateTrustAnchorFromFile(ctx context.Context, filepath str
 		return fmt.Errorf("failed to read trust anchors file '%s': %w", filepath, err)
 	}
 
-	trustAnchorCerts, err := secpem.DecodePEMCertificates(rootPEMs)
+	trustAnchorCerts, err := kitpem.DecodePEMCertificates(rootPEMs)
 	if err != nil {
 		return fmt.Errorf("failed to decode trust anchors: %w", err)
 	}
