@@ -585,6 +585,7 @@ func (a *api) GetBulkState(ctx context.Context, in *runtimev1pb.GetBulkStateRequ
 }
 
 func (a *api) GetState(ctx context.Context, in *runtimev1pb.GetStateRequest) (*runtimev1pb.GetStateResponse, error) {
+	return nil, errors.New("some error")
 	store, err := a.Universal.GetStateStore(in.GetStoreName())
 	if err != nil {
 		// Error has already been logged
