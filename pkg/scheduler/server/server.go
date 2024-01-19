@@ -16,12 +16,13 @@ package server
 import (
 	"context"
 	"fmt"
-	"github.com/dapr/dapr/pkg/api/grpc/manager"
-	v1 "github.com/dapr/dapr/pkg/messaging/v1"
-	runtimev1pb "github.com/dapr/dapr/pkg/proto/runtime/v1"
 	"net"
 	"sync"
 	"time"
+
+	"github.com/dapr/dapr/pkg/api/grpc/manager"
+	v1 "github.com/dapr/dapr/pkg/messaging/v1"
+	runtimev1pb "github.com/dapr/dapr/pkg/proto/runtime/v1"
 
 	"go.etcd.io/etcd/server/v3/embed"
 	"google.golang.org/grpc"
@@ -64,6 +65,27 @@ type Server struct {
 	readyCh   chan struct{}
 }
 
+
+
+type pool struct {
+	lock sync.RWMutex
+	nsappidPool map[string]*appidPool
+}
+
+type appidPool struct {
+ lock sync.RWMutex
+	conected []chan struct{}
+}
+
+func (p *pool) add(nsappid string, ch chan struct{}) int {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	id, ok := p.appidPool[nsappid]
+}
+
+func (p *pool) remove(nsappid string, int) [
+}
+
 func New(opts Options) *Server {
 	s := &Server{
 		daprClient: opts.DaprClient,
@@ -87,6 +109,7 @@ func (s *Server) Run(ctx context.Context) error {
 	return concurrency.NewRunnerManager(
 		s.runServer,
 		s.runEtcd,
+		s.runJobWatcher,
 	).Run(ctx)
 }
 
@@ -94,6 +117,12 @@ func (s *Server) runServer(ctx context.Context) error {
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", s.port))
 	if err != nil {
 		return fmt.Errorf("could not listen on port %d: %w", s.port, err)
+	}
+
+	for {
+		jw <- jobWatcher
+		 pool.pickRandomFromAppId(req.appid) <-jw
+
 	}
 
 	errCh := make(chan error)
@@ -151,3 +180,4 @@ func (s *Server) runEtcd(ctx context.Context) error {
 		return nil
 	}
 }
+
