@@ -252,7 +252,16 @@ func (p *Service) ReportDaprStatus(stream placementv1pb.Placement_ReportDaprStat
 				// We need to use a background context here so dissemination isn't tied to the context of this stream
 				placementTable := p.raftNode.FSM().PlacementState(p.minAPILevel < NoVirtualNodesInPlacementTablesAPILevel)
 
-				err = p.performTablesUpdate(context.Background(), []placementGRPCStream{stream}, placementTable)
+				ctx, cancel := context.WithCancel(context.Background())
+				go func() {
+					select {
+					case <-ctx.Done():
+					case <-p.closedCh:
+						cancel()
+					}
+				}()
+				err = p.performTablesUpdate(ctx, []placementGRPCStream{stream}, placementTable)
+				cancel()
 				if err != nil {
 					return err
 				}
