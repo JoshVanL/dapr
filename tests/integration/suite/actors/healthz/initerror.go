@@ -43,13 +43,13 @@ type initerror struct {
 	daprd        *daprd.Daprd
 	place        *placement.Placement
 	configCalled chan struct{}
-	//blockConfig   chan struct{}
+	// blockConfig   chan struct{}
 	healthzCalled chan struct{}
 }
 
 func (i *initerror) Setup(t *testing.T) []framework.Option {
 	i.configCalled = make(chan struct{})
-	//i.blockConfig = make(chan struct{})
+	// i.blockConfig = make(chan struct{})
 	i.healthzCalled = make(chan struct{})
 
 	var once sync.Once
@@ -57,7 +57,7 @@ func (i *initerror) Setup(t *testing.T) []framework.Option {
 	handler := http.NewServeMux()
 	handler.HandleFunc("/dapr/config", func(w http.ResponseWriter, r *http.Request) {
 		close(i.configCalled)
-		//<-i.blockConfig
+		// <-i.blockConfig
 		w.Write([]byte(`{"entities": ["myactortype"]}`))
 	})
 	handler.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -95,24 +95,24 @@ func (i *initerror) Run(t *testing.T, ctx context.Context) {
 		t.Fatal("timed out waiting for config call")
 	}
 
-	//rctx, cancel := context.WithTimeout(ctx, time.Second*2)
-	//t.Cleanup(cancel)
+	// rctx, cancel := context.WithTimeout(ctx, time.Second*2)
+	// t.Cleanup(cancel)
 	daprdURL := "http://localhost:" + strconv.Itoa(i.daprd.HTTPPort()) + "/v1.0/actors/myactortype/myactorid/method/foo"
 
-	//req, err := http.NewRequestWithContext(rctx, http.MethodPost, daprdURL, nil)
-	//require.NoError(t, err)
-	//resp, err := client.Do(req)
-	//require.ErrorIs(t, err, context.DeadlineExceeded)
-	//if resp != nil && resp.Body != nil {
-	//	require.NoError(t, resp.Body.Close())
-	//}
+	// req, err := http.NewRequestWithContext(rctx, http.MethodPost, daprdURL, nil)
+	// require.NoError(t, err)
+	// resp, err := client.Do(req)
+	// require.ErrorIs(t, err, context.DeadlineExceeded)
+	// if resp != nil && resp.Body != nil {
+	// 	require.NoError(t, resp.Body.Close())
+	// }
 
-	//meta, err := i.daprd.GRPCClient(t, ctx).GetMetadata(ctx, new(rtv1.GetMetadataRequest))
-	//require.NoError(t, err)
-	//assert.Empty(t, meta.GetActorRuntime().GetActiveActors())
-	//assert.Equal(t, rtv1.ActorRuntime_INITIALIZING, meta.GetActorRuntime().GetRuntimeStatus())
+	// meta, err := i.daprd.GRPCClient(t, ctx).GetMetadata(ctx, new(rtv1.GetMetadataRequest))
+	// require.NoError(t, err)
+	// assert.Empty(t, meta.GetActorRuntime().GetActiveActors())
+	// assert.Equal(t, rtv1.ActorRuntime_INITIALIZING, meta.GetActorRuntime().GetRuntimeStatus())
 
-	//close(i.blockConfig)
+	// close(i.blockConfig)
 
 	select {
 	case <-i.healthzCalled:
