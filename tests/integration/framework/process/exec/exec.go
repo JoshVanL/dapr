@@ -104,6 +104,7 @@ func (e *exec) Run(t *testing.T, ctx context.Context) {
 	for k, v := range e.envs {
 		e.cmd.Env = append(e.cmd.Env, k+"="+v)
 	}
+	e.cmd.Env = append(e.cmd.Env, "DAPR_HOST_IP=127.0.0.1")
 
 	require.NoError(t, e.cmd.Start())
 }
