@@ -120,6 +120,8 @@ func (i *initerror) Run(t *testing.T, ctx context.Context) {
 		assert.Fail(t, "timed out waiting for healthz call")
 	}
 
+	time.Sleep(time.Second * 10)
+
 	req, err = http.NewRequestWithContext(ctx, http.MethodPost, daprdURL, nil)
 	require.NoError(t, err)
 	resp, err = client.Do(req)
