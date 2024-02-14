@@ -11,7 +11,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v1alpha1
+package deadletter
 
 import (
 	"context"
@@ -30,29 +30,29 @@ import (
 )
 
 func init() {
-	suite.Register(new(deadletter))
+	suite.Register(new(grpc))
 }
 
-type deadletter struct {
+type grpc struct {
 	daprd *daprd.Daprd
 	app   *app.App
 	inCh  chan *rtv1.TopicEventRequest
 }
 
-func (d *deadletter) Setup(t *testing.T) []framework.Option {
-	d.inCh = make(chan *rtv1.TopicEventRequest)
-	d.app = app.New(t,
+func (g *grpc) Setup(t *testing.T) []framework.Option {
+	g.inCh = make(chan *rtv1.TopicEventRequest)
+	g.app = app.New(t,
 		app.WithOnTopicEventFn(func(ctx context.Context, in *rtv1.TopicEventRequest) (*rtv1.TopicEventResponse, error) {
 			if in.GetTopic() == "a" {
 				return nil, errors.New("my error")
 			}
-			d.inCh <- in
+			g.inCh <- in
 			return new(rtv1.TopicEventResponse), nil
 		}),
 	)
 
-	d.daprd = daprd.New(t,
-		daprd.WithAppPort(d.app.Port(t)),
+	g.daprd = daprd.New(t,
+		daprd.WithAppPort(g.app.Port(t)),
 		daprd.WithAppProtocol("grpc"),
 		daprd.WithResourceFiles(`apiVersion: dapr.io/v1alpha1
 kind: Component
@@ -84,14 +84,14 @@ spec:
 `))
 
 	return []framework.Option{
-		framework.WithProcesses(d.app, d.daprd),
+		framework.WithProcesses(g.app, g.daprd),
 	}
 }
 
-func (d *deadletter) Run(t *testing.T, ctx context.Context) {
-	d.daprd.WaitUntilRunning(t, ctx)
+func (g *grpc) Run(t *testing.T, ctx context.Context) {
+	g.daprd.WaitUntilRunning(t, ctx)
 
-	client := d.daprd.GRPCClient(t, ctx)
+	client := g.daprd.GRPCClient(t, ctx)
 
 	_, err := client.PublishEvent(ctx, &rtv1.PublishEventRequest{
 		PubsubName: "mypub", Topic: "a", Data: []byte(`{"status": "completed"}`),
@@ -104,7 +104,7 @@ func (d *deadletter) Run(t *testing.T, ctx context.Context) {
 	select {
 	case <-ctx.Done():
 		assert.Fail(t, "timeout waiting for event")
-	case in := <-d.inCh:
+	case in := <-g.inCh:
 		assert.Equal(t, "mydead", in.GetTopic())
 		assert.Equal(t, "/b", in.GetPath())
 	}

@@ -11,7 +11,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v1alpha1
+package route
 
 import (
 	"context"
@@ -28,19 +28,19 @@ import (
 )
 
 func init() {
-	suite.Register(new(route))
+	suite.Register(new(grpc))
 }
 
-type route struct {
+type grpc struct {
 	daprd *daprd.Daprd
 	sub   *subscriber.Subscriber
 }
 
-func (r *route) Setup(t *testing.T) []framework.Option {
-	r.sub = subscriber.New(t)
+func (g *grpc) Setup(t *testing.T) []framework.Option {
+	g.sub = subscriber.New(t)
 
-	r.daprd = daprd.New(t,
-		daprd.WithAppPort(r.sub.Port(t)),
+	g.daprd = daprd.New(t,
+		daprd.WithAppPort(g.sub.Port(t)),
 		daprd.WithAppProtocol("grpc"),
 		daprd.WithResourceFiles(`apiVersion: dapr.io/v1alpha1
 kind: Component
@@ -88,20 +88,20 @@ spec:
 `))
 
 	return []framework.Option{
-		framework.WithProcesses(r.sub, r.daprd),
+		framework.WithProcesses(g.sub, g.daprd),
 	}
 }
 
-func (r *route) Run(t *testing.T, ctx context.Context) {
-	r.daprd.WaitUntilRunning(t, ctx)
-	client := r.daprd.GRPCClient(t, ctx)
+func (g *grpc) Run(t *testing.T, ctx context.Context) {
+	g.daprd.WaitUntilRunning(t, ctx)
+	client := g.daprd.GRPCClient(t, ctx)
 
 	_, err := client.PublishEvent(ctx, &rtv1.PublishEventRequest{
 		PubsubName: "mypub",
 		Topic:      "a",
 	})
 	require.NoError(t, err)
-	resp := r.sub.Receive(t, ctx)
+	resp := g.sub.Receive(t, ctx)
 	assert.Equal(t, "/a/b/c/d", resp.GetPath())
 	assert.Empty(t, resp.GetData())
 
@@ -110,7 +110,7 @@ func (r *route) Run(t *testing.T, ctx context.Context) {
 		Topic:      "b",
 	})
 	require.NoError(t, err)
-	resp = r.sub.Receive(t, ctx)
+	resp = g.sub.Receive(t, ctx)
 	assert.Equal(t, "/a", resp.GetPath())
 	assert.Empty(t, resp.GetData())
 }

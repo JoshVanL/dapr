@@ -11,7 +11,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v1alpha1
+package missing
 
 import (
 	"context"
@@ -28,19 +28,19 @@ import (
 )
 
 func init() {
-	suite.Register(new(missing))
+	suite.Register(new(grpc))
 }
 
-type missing struct {
+type grpc struct {
 	daprd *daprd.Daprd
 	sub   *subscriber.Subscriber
 }
 
-func (m *missing) Setup(t *testing.T) []framework.Option {
-	m.sub = subscriber.New(t)
+func (g *grpc) Setup(t *testing.T) []framework.Option {
+	g.sub = subscriber.New(t)
 
-	m.daprd = daprd.New(t,
-		daprd.WithAppPort(m.sub.Port(t)),
+	g.daprd = daprd.New(t,
+		daprd.WithAppPort(g.sub.Port(t)),
 		daprd.WithAppProtocol("grpc"),
 		daprd.WithResourceFiles(`apiVersion: dapr.io/v1alpha1
 kind: Component
@@ -70,27 +70,27 @@ spec:
 `))
 
 	return []framework.Option{
-		framework.WithProcesses(m.sub, m.daprd),
+		framework.WithProcesses(g.sub, g.daprd),
 	}
 }
 
-func (m *missing) Run(t *testing.T, ctx context.Context) {
-	m.daprd.WaitUntilRunning(t, ctx)
+func (g *grpc) Run(t *testing.T, ctx context.Context) {
+	g.daprd.WaitUntilRunning(t, ctx)
 
-	client := m.daprd.GRPCClient(t, ctx)
+	client := g.daprd.GRPCClient(t, ctx)
 
 	meta, err := client.GetMetadata(ctx, new(rtv1.GetMetadataRequest))
 	require.NoError(t, err)
 	assert.Len(t, meta.GetRegisteredComponents(), 1)
 	assert.Len(t, meta.GetSubscriptions(), 2)
 
-	m.sub.ExpectPublishError(t, ctx, m.daprd, &rtv1.PublishEventRequest{
+	g.sub.ExpectPublishError(t, ctx, g.daprd, &rtv1.PublishEventRequest{
 		PubsubName: "anotherpub", Topic: "a", Data: []byte(`{"status": "completed"}`),
 	})
-	m.sub.ExpectPublishNoReceive(t, ctx, m.daprd, &rtv1.PublishEventRequest{
+	g.sub.ExpectPublishNoReceive(t, ctx, g.daprd, &rtv1.PublishEventRequest{
 		PubsubName: "mypub", Topic: "b", Data: []byte(`{"status": "completed"}`),
 	})
-	m.sub.ExpectPublishReceive(t, ctx, m.daprd, &rtv1.PublishEventRequest{
+	g.sub.ExpectPublishReceive(t, ctx, g.daprd, &rtv1.PublishEventRequest{
 		PubsubName: "mypub", Topic: "c", Data: []byte(`{"status": "completed"}`),
 	})
 }

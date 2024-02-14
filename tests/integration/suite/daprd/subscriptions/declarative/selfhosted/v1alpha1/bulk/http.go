@@ -11,37 +11,33 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v1alpha1
+package bulk
 
 import (
 	"context"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-
-	rtv1 "github.com/dapr/dapr/pkg/proto/runtime/v1"
 	"github.com/dapr/dapr/tests/integration/framework"
 	"github.com/dapr/dapr/tests/integration/framework/process/daprd"
-	"github.com/dapr/dapr/tests/integration/framework/process/grpc/subscriber"
+	"github.com/dapr/dapr/tests/integration/framework/process/http/subscriber"
 	"github.com/dapr/dapr/tests/integration/suite"
 )
 
 func init() {
-	suite.Register(new(bulk))
+	suite.Register(new(http))
 }
 
-type bulk struct {
+type http struct {
 	daprd *daprd.Daprd
 	sub   *subscriber.Subscriber
 }
 
-func (b *bulk) Setup(t *testing.T) []framework.Option {
-	b.sub = subscriber.New(t)
+func (h *http) Setup(t *testing.T) []framework.Option {
+	h.sub = subscriber.New(t, subscriber.WithBulkRoutes("/a"))
 
-	b.daprd = daprd.New(t,
-		daprd.WithAppPort(b.sub.Port(t)),
-		daprd.WithAppProtocol("grpc"),
+	h.daprd = daprd.New(t,
+		daprd.WithAppPort(h.sub.Port()),
+		daprd.WithAppProtocol("http"),
 		daprd.WithResourceFiles(`apiVersion: dapr.io/v1alpha1
 kind: Component
 metadata:
@@ -74,32 +70,28 @@ spec:
 `))
 
 	return []framework.Option{
-		framework.WithProcesses(b.sub, b.daprd),
+		framework.WithProcesses(h.sub, h.daprd),
 	}
 }
 
-func (b *bulk) Run(t *testing.T, ctx context.Context) {
-	b.daprd.WaitUntilRunning(t, ctx)
-
-	client := b.daprd.GRPCClient(t, ctx)
+func (h *http) Run(t *testing.T, ctx context.Context) {
+	h.daprd.WaitUntilRunning(t, ctx)
 
 	// TODO: @joshvanl: add support for bulk publish to in-memory pubsub.
-	resp, err := client.BulkPublishEventAlpha1(ctx, &rtv1.BulkPublishRequest{
-		PubsubName: "mypub",
+	h.sub.PublishBulk(t, ctx, subscriber.PublishBulkRequest{
+		Daprd:      h.daprd,
+		PubSubName: "mypub",
 		Topic:      "a",
-		Entries: []*rtv1.BulkPublishRequestEntry{
-			{EntryId: "1", Event: []byte(`{"id": 1}`), ContentType: "application/json"},
-			{EntryId: "2", Event: []byte(`{"id": 2}`), ContentType: "application/json"},
-			{EntryId: "3", Event: []byte(`{"id": 3}`), ContentType: "application/json"},
-			{EntryId: "4", Event: []byte(`{"id": 4}`), ContentType: "application/json"},
+		Entries: []subscriber.PublishBulkRequestEntry{
+			{EntryID: "1", Event: `{"id": 1}`, ContentType: "application/json"},
+			{EntryID: "2", Event: `{"id": 2}`, ContentType: "application/json"},
+			{EntryID: "3", Event: `{"id": 3}`, ContentType: "application/json"},
+			{EntryID: "4", Event: `{"id": 4}`, ContentType: "application/json"},
 		},
 	})
-	require.NoError(t, err)
-	assert.Empty(t, len(resp.GetFailedEntries()))
 
-	b.sub.ReceiveBulk(t, ctx)
-	b.sub.ReceiveBulk(t, ctx)
-	b.sub.ReceiveBulk(t, ctx)
-	b.sub.ReceiveBulk(t, ctx)
-	b.sub.AssertBulkEventChanLen(t, 0)
+	h.sub.ReceiveBulk(t, ctx)
+	h.sub.ReceiveBulk(t, ctx)
+	h.sub.ReceiveBulk(t, ctx)
+	h.sub.ReceiveBulk(t, ctx)
 }

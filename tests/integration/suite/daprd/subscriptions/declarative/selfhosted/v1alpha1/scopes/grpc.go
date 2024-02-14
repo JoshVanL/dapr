@@ -11,7 +11,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v1alpha1
+package scopes
 
 import (
 	"context"
@@ -31,27 +31,27 @@ import (
 )
 
 func init() {
-	suite.Register(new(scopes))
+	suite.Register(new(grpc))
 }
 
-type scopes struct {
+type grpc struct {
 	daprd1 *daprd.Daprd
 	daprd2 *daprd.Daprd
 	sub    *subscriber.Subscriber
 }
 
-func (s *scopes) Setup(t *testing.T) []framework.Option {
-	s.sub = subscriber.New(t)
+func (g *grpc) Setup(t *testing.T) []framework.Option {
+	g.sub = subscriber.New(t)
 
 	resDir := t.TempDir()
 
-	s.daprd1 = daprd.New(t,
-		daprd.WithAppPort(s.sub.Port(t)),
+	g.daprd1 = daprd.New(t,
+		daprd.WithAppPort(g.sub.Port(t)),
 		daprd.WithAppProtocol("grpc"),
 		daprd.WithResourcesDir(resDir),
 	)
-	s.daprd2 = daprd.New(t,
-		daprd.WithAppPort(s.sub.Port(t)),
+	g.daprd2 = daprd.New(t,
+		daprd.WithAppPort(g.sub.Port(t)),
 		daprd.WithAppProtocol("grpc"),
 		daprd.WithResourcesDir(resDir),
 	)
@@ -118,19 +118,19 @@ spec:
 scopes:
 - %[1]s
 - %[2]s
-`, s.daprd1.AppID(), s.daprd2.AppID())), 0o600))
+`, g.daprd1.AppID(), g.daprd2.AppID())), 0o600))
 
 	return []framework.Option{
-		framework.WithProcesses(s.sub, s.daprd1, s.daprd2),
+		framework.WithProcesses(g.sub, g.daprd1, g.daprd2),
 	}
 }
 
-func (s *scopes) Run(t *testing.T, ctx context.Context) {
-	s.daprd1.WaitUntilRunning(t, ctx)
-	s.daprd2.WaitUntilRunning(t, ctx)
+func (g *grpc) Run(t *testing.T, ctx context.Context) {
+	g.daprd1.WaitUntilRunning(t, ctx)
+	g.daprd2.WaitUntilRunning(t, ctx)
 
-	client1 := s.daprd1.GRPCClient(t, ctx)
-	client2 := s.daprd2.GRPCClient(t, ctx)
+	client1 := g.daprd1.GRPCClient(t, ctx)
+	client2 := g.daprd2.GRPCClient(t, ctx)
 
 	meta, err := client1.GetMetadata(ctx, new(rtv1.GetMetadataRequest))
 	require.NoError(t, err)
@@ -176,17 +176,17 @@ func (s *scopes) Run(t *testing.T, ctx context.Context) {
 	reqOnly2 := newReq("only2")
 	reqBoth := newReq("both")
 
-	s.sub.ExpectPublishReceive(t, ctx, s.daprd1, reqAll)
-	s.sub.ExpectPublishReceive(t, ctx, s.daprd1, reqEmpty)
-	s.sub.ExpectPublishReceive(t, ctx, s.daprd1, reqOnly1)
-	s.sub.ExpectPublishNoReceive(t, ctx, s.daprd1, reqOnly2)
-	s.sub.ExpectPublishReceive(t, ctx, s.daprd1, reqBoth)
+	g.sub.ExpectPublishReceive(t, ctx, g.daprd1, reqAll)
+	g.sub.ExpectPublishReceive(t, ctx, g.daprd1, reqEmpty)
+	g.sub.ExpectPublishReceive(t, ctx, g.daprd1, reqOnly1)
+	g.sub.ExpectPublishNoReceive(t, ctx, g.daprd1, reqOnly2)
+	g.sub.ExpectPublishReceive(t, ctx, g.daprd1, reqBoth)
 
-	s.sub.ExpectPublishReceive(t, ctx, s.daprd2, reqAll)
-	s.sub.ExpectPublishReceive(t, ctx, s.daprd2, reqEmpty)
-	s.sub.ExpectPublishNoReceive(t, ctx, s.daprd2, reqOnly1)
-	s.sub.ExpectPublishReceive(t, ctx, s.daprd2, reqOnly2)
-	s.sub.ExpectPublishReceive(t, ctx, s.daprd2, reqBoth)
+	g.sub.ExpectPublishReceive(t, ctx, g.daprd2, reqAll)
+	g.sub.ExpectPublishReceive(t, ctx, g.daprd2, reqEmpty)
+	g.sub.ExpectPublishNoReceive(t, ctx, g.daprd2, reqOnly1)
+	g.sub.ExpectPublishReceive(t, ctx, g.daprd2, reqOnly2)
+	g.sub.ExpectPublishReceive(t, ctx, g.daprd2, reqBoth)
 
-	s.sub.AssertEventChanLen(t, 0)
+	g.sub.AssertEventChanLen(t, 0)
 }
