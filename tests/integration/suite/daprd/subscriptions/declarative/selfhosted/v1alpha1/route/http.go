@@ -11,11 +11,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package bulk
+package route
 
 import (
 	"context"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 
 	"github.com/dapr/dapr/tests/integration/framework"
 	"github.com/dapr/dapr/tests/integration/framework/process/daprd"
@@ -33,7 +35,7 @@ type http struct {
 }
 
 func (h *http) Setup(t *testing.T) []framework.Option {
-	h.sub = subscriber.New(t, subscriber.WithBulkRoutes("/a", "/b"))
+	h.sub = subscriber.New(t, subscriber.WithRoutes("/a", "/a/b/c/d"))
 
 	h.daprd = daprd.New(t,
 		daprd.WithAppPort(h.sub.Port()),
@@ -41,32 +43,46 @@ func (h *http) Setup(t *testing.T) []framework.Option {
 		daprd.WithResourceFiles(`apiVersion: dapr.io/v1alpha1
 kind: Component
 metadata:
- name: mypub
+  name: mypub
 spec:
- type: pubsub.in-memory
- version: v1
+  type: pubsub.in-memory
+  version: v1
 ---
 apiVersion: dapr.io/v1alpha1
 kind: Subscription
 metadata:
- name: mysub
+  name: mysub1
 spec:
- pubsubname: mypub
- topic: a
- route: /a
- bulkSubscribe:
-  enabled: true
-  maxMessagesCount: 100
-  maxAwaitDurationMs: 40
+  pubsubname: mypub
+  topic: a
+  route: /a/b/c/d
 ---
 apiVersion: dapr.io/v1alpha1
 kind: Subscription
 metadata:
- name: nobulk
+  name: mysub2
 spec:
- pubsubname: mypub
- topic: b
- route: /b
+  pubsubname: mypub
+  topic: a
+  route: /a
+---
+apiVersion: dapr.io/v1alpha1
+kind: Subscription
+metadata:
+  name: mysub3
+spec:
+  pubsubname: mypub
+  topic: b
+  route: /a
+---
+apiVersion: dapr.io/v1alpha1
+kind: Subscription
+metadata:
+  name: mysub4
+spec:
+  pubsubname: mypub
+  topic: b
+  route: /a/b/c/d
 `))
 
 	return []framework.Option{
@@ -77,38 +93,21 @@ spec:
 func (h *http) Run(t *testing.T, ctx context.Context) {
 	h.daprd.WaitUntilRunning(t, ctx)
 
-	// TODO: @joshvanl: add support for bulk publish to in-memory pubsub.
-	h.sub.PublishBulk(t, ctx, subscriber.PublishBulkRequest{
+	h.sub.Publish(t, ctx, subscriber.PublishRequest{
 		Daprd:      h.daprd,
 		PubSubName: "mypub",
 		Topic:      "a",
-		Entries: []subscriber.PublishBulkRequestEntry{
-			{EntryID: "1", Event: `{"id": 1}`, ContentType: "application/json"},
-			{EntryID: "2", Event: `{"id": 2}`, ContentType: "application/json"},
-			{EntryID: "3", Event: `{"id": 3}`, ContentType: "application/json"},
-			{EntryID: "4", Event: `{"id": 4}`, ContentType: "application/json"},
-		},
 	})
+	resp := h.sub.Receive(t, ctx)
+	assert.Equal(t, "/a/b/c/d", resp.Route)
+	assert.Empty(t, resp.Data())
 
-	h.sub.ReceiveBulk(t, ctx)
-	h.sub.ReceiveBulk(t, ctx)
-	h.sub.ReceiveBulk(t, ctx)
-	h.sub.ReceiveBulk(t, ctx)
-
-	h.sub.PublishBulk(t, ctx, subscriber.PublishBulkRequest{
+	h.sub.Publish(t, ctx, subscriber.PublishRequest{
 		Daprd:      h.daprd,
 		PubSubName: "mypub",
 		Topic:      "b",
-		Entries: []subscriber.PublishBulkRequestEntry{
-			{EntryID: "1", Event: `{"id": 1}`, ContentType: "application/json"},
-			{EntryID: "2", Event: `{"id": 2}`, ContentType: "application/json"},
-			{EntryID: "3", Event: `{"id": 3}`, ContentType: "application/json"},
-			{EntryID: "4", Event: `{"id": 4}`, ContentType: "application/json"},
-		},
 	})
-
-	h.sub.ReceiveBulk(t, ctx)
-	h.sub.ReceiveBulk(t, ctx)
-	h.sub.ReceiveBulk(t, ctx)
-	h.sub.ReceiveBulk(t, ctx)
+	resp = h.sub.Receive(t, ctx)
+	assert.Equal(t, "/a/b/c/d", resp.Route)
+	assert.Empty(t, resp.Data())
 }

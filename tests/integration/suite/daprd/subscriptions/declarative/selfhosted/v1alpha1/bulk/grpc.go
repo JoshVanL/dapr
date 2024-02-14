@@ -69,8 +69,8 @@ metadata:
  name: nobulk
 spec:
  pubsubname: mypub
- topic: a
- route: /a
+ topic: b
+ route: /b
 `))
 
 	return []framework.Option{
@@ -96,10 +96,23 @@ func (g *grpc) Run(t *testing.T, ctx context.Context) {
 	})
 	require.NoError(t, err)
 	assert.Empty(t, len(resp.GetFailedEntries()))
+	g.sub.ReceiveBulk(t, ctx)
+	g.sub.ReceiveBulk(t, ctx)
+	g.sub.ReceiveBulk(t, ctx)
+	g.sub.ReceiveBulk(t, ctx)
+	g.sub.AssertBulkEventChanLen(t, 0)
 
-	g.sub.ReceiveBulk(t, ctx)
-	g.sub.ReceiveBulk(t, ctx)
-	g.sub.ReceiveBulk(t, ctx)
-	g.sub.ReceiveBulk(t, ctx)
+	resp, err = client.BulkPublishEventAlpha1(ctx, &rtv1.BulkPublishRequest{
+		PubsubName: "mypub",
+		Topic:      "b",
+		Entries: []*rtv1.BulkPublishRequestEntry{
+			{EntryId: "1", Event: []byte(`{"id": 1}`), ContentType: "application/json"},
+			{EntryId: "2", Event: []byte(`{"id": 2}`), ContentType: "application/json"},
+			{EntryId: "3", Event: []byte(`{"id": 3}`), ContentType: "application/json"},
+			{EntryId: "4", Event: []byte(`{"id": 4}`), ContentType: "application/json"},
+		},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, len(resp.GetFailedEntries()))
 	g.sub.AssertBulkEventChanLen(t, 0)
 }

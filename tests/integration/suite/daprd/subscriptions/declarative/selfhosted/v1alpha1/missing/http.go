@@ -11,12 +11,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package bulk
+package missing
 
 import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	rtv1 "github.com/dapr/dapr/pkg/proto/runtime/v1"
 	"github.com/dapr/dapr/tests/integration/framework"
 	"github.com/dapr/dapr/tests/integration/framework/process/daprd"
 	"github.com/dapr/dapr/tests/integration/framework/process/http/subscriber"
@@ -33,7 +37,7 @@ type http struct {
 }
 
 func (h *http) Setup(t *testing.T) []framework.Option {
-	h.sub = subscriber.New(t, subscriber.WithBulkRoutes("/a", "/b"))
+	h.sub = subscriber.New(t, subscriber.WithRoutes("/a", "/b", "/c"))
 
 	h.daprd = daprd.New(t,
 		daprd.WithAppPort(h.sub.Port()),
@@ -49,24 +53,20 @@ spec:
 apiVersion: dapr.io/v1alpha1
 kind: Subscription
 metadata:
- name: mysub
+ name: mysub1
 spec:
- pubsubname: mypub
+ pubsubname: anotherpub
  topic: a
  route: /a
- bulkSubscribe:
-  enabled: true
-  maxMessagesCount: 100
-  maxAwaitDurationMs: 40
 ---
 apiVersion: dapr.io/v1alpha1
 kind: Subscription
 metadata:
- name: nobulk
+ name: mysub2
 spec:
  pubsubname: mypub
- topic: b
- route: /b
+ topic: c
+ route: /c
 `))
 
 	return []framework.Option{
@@ -77,38 +77,29 @@ spec:
 func (h *http) Run(t *testing.T, ctx context.Context) {
 	h.daprd.WaitUntilRunning(t, ctx)
 
-	// TODO: @joshvanl: add support for bulk publish to in-memory pubsub.
-	h.sub.PublishBulk(t, ctx, subscriber.PublishBulkRequest{
+	meta, err := h.daprd.GRPCClient(t, ctx).GetMetadata(ctx, new(rtv1.GetMetadataRequest))
+	require.NoError(t, err)
+	assert.Len(t, meta.GetRegisteredComponents(), 1)
+	assert.Len(t, meta.GetSubscriptions(), 2)
+
+	h.sub.ExpectPublishError(t, ctx, subscriber.PublishRequest{
 		Daprd:      h.daprd,
-		PubSubName: "mypub",
+		PubSubName: "anotherpub",
 		Topic:      "a",
-		Entries: []subscriber.PublishBulkRequestEntry{
-			{EntryID: "1", Event: `{"id": 1}`, ContentType: "application/json"},
-			{EntryID: "2", Event: `{"id": 2}`, ContentType: "application/json"},
-			{EntryID: "3", Event: `{"id": 3}`, ContentType: "application/json"},
-			{EntryID: "4", Event: `{"id": 4}`, ContentType: "application/json"},
-		},
+		Data:       `{"status": "completed"}`,
 	})
 
-	h.sub.ReceiveBulk(t, ctx)
-	h.sub.ReceiveBulk(t, ctx)
-	h.sub.ReceiveBulk(t, ctx)
-	h.sub.ReceiveBulk(t, ctx)
-
-	h.sub.PublishBulk(t, ctx, subscriber.PublishBulkRequest{
+	h.sub.ExpectPublishNoReceive(t, ctx, subscriber.PublishRequest{
 		Daprd:      h.daprd,
 		PubSubName: "mypub",
 		Topic:      "b",
-		Entries: []subscriber.PublishBulkRequestEntry{
-			{EntryID: "1", Event: `{"id": 1}`, ContentType: "application/json"},
-			{EntryID: "2", Event: `{"id": 2}`, ContentType: "application/json"},
-			{EntryID: "3", Event: `{"id": 3}`, ContentType: "application/json"},
-			{EntryID: "4", Event: `{"id": 4}`, ContentType: "application/json"},
-		},
+		Data:       `{"status": "completed"}`,
 	})
 
-	h.sub.ReceiveBulk(t, ctx)
-	h.sub.ReceiveBulk(t, ctx)
-	h.sub.ReceiveBulk(t, ctx)
-	h.sub.ReceiveBulk(t, ctx)
+	h.sub.ExpectPublishReceive(t, ctx, subscriber.PublishRequest{
+		Daprd:      h.daprd,
+		PubSubName: "mypub",
+		Topic:      "c",
+		Data:       `{"status": "completed"}`,
+	})
 }

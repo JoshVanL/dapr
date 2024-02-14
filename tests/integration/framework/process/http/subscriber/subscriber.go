@@ -102,6 +102,20 @@ func New(t *testing.T, fopts ...Option) *Subscriber {
 			case <-closeCh:
 			case <-r.Context().Done():
 			}
+
+			type statusT struct {
+				EntryID string `json:"entryId"`
+				Status  string `json:"status"`
+			}
+			type respT struct {
+				Statuses []statusT `json:"statuses"`
+			}
+
+			var resp respT
+			for _, entry := range ce.Entries {
+				resp.Statuses = append(resp.Statuses, statusT{EntryID: entry.EntryId, Status: "SUCCESS"})
+			}
+			json.NewEncoder(w).Encode(resp)
 		}))
 	}
 
@@ -177,7 +191,7 @@ func (s *Subscriber) ExpectPublishReceive(t *testing.T, ctx context.Context, req
 func (s *Subscriber) ExpectPublishError(t *testing.T, ctx context.Context, req PublishRequest) {
 	t.Helper()
 	resp := s.publish(t, ctx, req)
-	require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
 	s.AssertEventChanLen(t, 0)
 }
 
