@@ -15,4 +15,5 @@ package selfhosted
 
 import (
 	_ "github.com/dapr/dapr/tests/integration/suite/daprd/subscriptions/declarative/selfhosted/v1alpha1"
+	_ "github.com/dapr/dapr/tests/integration/suite/daprd/subscriptions/declarative/selfhosted/v2alpha1"
 )
