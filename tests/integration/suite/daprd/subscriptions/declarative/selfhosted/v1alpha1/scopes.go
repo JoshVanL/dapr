@@ -188,5 +188,5 @@ func (s *scopes) Run(t *testing.T, ctx context.Context) {
 	s.sub.ExpectPublishReceive(t, ctx, s.daprd2, reqOnly2)
 	s.sub.ExpectPublishReceive(t, ctx, s.daprd2, reqBoth)
 
-	s.sub.EventChanLen(t, 0)
+	s.sub.AssertEventChanLen(t, 0)
 }
