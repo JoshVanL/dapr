@@ -59,7 +59,6 @@ spec:
  pubsubname: justpath
  topic: a
  routes:
-  default: foo
   rules:
   - path: /a
     match: ""
