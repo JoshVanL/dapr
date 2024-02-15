@@ -46,7 +46,7 @@ func (g *grpc) Setup(t *testing.T) []framework.Option {
 apiVersion: dapr.io/v1alpha1
 kind: Component
 metadata:
- name: justpath
+ name: mypub
 spec:
  type: pubsub.in-memory
  version: v1
@@ -56,11 +56,57 @@ kind: Subscription
 metadata:
  name: justpath
 spec:
- pubsubname: justpath
- topic: a
+ pubsubname: mypub
+ topic: justpath
  routes:
   rules:
-  - path: /a
+  - path: /justpath
+    match: ""
+---
+apiVersion: dapr.io/v2alpha1
+kind: Subscription
+metadata:
+ name: defaultandpath
+spec:
+ pubsubname: mypub
+ topic: defaultandpath
+ routes:
+  default: /abc
+  rules:
+  - path: /123
+    match: ""
+---
+apiVersion: dapr.io/v2alpha1
+kind: Subscription
+metadata:
+ name: multipaths
+spec:
+ pubsubname: mypub
+ topic: multipaths
+ routes:
+  rules:
+  - path: /xyz
+    match: ""
+  - path: /456
+    match: ""
+  - path: /789
+    match: ""
+---
+apiVersion: dapr.io/v2alpha1
+kind: Subscription
+metadata:
+ name: defaultandpaths
+spec:
+ pubsubname: mypub
+ topic: defaultandpaths
+ routes:
+  default: /def
+  rules:
+  - path: /zyz
+    match: ""
+  - path: /aaa
+    match: ""
+  - path: /bbb
     match: ""
 `))
 
@@ -74,10 +120,34 @@ func (g *grpc) Run(t *testing.T, ctx context.Context) {
 	client := g.daprd.GRPCClient(t, ctx)
 
 	_, err := client.PublishEvent(ctx, &rtv1.PublishEventRequest{
-		PubsubName: "justpath",
-		Topic:      "a",
+		PubsubName: "mypub",
+		Topic:      "justpath",
 	})
 	require.NoError(t, err)
 	resp := g.sub.Receive(t, ctx)
-	assert.Equal(t, "/a", resp.GetPath())
+	assert.Equal(t, "/justpath", resp.GetPath())
+
+	_, err = client.PublishEvent(ctx, &rtv1.PublishEventRequest{
+		PubsubName: "mypub",
+		Topic:      "defaultandpath",
+	})
+	require.NoError(t, err)
+	resp = g.sub.Receive(t, ctx)
+	assert.Equal(t, "/123", resp.GetPath())
+
+	_, err = client.PublishEvent(ctx, &rtv1.PublishEventRequest{
+		PubsubName: "mypub",
+		Topic:      "multipaths",
+	})
+	require.NoError(t, err)
+	resp = g.sub.Receive(t, ctx)
+	assert.Equal(t, "/xyz", resp.GetPath())
+
+	_, err = client.PublishEvent(ctx, &rtv1.PublishEventRequest{
+		PubsubName: "mypub",
+		Topic:      "defaultandpaths",
+	})
+	require.NoError(t, err)
+	resp = g.sub.Receive(t, ctx)
+	assert.Equal(t, "/zyz", resp.GetPath())
 }

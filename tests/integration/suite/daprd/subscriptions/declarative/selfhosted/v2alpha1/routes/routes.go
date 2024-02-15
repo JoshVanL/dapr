@@ -16,4 +16,5 @@ package v2alpha1
 import (
 	_ "github.com/dapr/dapr/tests/integration/suite/daprd/subscriptions/declarative/selfhosted/v2alpha1/routes/defaultroute"
 	_ "github.com/dapr/dapr/tests/integration/suite/daprd/subscriptions/declarative/selfhosted/v2alpha1/routes/emptymatch"
+	_ "github.com/dapr/dapr/tests/integration/suite/daprd/subscriptions/declarative/selfhosted/v2alpha1/routes/match"
 )
