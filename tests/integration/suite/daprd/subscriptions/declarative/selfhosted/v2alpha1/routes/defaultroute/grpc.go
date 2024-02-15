@@ -11,7 +11,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package route
+package defaultroute
 
 import (
 	"context"
@@ -45,55 +45,50 @@ func (g *grpc) Setup(t *testing.T) []framework.Option {
 		daprd.WithResourceFiles(`apiVersion: dapr.io/v1alpha1
 kind: Component
 metadata:
-  name: mypub
+ name: mypub
 spec:
-  type: pubsub.in-memory
-  version: v1
+ type: pubsub.in-memory
+ version: v1
 ---
-apiVersion: dapr.io/v1alpha1
+apiVersion: dapr.io/v2alpha1
 kind: Subscription
 metadata:
-  name: mysub1
+ name: mysub1
 spec:
-  pubsubname: mypub
-  topic: a
-  route: /a/b/c/d
+ pubsubname: mypub
+ topic: a
+ routes:
+  default: /a/b/c/d
 ---
-apiVersion: dapr.io/v1alpha1
+apiVersion: dapr.io/v2alpha1
 kind: Subscription
 metadata:
-  name: mysub2
+ name: mysub2
 spec:
-  pubsubname: mypub
-  topic: a
-  route: /a
+ pubsubname: mypub
+ topic: a
+ routes:
+  default: /a
 ---
-apiVersion: dapr.io/v1alpha1
+apiVersion: dapr.io/v2alpha1
 kind: Subscription
 metadata:
-  name: mysub3
+ name: mysub3
 spec:
-  pubsubname: mypub
-  topic: b
-  route: /a
+ pubsubname: mypub
+ topic: b
+ routes:
+  default: /a
 ---
-apiVersion: dapr.io/v1alpha1
+apiVersion: dapr.io/v2alpha1
 kind: Subscription
 metadata:
-  name: mysub4
+ name: mysub4
 spec:
-  pubsubname: mypub
-  topic: b
-  route: /d/c/b/a
----
-apiVersion: dapr.io/v1alpha1
-kind: Subscription
-metadata:
-  name: mysub5
-spec:
-  pubsubname: mypub
-  topic: b
-  route: /a/b/c/d
+ pubsubname: mypub
+ topic: b
+ routes:
+  default: /a/b/c/d
 `))
 
 	return []framework.Option{
@@ -114,8 +109,6 @@ func (g *grpc) Run(t *testing.T, ctx context.Context) {
 	assert.Equal(t, "/a/b/c/d", resp.GetPath())
 	assert.Empty(t, resp.GetData())
 
-	// Uses the first defined route for a topic when two declared routes match
-	// the topic.
 	_, err = client.PublishEvent(ctx, &rtv1.PublishEventRequest{
 		PubsubName: "mypub",
 		Topic:      "b",

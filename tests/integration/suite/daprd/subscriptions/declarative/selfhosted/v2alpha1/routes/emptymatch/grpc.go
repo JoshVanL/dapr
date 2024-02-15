@@ -11,7 +11,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package routes
+package emptymatch
 
 import (
 	"context"
@@ -42,49 +42,27 @@ func (g *grpc) Setup(t *testing.T) []framework.Option {
 	g.daprd = daprd.New(t,
 		daprd.WithAppPort(g.sub.Port(t)),
 		daprd.WithAppProtocol("grpc"),
-		daprd.WithResourceFiles(`apiVersion: dapr.io/v1alpha1
+		daprd.WithResourceFiles(`
+apiVersion: dapr.io/v1alpha1
 kind: Component
 metadata:
-  name: mypub
+ name: justpath
 spec:
-  type: pubsub.in-memory
-  version: v1
+ type: pubsub.in-memory
+ version: v1
 ---
-apiVersion: dapr.io/v1alpha1
+apiVersion: dapr.io/v2alpha1
 kind: Subscription
 metadata:
-  name: mysub1
+ name: justpath
 spec:
-  pubsubname: mypub
-  topic: a
-  route: /a/b/c/d
----
-apiVersion: dapr.io/v1alpha1
-kind: Subscription
-metadata:
-  name: mysub2
-spec:
-  pubsubname: mypub
-  topic: a
-  route: /a
----
-apiVersion: dapr.io/v1alpha1
-kind: Subscription
-metadata:
-  name: mysub3
-spec:
-  pubsubname: mypub
-  topic: b
-  route: /a
----
-apiVersion: dapr.io/v1alpha1
-kind: Subscription
-metadata:
-  name: mysub4
-spec:
-  pubsubname: mypub
-  topic: b
-  route: /a/b/c/d
+ pubsubname: justpath
+ topic: a
+ routes:
+  default: foo
+  rules:
+  - path: /a
+    match: ""
 `))
 
 	return []framework.Option{
@@ -97,20 +75,10 @@ func (g *grpc) Run(t *testing.T, ctx context.Context) {
 	client := g.daprd.GRPCClient(t, ctx)
 
 	_, err := client.PublishEvent(ctx, &rtv1.PublishEventRequest{
-		PubsubName: "mypub",
+		PubsubName: "justpath",
 		Topic:      "a",
 	})
 	require.NoError(t, err)
 	resp := g.sub.Receive(t, ctx)
-	assert.Equal(t, "/a/b/c/d", resp.GetPath())
-	assert.Empty(t, resp.GetData())
-
-	_, err = client.PublishEvent(ctx, &rtv1.PublishEventRequest{
-		PubsubName: "mypub",
-		Topic:      "b",
-	})
-	require.NoError(t, err)
-	resp = g.sub.Receive(t, ctx)
 	assert.Equal(t, "/a", resp.GetPath())
-	assert.Empty(t, resp.GetData())
 }

@@ -19,5 +19,6 @@ import (
 	_ "github.com/dapr/dapr/tests/integration/suite/daprd/subscriptions/declarative/selfhosted/v2alpha1/deadletter"
 	_ "github.com/dapr/dapr/tests/integration/suite/daprd/subscriptions/declarative/selfhosted/v2alpha1/missing"
 	_ "github.com/dapr/dapr/tests/integration/suite/daprd/subscriptions/declarative/selfhosted/v2alpha1/rawpayload"
+	_ "github.com/dapr/dapr/tests/integration/suite/daprd/subscriptions/declarative/selfhosted/v2alpha1/routes"
 	_ "github.com/dapr/dapr/tests/integration/suite/daprd/subscriptions/declarative/selfhosted/v2alpha1/scopes"
 )

@@ -11,7 +11,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package route
+package defaultroute
 
 import (
 	"context"
@@ -35,7 +35,9 @@ type http struct {
 }
 
 func (h *http) Setup(t *testing.T) []framework.Option {
-	h.sub = subscriber.New(t, subscriber.WithRoutes("/a", "/d/c/b/a", "/a/b/c/d"))
+	h.sub = subscriber.New(t, subscriber.WithRoutes(
+		"/a/b/c/d", "/a", "/b", "/d/c/b/a",
+	))
 
 	h.daprd = daprd.New(t,
 		daprd.WithAppPort(h.sub.Port()),
@@ -43,55 +45,50 @@ func (h *http) Setup(t *testing.T) []framework.Option {
 		daprd.WithResourceFiles(`apiVersion: dapr.io/v1alpha1
 kind: Component
 metadata:
-  name: mypub
+ name: mypub
 spec:
-  type: pubsub.in-memory
-  version: v1
+ type: pubsub.in-memory
+ version: v1
 ---
-apiVersion: dapr.io/v1alpha1
+apiVersion: dapr.io/v2alpha1
 kind: Subscription
 metadata:
-  name: mysub1
+ name: mysub1
 spec:
-  pubsubname: mypub
-  topic: a
-  route: /a/b/c/d
+ pubsubname: mypub
+ topic: a
+ routes:
+  default: /a/b/c/d
 ---
-apiVersion: dapr.io/v1alpha1
+apiVersion: dapr.io/v2alpha1
 kind: Subscription
 metadata:
-  name: mysub2
+ name: mysub2
 spec:
-  pubsubname: mypub
-  topic: a
-  route: /a
+ pubsubname: mypub
+ topic: a
+ routes:
+  default: /a
 ---
-apiVersion: dapr.io/v1alpha1
+apiVersion: dapr.io/v2alpha1
 kind: Subscription
 metadata:
-  name: mysub3
+ name: mysub3
 spec:
-  pubsubname: mypub
-  topic: b
-  route: /a
+ pubsubname: mypub
+ topic: b
+ routes:
+  default: /b
 ---
-apiVersion: dapr.io/v1alpha1
+apiVersion: dapr.io/v2alpha1
 kind: Subscription
 metadata:
-  name: mysub5
+ name: mysub4
 spec:
-  pubsubname: mypub
-  topic: b
-  route: /d/c/b/a
----
-apiVersion: dapr.io/v1alpha1
-kind: Subscription
-metadata:
-  name: mysub6
-spec:
-  pubsubname: mypub
-  topic: b
-  route: /a/b/c/d
+ pubsubname: mypub
+ topic: b
+ routes:
+  default: /d/c/b/a
 `))
 
 	return []framework.Option{
@@ -111,14 +108,12 @@ func (h *http) Run(t *testing.T, ctx context.Context) {
 	assert.Equal(t, "/a/b/c/d", resp.Route)
 	assert.Empty(t, resp.Data())
 
-	// Uses the first defined route for a topic when two declared routes match
-	// the topic.
 	h.sub.Publish(t, ctx, subscriber.PublishRequest{
 		Daprd:      h.daprd,
 		PubSubName: "mypub",
 		Topic:      "b",
 	})
 	resp = h.sub.Receive(t, ctx)
-	assert.Equal(t, "/a", resp.Route)
+	assert.Equal(t, "/b", resp.Route)
 	assert.Empty(t, resp.Data())
 }
