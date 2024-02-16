@@ -51,7 +51,7 @@ type PublishRequest struct {
 type PublishBulkRequestEntry struct {
 	EntryID     string `json:"entryId"`
 	Event       string `json:"event"`
-	ContentType string `json:"contentType",omitempty`
+	ContentType string `json:"contentType,omitempty"`
 }
 
 type PublishBulkRequest struct {
@@ -81,7 +81,7 @@ func New(t *testing.T, fopts ...Option) *Subscriber {
 	inBulk := make(chan *pubsub.BulkSubscribeEnvelope, 100)
 	closeCh := make(chan struct{})
 
-	var appOpts []app.Option
+	appOpts := make([]app.Option, 0, len(opts.routes)+len(opts.bulkRoutes)+len(opts.handlerFuncs))
 	for _, route := range opts.routes {
 		appOpts = append(appOpts, app.WithHandlerFunc(route, func(w http.ResponseWriter, r *http.Request) {
 			var ce event.Event
@@ -190,6 +190,7 @@ func (s *Subscriber) ExpectPublishReceive(t *testing.T, ctx context.Context, req
 
 func (s *Subscriber) ExpectPublishError(t *testing.T, ctx context.Context, req PublishRequest) {
 	t.Helper()
+	//nolint:bodyclose
 	resp := s.publish(t, ctx, req)
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
 	s.AssertEventChanLen(t, 0)
@@ -203,12 +204,14 @@ func (s *Subscriber) ExpectPublishNoReceive(t *testing.T, ctx context.Context, r
 
 func (s *Subscriber) Publish(t *testing.T, ctx context.Context, req PublishRequest) {
 	t.Helper()
+	//nolint:bodyclose
 	resp := s.publish(t, ctx, req)
 	require.Equal(t, http.StatusNoContent, resp.StatusCode)
 }
 
 func (s *Subscriber) PublishBulk(t *testing.T, ctx context.Context, req PublishBulkRequest) {
 	t.Helper()
+	//nolint:bodyclose
 	resp := s.publishBulk(t, ctx, req)
 	require.Equal(t, http.StatusNoContent, resp.StatusCode)
 }
