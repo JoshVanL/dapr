@@ -23,25 +23,27 @@ import (
 	rtv1 "github.com/dapr/dapr/pkg/proto/runtime/v1"
 	"github.com/dapr/dapr/tests/integration/framework"
 	"github.com/dapr/dapr/tests/integration/framework/process/daprd"
-	"github.com/dapr/dapr/tests/integration/framework/process/grpc/subscriber"
+	"github.com/dapr/dapr/tests/integration/framework/process/http/subscriber"
 	"github.com/dapr/dapr/tests/integration/suite"
 )
 
 func init() {
-	suite.Register(new(grpc))
+	suite.Register(new(http))
 }
 
-type grpc struct {
+type http struct {
 	daprd *daprd.Daprd
 	sub   *subscriber.Subscriber
 }
 
-func (g *grpc) Setup(t *testing.T) []framework.Option {
-	g.sub = subscriber.New(t)
+func (h *http) Setup(t *testing.T) []framework.Option {
+	h.sub = subscriber.New(t, subscriber.WithRoutes(
+		"/aaa", "/type", "/foo", "/bar", "/topic", "/123", "/456", "/order7def", "/order7rule",
+	))
 
-	g.daprd = daprd.New(t,
-		daprd.WithAppPort(g.sub.Port(t)),
-		daprd.WithAppProtocol("grpc"),
+	h.daprd = daprd.New(t,
+		daprd.WithAppPort(h.sub.Port()),
+		daprd.WithAppProtocol("http"),
 		daprd.WithResourceFiles(`
 apiVersion: dapr.io/v1alpha1
 kind: Component
@@ -142,48 +144,49 @@ spec:
 `))
 
 	return []framework.Option{
-		framework.WithProcesses(g.sub, g.daprd),
+		framework.WithProcesses(h.sub, h.daprd),
 	}
 }
 
-func (g *grpc) Run(t *testing.T, ctx context.Context) {
-	g.daprd.WaitUntilRunning(t, ctx)
-	client := g.daprd.GRPCClient(t, ctx)
+func (h *http) Run(t *testing.T, ctx context.Context) {
+	h.daprd.WaitUntilRunning(t, ctx)
+	client := h.daprd.GRPCClient(t, ctx)
 
 	_, err := client.PublishEvent(ctx, &rtv1.PublishEventRequest{
 		PubsubName: "mypub",
 		Topic:      "type",
 	})
 	require.NoError(t, err)
-	resp := g.sub.Receive(t, ctx)
-	assert.Equal(t, "/type", resp.GetPath())
+	resp := h.sub.Receive(t, ctx)
+	assert.Equal(t, "/type", resp.Route)
 
 	_, err = client.PublishEvent(ctx, &rtv1.PublishEventRequest{
 		PubsubName: "mypub",
 		Topic:      "order1",
 	})
 	require.NoError(t, err)
-	resp = g.sub.Receive(t, ctx)
-	assert.Equal(t, "/type", resp.GetPath())
+	resp = h.sub.Receive(t, ctx)
+	assert.Equal(t, "/type", resp.Route)
 
 	_, err = client.PublishEvent(ctx, &rtv1.PublishEventRequest{
 		PubsubName: "mypub",
 		Topic:      "order2",
 	})
 	require.NoError(t, err)
-	resp = g.sub.Receive(t, ctx)
-	assert.Equal(t, "/topic", resp.GetPath())
+	resp = h.sub.Receive(t, ctx)
+	assert.Equal(t, "/topic", resp.Route)
 
 	_, err = client.PublishEvent(ctx, &rtv1.PublishEventRequest{
 		PubsubName: "mypub",
 		Topic:      "order3",
 	})
 	require.NoError(t, err)
-	resp = g.sub.Receive(t, ctx)
-	assert.Equal(t, "/123", resp.GetPath())
+	resp = h.sub.Receive(t, ctx)
+	assert.Equal(t, "/123", resp.Route)
 
-	g.sub.ExpectPublishNoReceive(t, ctx, g.daprd, &rtv1.PublishEventRequest{
-		PubsubName: "mypub",
+	h.sub.ExpectPublishNoReceive(t, ctx, subscriber.PublishRequest{
+		Daprd:      h.daprd,
+		PubSubName: "mypub",
 		Topic:      "order4",
 	})
 
@@ -192,6 +195,6 @@ func (g *grpc) Run(t *testing.T, ctx context.Context) {
 		Topic:      "order7",
 	})
 	require.NoError(t, err)
-	resp = g.sub.Receive(t, ctx)
-	assert.Equal(t, "/order7rule", resp.GetPath())
+	resp = h.sub.Receive(t, ctx)
+	assert.Equal(t, "/order7rule", resp.Route)
 }
