@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"runtime"
 	"strconv"
 	"testing"
 	"time"
@@ -51,10 +50,6 @@ type protobufFormat struct {
 }
 
 func (p *protobufFormat) Setup(t *testing.T) []framework.Option {
-	if runtime.GOOS == "windows" {
-		t.Skip("Skipping test on Windows due to SQLite limitations")
-	}
-
 	// Init placement with minimum API level of 20
 	p.place = placement.New(t, placement.WithMinAPILevel(20))
 
