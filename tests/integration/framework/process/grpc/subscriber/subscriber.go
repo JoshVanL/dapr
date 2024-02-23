@@ -52,6 +52,7 @@ func New(t *testing.T, fopts ...Option) *Subscriber {
 		inBulkCh: inBulkCh,
 		closeCh:  closeCh,
 		app: app.New(t,
+			app.WithListTopicSubscriptions(opts.listTopicSubFn),
 			app.WithOnTopicEventFn(func(ctx context.Context, in *rtv1.TopicEventRequest) (*rtv1.TopicEventResponse, error) {
 				select {
 				case inCh <- in:
