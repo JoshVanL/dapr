@@ -21,14 +21,12 @@ import (
 	grpcretry "github.com/grpc-ecosystem/go-grpc-middleware/retry"
 
 	compapi "github.com/dapr/dapr/pkg/apis/components/v1alpha1"
-	config "github.com/dapr/dapr/pkg/config/modes"
 	"github.com/dapr/dapr/pkg/internal/loader"
 	operatorv1pb "github.com/dapr/dapr/pkg/proto/operator/v1"
 )
 
 // components loads components from a Kubernetes environment.
 type components struct {
-	config    config.KubernetesConfig
 	client    operatorv1pb.OperatorClient
 	namespace string
 	podName   string
@@ -37,14 +35,12 @@ type components struct {
 // NewComponents returns a new Kubernetes loader.
 func NewComponents(opts Options) loader.Loader[compapi.Component] {
 	return &components{
-		config:    opts.Config,
 		client:    opts.Client,
 		namespace: opts.Namespace,
 		podName:   opts.PodName,
 	}
 }
 
-// Load loads dapr components from a given directory.
 func (c *components) Load(ctx context.Context) ([]compapi.Component, error) {
 	resp, err := c.client.ListComponents(ctx, &operatorv1pb.ListComponentsRequest{
 		Namespace: c.namespace,

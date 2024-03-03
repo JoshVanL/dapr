@@ -14,181 +14,46 @@ limitations under the License.
 package disk
 
 import (
-	"bufio"
-	"bytes"
 	"context"
-	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
-
-	"k8s.io/apimachinery/pkg/api/validation/path"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sigs.k8s.io/yaml"
 
 	"github.com/dapr/dapr/pkg/internal/loader"
-	"github.com/dapr/kit/logger"
-	"github.com/dapr/kit/utils"
 )
-
-var log = logger.NewLogger("dapr.runtime.loader.disk")
-
-const yamlSeparator = "\n---"
 
 // disk loads a specific manifest kind from a folder.
 type disk[T loader.Manifest] struct {
-	zvFn  func() T
-	kind  string
-	paths []string
+	kind       string
+	apiVersion string
+	dirs       []string
 }
 
 // New creates a new manifest loader for the given paths and kind.
-func New[T loader.Manifest](paths ...string) loader.Loader[T] {
+func New[T loader.Manifest](dirs ...string) *disk[T] {
 	var zero T
 	return &disk[T]{
-		paths: paths,
-		kind:  zero.Kind(),
+		dirs:       dirs,
+		kind:       zero.Kind(),
+		apiVersion: zero.APIVersion(),
 	}
-}
-
-// SetZeroValueFn sets the function that returns the "zero" object of the given type.
-// This can be used to set default values before unmarshalling.
-func (d *disk[T]) SetZeroValueFn(zvFn func() T) {
-	d.zvFn = zvFn
 }
 
 // load loads manifests for the given directory.
 func (d *disk[T]) Load(context.Context) ([]T, error) {
-	manifests := []T{}
-	for _, path := range d.paths {
-		loaded, err := d.loadManifestsFromPath(path)
-		if err != nil {
-			return nil, err
-		}
-		if len(loaded) > 0 {
-			manifests = append(manifests, loaded...)
-		}
-	}
-	return manifests, nil
-}
-
-func (d *disk[T]) loadManifestsFromPath(path string) ([]T, error) {
-	files, err := os.ReadDir(path)
+	set, err := d.loadWithOrder()
 	if err != nil {
 		return nil, err
 	}
 
-	manifests := make([]T, 0)
-
-	for _, file := range files {
-		if !file.IsDir() {
-			fileName := file.Name()
-			if !utils.IsYaml(fileName) {
-				log.Warnf("A non-YAML %s file %s was detected, it will not be loaded", d.kind, fileName)
-				continue
-			}
-			fileManifests := d.loadManifestsFromFile(filepath.Join(path, fileName))
-			manifests = append(manifests, fileManifests...)
-		}
-	}
-
-	return manifests, nil
+	return set.ts, nil
 }
 
-func (d *disk[T]) loadManifestsFromFile(manifestPath string) []T {
-	var errors []error
+func (d *disk[T]) loadWithOrder() (*manifestSet[T], error) {
+	set := &manifestSet[T]{d: d}
 
-	manifests := make([]T, 0)
-	b, err := os.ReadFile(manifestPath)
-	if err != nil {
-		log.Warnf("daprd load %s error when reading file %s: %v", d.kind, manifestPath, err)
-		return manifests
-	}
-	manifests, errors = d.decodeYaml(b)
-	for _, err := range errors {
-		log.Warnf("daprd load %s error when parsing manifests yaml resource in %s: %v", d.kind, manifestPath, err)
-	}
-	return manifests
-}
-
-type typeInfo struct {
-	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata,omitempty"`
-}
-
-// decodeYaml decodes the yaml document.
-func (d *disk[T]) decodeYaml(b []byte) ([]T, []error) {
-	list := make([]T, 0)
-	errors := []error{}
-	scanner := bufio.NewScanner(bytes.NewReader(b))
-	scanner.Split(splitYamlDoc)
-
-	for {
-		if !scanner.Scan() {
-			err := scanner.Err()
-			if err != nil {
-				errors = append(errors, err)
-				continue
-			}
-
-			break
+	for _, dir := range d.dirs {
+		if err := set.loadManifestsFromDirectory(dir); err != nil {
+			return nil, err
 		}
-
-		scannerBytes := scanner.Bytes()
-		var ti typeInfo
-		if err := yaml.Unmarshal(scannerBytes, &ti); err != nil {
-			errors = append(errors, err)
-			continue
-		}
-
-		if ti.Kind != d.kind {
-			continue
-		}
-
-		if errs := path.IsValidPathSegmentName(ti.Name); len(errs) > 0 {
-			errors = append(errors, fmt.Errorf("invalid name %q for %q: %s", ti.Name, d.kind, strings.Join(errs, "; ")))
-			continue
-		}
-
-		var manifest T
-		if d.zvFn != nil {
-			manifest = d.zvFn()
-		}
-		if err := yaml.Unmarshal(scannerBytes, &manifest); err != nil {
-			errors = append(errors, err)
-			continue
-		}
-		list = append(list, manifest)
 	}
 
-	return list, errors
-}
-
-// splitYamlDoc - splits the yaml docs.
-func splitYamlDoc(data []byte, atEOF bool) (advance int, token []byte, err error) {
-	if atEOF && len(data) == 0 {
-		return 0, nil, nil
-	}
-	sep := len([]byte(yamlSeparator))
-	if i := bytes.Index(data, []byte(yamlSeparator)); i >= 0 {
-		i += sep
-		after := data[i:]
-
-		if len(after) == 0 {
-			if atEOF {
-				return len(data), data[:len(data)-sep], nil
-			}
-			return 0, nil, nil
-		}
-		if j := bytes.IndexByte(after, '\n'); j >= 0 {
-			return i + j + 1, data[0 : i-sep], nil
-		}
-		return 0, nil, nil
-	}
-	// If we're at EOF, we have a final, non-terminated line. Return it.
-	if atEOF {
-		return len(data), data, nil
-	}
-	// Request more data.
-	return 0, nil, nil
+	return set, nil
 }

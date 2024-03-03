@@ -75,3 +75,128 @@ name: statestore`
 		assert.Empty(t, components)
 	})
 }
+
+func Test_loadWithOrder(t *testing.T) {
+	t.Run("no file should return empty set", func(t *testing.T) {
+		tmp := t.TempDir()
+		d := New[compapi.Component](tmp)
+		set, err := d.loadWithOrder()
+		require.NoError(t, err)
+		assert.Empty(t, set.order)
+		assert.Empty(t, set.ts)
+	})
+
+	t.Run("single manifest file should return", func(t *testing.T) {
+		tmp := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(tmp, "test-component.yaml"), []byte(`
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: statestore
+spec:
+  type: state.couchbase
+`), fs.FileMode(0o600)))
+
+		d := New[compapi.Component](tmp)
+		set, err := d.loadWithOrder()
+		require.NoError(t, err)
+		assert.Equal(t, []manifestOrder{
+			{dirIndex: 0, fileIndex: 0, manifestIndex: 0},
+		}, set.order)
+		assert.Len(t, set.ts, 1)
+	})
+
+	t.Run("3 manifest file should have order set", func(t *testing.T) {
+		tmp := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(tmp, "test-component.yaml"), []byte(`
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: statestore
+spec:
+  type: state.couchbase
+---
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: statestore
+spec:
+  type: state.couchbase
+---
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: statestore
+spec:
+  type: state.couchbase
+`), fs.FileMode(0o600)))
+
+		d := New[compapi.Component](tmp)
+		set, err := d.loadWithOrder()
+		require.NoError(t, err)
+		assert.Equal(t, []manifestOrder{
+			{dirIndex: 0, fileIndex: 0, manifestIndex: 0},
+			{dirIndex: 0, fileIndex: 0, manifestIndex: 1},
+			{dirIndex: 0, fileIndex: 0, manifestIndex: 2},
+		}, set.order)
+		assert.Len(t, set.ts, 3)
+	})
+
+	t.Run("3 dirs, 3 files, 3 manifests should return order. Skips manifests of different type", func(t *testing.T) {
+		tmp1, tmp2, tmp3 := t.TempDir(), t.TempDir(), t.TempDir()
+
+		for _, dir := range []string{tmp1, tmp2, tmp3} {
+			for _, file := range []string{"1.yaml", "2.yaml", "3.yaml"} {
+				require.NoError(t, os.WriteFile(filepath.Join(dir, file), []byte(`
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: statestore
+spec:
+  type: state.couchbase
+---
+apiVersion: dapr.io/v1alpha1
+kind: Subscription
+metadata:
+  name: statestore
+spec:
+  type: state.couchbase
+---
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: statestore
+spec:
+  type: state.couchbase
+`), fs.FileMode(0o600)))
+			}
+		}
+
+		d := New[compapi.Component](tmp1, tmp2, tmp3)
+		set, err := d.loadWithOrder()
+		require.NoError(t, err)
+		assert.Equal(t, []manifestOrder{
+			{dirIndex: 0, fileIndex: 0, manifestIndex: 0},
+			{dirIndex: 0, fileIndex: 0, manifestIndex: 2},
+			{dirIndex: 0, fileIndex: 1, manifestIndex: 0},
+			{dirIndex: 0, fileIndex: 1, manifestIndex: 2},
+			{dirIndex: 0, fileIndex: 2, manifestIndex: 0},
+			{dirIndex: 0, fileIndex: 2, manifestIndex: 2},
+
+			{dirIndex: 1, fileIndex: 0, manifestIndex: 0},
+			{dirIndex: 1, fileIndex: 0, manifestIndex: 2},
+			{dirIndex: 1, fileIndex: 1, manifestIndex: 0},
+			{dirIndex: 1, fileIndex: 1, manifestIndex: 2},
+			{dirIndex: 1, fileIndex: 2, manifestIndex: 0},
+			{dirIndex: 1, fileIndex: 2, manifestIndex: 2},
+
+			{dirIndex: 2, fileIndex: 0, manifestIndex: 0},
+			{dirIndex: 2, fileIndex: 0, manifestIndex: 2},
+			{dirIndex: 2, fileIndex: 1, manifestIndex: 0},
+			{dirIndex: 2, fileIndex: 1, manifestIndex: 2},
+			{dirIndex: 2, fileIndex: 2, manifestIndex: 0},
+			{dirIndex: 2, fileIndex: 2, manifestIndex: 2},
+		}, set.order)
+		assert.Len(t, set.ts, 18)
+	})
+}

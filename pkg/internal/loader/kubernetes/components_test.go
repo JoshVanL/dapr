@@ -27,8 +27,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/dapr/dapr/pkg/apis/components/v1alpha1"
-	subscriptions "github.com/dapr/dapr/pkg/apis/subscriptions/v1alpha1"
-	config "github.com/dapr/dapr/pkg/config/modes"
+	subapi "github.com/dapr/dapr/pkg/apis/subscriptions/v1alpha1"
 	operatorv1pb "github.com/dapr/dapr/pkg/proto/operator/v1"
 )
 
@@ -57,9 +56,9 @@ func (o *mockOperator) ListComponents(ctx context.Context, in *operatorv1pb.List
 }
 
 func (o *mockOperator) ListSubscriptionsV2(ctx context.Context, in *operatorv1pb.ListSubscriptionsRequest) (*operatorv1pb.ListSubscriptionsResponse, error) {
-	subscription := subscriptions.Subscription{}
+	subscription := subapi.Subscription{}
 	subscription.ObjectMeta.Name = "test"
-	subscription.Spec = subscriptions.SubscriptionSpec{
+	subscription.Spec = subapi.SubscriptionSpec{
 		Topic:      "topic",
 		Route:      "route",
 		Pubsubname: "pubsub",
@@ -94,11 +93,9 @@ func TestLoadComponents(t *testing.T) {
 	}()
 
 	request := &components{
-		client: getOperatorClient(fmt.Sprintf("localhost:%d", port)),
-		config: config.KubernetesConfig{
-			ControlPlaneAddress: fmt.Sprintf("localhost:%v", port),
-		},
-		podName: "testPodName",
+		client:    getOperatorClient(fmt.Sprintf("localhost:%d", port)),
+		podName:   "testPodName",
+		namespace: "default",
 	}
 
 	response, err := request.Load(context.Background())

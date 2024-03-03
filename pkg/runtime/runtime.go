@@ -996,7 +996,6 @@ func (a *DaprRuntime) loadComponents(ctx context.Context) error {
 	switch a.runtimeConfig.mode {
 	case modes.KubernetesMode:
 		loader = kubernetes.NewComponents(kubernetes.Options{
-			Config:    a.runtimeConfig.kubernetes,
 			Client:    a.operatorClient,
 			Namespace: a.namespace,
 			PodName:   a.podName,
@@ -1060,7 +1059,6 @@ func (a *DaprRuntime) loadHTTPEndpoints(ctx context.Context) error {
 	switch a.runtimeConfig.mode {
 	case modes.KubernetesMode:
 		loader = kubernetes.NewHTTPEndpoints(kubernetes.Options{
-			Config:    a.runtimeConfig.kubernetes,
 			Client:    a.operatorClient,
 			Namespace: a.namespace,
 			PodName:   a.podName,

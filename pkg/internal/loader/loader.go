@@ -17,6 +17,7 @@ import "context"
 
 type Manifest interface {
 	Kind() string
+	APIVersion() string
 }
 
 // Loader loads manifest-like files.
