@@ -26,7 +26,7 @@ import (
 	"github.com/dapr/dapr/pkg/runtime/processor/state"
 )
 
-type component struct {
+type components struct {
 	store *compstore.ComponentStore
 	proc  *processor.Processor
 	auth  *authorizer.Authorizer
@@ -37,7 +37,7 @@ type component struct {
 // the generic reconciler.
 //
 //nolint:unused
-func (c *component) update(ctx context.Context, comp componentsapi.Component) {
+func (c *components) update(ctx context.Context, comp componentsapi.Component) {
 	if !c.verify(comp) {
 		return
 	}
@@ -74,7 +74,7 @@ func (c *component) update(ctx context.Context, comp componentsapi.Component) {
 }
 
 //nolint:unused
-func (c *component) delete(comp componentsapi.Component) {
+func (c *components) delete(_ context.Context, comp componentsapi.Component) {
 	if !c.verify(comp) {
 		return
 	}
@@ -85,7 +85,7 @@ func (c *component) delete(comp componentsapi.Component) {
 }
 
 //nolint:unused
-func (c *component) verify(vcomp componentsapi.Component) bool {
+func (c *components) verify(vcomp componentsapi.Component) bool {
 	toverify := []componentsapi.Component{vcomp}
 	if comp, ok := c.store.GetComponent(vcomp.Name); ok {
 		toverify = append(toverify, comp)

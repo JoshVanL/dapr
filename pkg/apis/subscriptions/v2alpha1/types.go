@@ -16,6 +16,7 @@ package v2alpha1
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/dapr/dapr/pkg/apis/common"
 	"github.com/dapr/dapr/pkg/apis/subscriptions"
 )
 
@@ -104,4 +105,36 @@ func (Subscription) Kind() string {
 
 func (Subscription) APIVersion() string {
 	return subscriptions.GroupName + "/" + Version
+}
+
+func (s Subscription) GetName() string {
+	return s.Name
+}
+
+func (s Subscription) GetNamespace() string {
+	return s.Namespace
+}
+
+func (s Subscription) GetSecretStore() string {
+	return ""
+}
+
+func (s Subscription) LogName() string {
+	return s.GetName()
+}
+
+func (s Subscription) NameValuePairs() []common.NameValuePair {
+	return nil
+}
+
+// EmptyMetaDeepCopy returns a new instance of the Subscription type with the
+// TypeMeta's Kind and APIVersion fields set.
+func (s Subscription) EmptyMetaDeepCopy() metav1.Object {
+	n := s.DeepCopy()
+	n.TypeMeta = metav1.TypeMeta{
+		Kind:       Kind,
+		APIVersion: subscriptions.GroupName + "/" + Version,
+	}
+	n.ObjectMeta = metav1.ObjectMeta{Name: s.Name}
+	return n
 }

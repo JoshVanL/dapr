@@ -19,13 +19,18 @@ import (
 	"sync/atomic"
 
 	internalloader "github.com/dapr/dapr/pkg/internal/loader"
-	loaderdisk "github.com/dapr/dapr/pkg/internal/loader/disk"
 	operatorpb "github.com/dapr/dapr/pkg/proto/operator/v1"
 	"github.com/dapr/dapr/pkg/runtime/hotreload/differ"
 	"github.com/dapr/dapr/pkg/runtime/hotreload/loader"
 	"github.com/dapr/dapr/pkg/runtime/hotreload/loader/store"
 	"github.com/dapr/kit/events/batcher"
 )
+
+type resourceOptions[T differ.Resource] struct {
+	batcher *batcher.Batcher[int]
+	store   store.Store[T]
+	loader  internalloader.Loader[T]
+}
 
 // resource is a generic implementation of a disk resource loader. resource
 // will watch and load resources from disk.
@@ -39,11 +44,11 @@ type resource[T differ.Resource] struct {
 	closed  atomic.Bool
 }
 
-func newResource[T differ.Resource](opts Options, batcher *batcher.Batcher[int], store store.Store[T]) *resource[T] {
+func newResource[T differ.Resource](opts resourceOptions[T]) *resource[T] {
 	return &resource[T]{
-		batcher:    batcher,
-		store:      store,
-		diskLoader: loaderdisk.New[T](opts.Dirs...),
+		batcher:    opts.batcher,
+		store:      opts.store,
+		diskLoader: opts.loader,
 		closeCh:    make(chan struct{}),
 	}
 }

@@ -114,6 +114,7 @@ func (h *http) Setup(t *testing.T) []framework.Option {
 }
 
 func (h *http) Run(t *testing.T, ctx context.Context) {
+	h.operator.WaitUntilRunning(t, ctx)
 	h.daprd.WaitUntilRunning(t, ctx)
 
 	// TODO: @joshvanl: add support for bulk publish to in-memory pubsub.

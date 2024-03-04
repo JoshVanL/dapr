@@ -47,6 +47,7 @@ import (
 	"github.com/dapr/dapr/pkg/api/universal"
 	compapi "github.com/dapr/dapr/pkg/apis/components/v1alpha1"
 	endpointapi "github.com/dapr/dapr/pkg/apis/httpEndpoint/v1alpha1"
+	subapi "github.com/dapr/dapr/pkg/apis/subscriptions/v2alpha1"
 	"github.com/dapr/dapr/pkg/apphealth"
 	"github.com/dapr/dapr/pkg/components"
 	"github.com/dapr/dapr/pkg/components/pluggable"
@@ -192,7 +193,6 @@ func newDaprRuntime(ctx context.Context,
 		Resiliency:     resiliencyProvider,
 		Mode:           runtimeConfig.mode,
 		PodName:        podName,
-		Standalone:     runtimeConfig.standalone,
 		OperatorClient: operatorClient,
 		GRPC:           grpc,
 		Channels:       channels,
@@ -489,6 +489,12 @@ func (a *DaprRuntime) initRuntime(ctx context.Context) error {
 	}
 
 	a.flushOutstandingHTTPEndpoints(ctx)
+
+	err = a.loadDeclarativeSubscriptions(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to load declarative subscriptions: %s", err)
+	}
+	a.flushOutstandingSubscriptions(ctx)
 
 	if err = a.channels.Refresh(); err != nil {
 		log.Warnf("failed to open %s channel to app: %s", string(a.runtimeConfig.appConnectionConfig.Protocol), err)
@@ -1006,7 +1012,7 @@ func (a *DaprRuntime) loadComponents(ctx context.Context) error {
 		return nil
 	}
 
-	log.Info("Loading components…")
+	log.Info("Loading Components…")
 	comps, err := loader.Load(ctx)
 	if err != nil {
 		return err
@@ -1037,20 +1043,58 @@ func (a *DaprRuntime) loadComponents(ctx context.Context) error {
 	return nil
 }
 
+func (a *DaprRuntime) loadDeclarativeSubscriptions(ctx context.Context) error {
+	var loader loader.Loader[subapi.Subscription]
+
+	switch a.runtimeConfig.mode {
+	case modes.KubernetesMode:
+		loader = kubernetes.NewSubscriptions(kubernetes.Options{
+			Client:    a.operatorClient,
+			Namespace: a.namespace,
+			PodName:   a.podName,
+		})
+	case modes.StandaloneMode:
+		loader = disk.NewSubscriptions(a.runtimeConfig.standalone.ResourcesPath...)
+	default:
+		return nil
+	}
+
+	log.Info("Loading Declarative Subscriptions…")
+	subs, err := loader.Load(ctx)
+	if err != nil {
+		return err
+	}
+
+	for _, s := range subs {
+		log.Infof("Found Subscription: %s", s.Name)
+		if !a.processor.AddPendingSubscription(ctx, s) {
+			return nil
+		}
+	}
+
+	return nil
+}
+
 func (a *DaprRuntime) flushOutstandingHTTPEndpoints(ctx context.Context) {
 	log.Info("Waiting for all outstanding http endpoints to be processed…")
 	// We flush by sending a no-op http endpoint. Since the processHTTPEndpoints goroutine only reads one http endpoint at a time,
 	// We know that once the no-op http endpoint is read from the channel, all previous http endpoints will have been fully processed.
 	a.processor.AddPendingEndpoint(ctx, endpointapi.HTTPEndpoint{})
-	log.Info("All outstanding http endpoints processed")
+	log.Info("All outstanding HTTPEndpoints processed")
 }
 
 func (a *DaprRuntime) flushOutstandingComponents(ctx context.Context) {
-	log.Info("Waiting for all outstanding components to be processed…")
+	log.Info("Waiting for all outstanding Components to be processed…")
 	// We flush by sending a no-op component. Since the processComponents goroutine only reads one component at a time,
 	// We know that once the no-op component is read from the channel, all previous components will have been fully processed.
 	a.processor.AddPendingComponent(ctx, compapi.Component{})
-	log.Info("All outstanding components processed")
+	log.Info("All outstanding Components processed")
+}
+
+func (a *DaprRuntime) flushOutstandingSubscriptions(ctx context.Context) {
+	log.Info("Waiting for all outstanding Subscriptions to be processed…")
+	a.processor.AddPendingSubscription(ctx, subapi.Subscription{})
+	log.Info("All outstanding declarative Subscriptions processed")
 }
 
 func (a *DaprRuntime) loadHTTPEndpoints(ctx context.Context) error {
@@ -1069,7 +1113,7 @@ func (a *DaprRuntime) loadHTTPEndpoints(ctx context.Context) error {
 		return nil
 	}
 
-	log.Info("Loading endpoints…")
+	log.Info("Loading HTTPEndpoints…")
 	endpoints, err := loader.Load(ctx)
 	if err != nil {
 		return err
