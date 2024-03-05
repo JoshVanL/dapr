@@ -16,12 +16,9 @@ package pubsub
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"sync"
-
-	"k8s.io/apimachinery/pkg/util/sets"
 
 	"github.com/dapr/components-contrib/contenttype"
 	contribpubsub "github.com/dapr/components-contrib/pubsub"
@@ -44,23 +41,7 @@ import (
 	"github.com/dapr/kit/logger"
 )
 
-var (
-	log = logger.NewLogger("dapr.runtime.processor.pubsub")
-
-	// errUnexpectedEnvelopeData denotes that an unexpected data type was
-	// encountered when processing a cloud event's data property.
-	errUnexpectedEnvelopeData = errors.New("unexpected data type encountered in envelope")
-
-	cloudEventDuplicateKeys = sets.NewString(
-		contribpubsub.IDField,
-		contribpubsub.SourceField,
-		contribpubsub.DataContentTypeField,
-		contribpubsub.TypeField,
-		contribpubsub.SpecVersionField,
-		contribpubsub.DataField,
-		contribpubsub.DataBase64Field,
-	)
-)
+var log = logger.NewLogger("dapr.runtime.processor.pubsub")
 
 type Options struct {
 	ID        string
@@ -86,6 +67,7 @@ type pubsub struct {
 	podName     string
 	mode        modes.DaprMode
 	tracingSpec *config.TracingSpec
+	streamer    *streamer
 
 	registry       *comppubsub.Registry
 	resiliency     resiliency.Provider
@@ -101,15 +83,6 @@ type pubsub struct {
 
 	topicCancels map[string]context.CancelFunc
 	outbox       outbox.Outbox
-}
-
-type subscribedMessage struct {
-	cloudEvent map[string]interface{}
-	data       []byte
-	topic      string
-	metadata   map[string]string
-	path       string
-	pubsub     string
 }
 
 func New(opts Options) *pubsub {
@@ -130,7 +103,13 @@ func New(opts Options) *pubsub {
 		topicCancels:   make(map[string]context.CancelFunc),
 	}
 
-	ps.outbox = rtpubsub.NewOutbox(ps.Publish, opts.ComponentStore.GetPubSubComponent, opts.ComponentStore.GetStateStore, ExtractCloudEventProperty, opts.Namespace)
+	ps.streamer = &streamer{
+		compStore:   ps.compStore,
+		pubsub:      ps,
+		tracingSpec: ps.tracingSpec,
+		subscribers: make(map[string]*streamconn),
+	}
+	ps.outbox = rtpubsub.NewOutbox(ps.Publish, opts.ComponentStore.GetPubSubComponent, opts.ComponentStore.GetStateStore, rtpubsub.ExtractCloudEventProperty, opts.Namespace)
 	return ps
 }
 
@@ -211,6 +190,10 @@ func (p *pubsub) Outbox() outbox.Outbox {
 	return p.outbox
 }
 
+func (p *pubsub) Streamer() rtpubsub.Streamer {
+	return p.streamer
+}
+
 // findMatchingRoute selects the path based on routing rules. If there are
 // no matching rules, the route-level path is used.
 func findMatchingRoute(rules []*rtpubsub.Rule, cloudEvent interface{}) (path string, shouldProcess bool, err error) {
@@ -253,27 +236,13 @@ func matchRoutingRule(rules []*rtpubsub.Rule, data map[string]interface{}) (*rtp
 	return nil, nil
 }
 
-func ExtractCloudEventProperty(cloudEvent map[string]any, property string) string {
-	if cloudEvent == nil {
-		return ""
-	}
-	iValue, ok := cloudEvent[property]
-	if ok {
-		if value, ok := iValue.(string); ok {
-			return value
-		}
-	}
-
-	return ""
-}
-
 func extractCloudEvent(event map[string]interface{}) (runtimev1pb.TopicEventBulkRequestEntry_CloudEvent, error) { //nolint:nosnakecase
 	envelope := &runtimev1pb.TopicEventCERequest{
-		Id:              ExtractCloudEventProperty(event, contribpubsub.IDField),
-		Source:          ExtractCloudEventProperty(event, contribpubsub.SourceField),
-		DataContentType: ExtractCloudEventProperty(event, contribpubsub.DataContentTypeField),
-		Type:            ExtractCloudEventProperty(event, contribpubsub.TypeField),
-		SpecVersion:     ExtractCloudEventProperty(event, contribpubsub.SpecVersionField),
+		Id:              rtpubsub.ExtractCloudEventProperty(event, contribpubsub.IDField),
+		Source:          rtpubsub.ExtractCloudEventProperty(event, contribpubsub.SourceField),
+		DataContentType: rtpubsub.ExtractCloudEventProperty(event, contribpubsub.DataContentTypeField),
+		Type:            rtpubsub.ExtractCloudEventProperty(event, contribpubsub.TypeField),
+		SpecVersion:     rtpubsub.ExtractCloudEventProperty(event, contribpubsub.SpecVersionField),
 	}
 
 	if data, ok := event[contribpubsub.DataField]; ok && data != nil {
@@ -286,13 +255,13 @@ func extractCloudEvent(event map[string]interface{}) (runtimev1pb.TopicEventBulk
 			case []byte:
 				envelope.Data = v
 			default:
-				return runtimev1pb.TopicEventBulkRequestEntry_CloudEvent{}, errUnexpectedEnvelopeData //nolint:nosnakecase
+				return runtimev1pb.TopicEventBulkRequestEntry_CloudEvent{}, rtpubsub.ErrUnexpectedEnvelopeData //nolint:nosnakecase
 			}
 		} else if contenttype.IsJSONContentType(envelope.GetDataContentType()) || contenttype.IsCloudEventContentType(envelope.GetDataContentType()) {
 			envelope.Data, _ = json.Marshal(data)
 		}
 	}
-	extensions, extensionsErr := extractCloudEventExtensions(event)
+	extensions, extensionsErr := rtpubsub.ExtractCloudEventExtensions(event)
 	if extensionsErr != nil {
 		return runtimev1pb.TopicEventBulkRequestEntry_CloudEvent{}, extensionsErr
 	}

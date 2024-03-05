@@ -28,3 +28,12 @@ type Expr interface {
 
 	Eval(variables map[string]interface{}) (interface{}, error)
 }
+
+type SubscribedMessage struct {
+	CloudEvent map[string]any
+	Data       []byte
+	Topic      string
+	Metadata   map[string]string
+	Path       string
+	PubSub     string
+}

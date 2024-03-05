@@ -126,7 +126,7 @@ func (p *pubsub) bulkSubscribeTopic(ctx context.Context, policyDef *resiliency.P
 			msg.Metadata = make(map[string]string, 1)
 		}
 
-		msg.Metadata[metadataKeyPubSub] = psName
+		msg.Metadata[runtimePubsub.MetadataKeyPubSub] = psName
 		bulkSubDiag := newBulkSubIngressDiagnostics()
 		bulkResponses := make([]contribpubsub.BulkSubscribeResponseEntry, len(msg.Entries))
 		routePathBulkMessageMap := make(map[string]bulkSubscribedMessage)
@@ -812,8 +812,8 @@ func reportBulkSubDiagnostics(ctx context.Context, topic string, bulkSubDiag *bu
 	if bulkSubDiag == nil {
 		return
 	}
-	diag.DefaultComponentMonitoring.BulkPubsubIngressEvent(ctx, metadataKeyPubSub, topic, bulkSubDiag.elapsed)
+	diag.DefaultComponentMonitoring.BulkPubsubIngressEvent(ctx, runtimePubsub.MetadataKeyPubSub, topic, bulkSubDiag.elapsed)
 	for status, count := range bulkSubDiag.statusWiseDiag {
-		diag.DefaultComponentMonitoring.BulkPubsubIngressEventEntries(ctx, metadataKeyPubSub, topic, status, count)
+		diag.DefaultComponentMonitoring.BulkPubsubIngressEventEntries(ctx, runtimePubsub.MetadataKeyPubSub, topic, status, count)
 	}
 }

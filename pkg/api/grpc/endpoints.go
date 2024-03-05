@@ -44,6 +44,9 @@ var endpoints = map[string][]string{
 	"publish.v1": {
 		daprRuntimePrefix + "v1.Dapr/PublishEvent",
 	},
+	"subscribe.v1": {
+		daprRuntimePrefix + "v1.Dapr/SubscribeTopicEvents",
+	},
 	"publish.v1alpha1": {
 		daprRuntimePrefix + "v1.Dapr/BulkPublishEventAlpha1",
 	},

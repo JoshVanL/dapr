@@ -29,10 +29,6 @@ import (
 	runtimePubsub "github.com/dapr/dapr/pkg/runtime/pubsub"
 )
 
-const (
-	metadataKeyPubSub = "pubsubName"
-)
-
 func (p *pubsub) subscribeTopic(name, topic string, route compstore.TopicRouteElem) error {
 	subKey := topicKey(name, topic)
 
@@ -81,7 +77,7 @@ func (p *pubsub) subscribeTopic(name, topic string, route compstore.TopicRouteEl
 			msg.Metadata = make(map[string]string, 1)
 		}
 
-		msg.Metadata[metadataKeyPubSub] = name
+		msg.Metadata[runtimePubsub.MetadataKeyPubSub] = name
 
 		msgTopic := msg.Topic
 		if pubSub.NamespaceScoped {
@@ -168,21 +164,23 @@ func (p *pubsub) subscribeTopic(name, topic string, route compstore.TopicRouteEl
 			return nil
 		}
 
-		sm := &subscribedMessage{
-			cloudEvent: cloudEvent,
-			data:       data,
-			topic:      msgTopic,
-			metadata:   msg.Metadata,
-			path:       routePath,
-			pubsub:     name,
+		sm := &runtimePubsub.SubscribedMessage{
+			CloudEvent: cloudEvent,
+			Data:       data,
+			Topic:      msgTopic,
+			Metadata:   msg.Metadata,
+			Path:       routePath,
+			PubSub:     name,
 		}
 		policyRunner := resiliency.NewRunner[any](ctx, policyDef)
 		_, err = policyRunner(func(ctx context.Context) (any, error) {
-			var pErr error
-			if p.isHTTP {
-				pErr = p.publishMessageHTTP(ctx, sm)
-			} else {
-				pErr = p.publishMessageGRPC(ctx, sm)
+			ok, pErr := p.streamer.Publish(ctx, sm)
+			if !ok {
+				if p.isHTTP {
+					pErr = p.publishMessageHTTP(ctx, sm)
+				} else {
+					pErr = p.publishMessageGRPC(ctx, sm)
+				}
 			}
 			var rErr *rterrors.RetriableError
 			if errors.As(pErr, &rErr) {
