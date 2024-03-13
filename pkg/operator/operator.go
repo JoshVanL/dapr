@@ -185,6 +185,7 @@ func NewOperator(ctx context.Context, opts Options) (Operator, error) {
 		healthzPort: opts.HealthzPort,
 		apiServer: api.NewAPIServer(api.Options{
 			Client:   mgrClient,
+			Cache:    mgr.GetCache(),
 			Security: secProvider,
 			Port:     opts.APIPort,
 		}),

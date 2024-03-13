@@ -1,13 +1,18 @@
-
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
   name: components.dapr.io
-  labels:
-    app.kubernetes.io/part-of: "dapr"
 spec:
   group: dapr.io
+  names:
+    kind: Component
+    listKind: ComponentList
+    plural: components
+    singular: component
+  scope: Namespaced
   versions:
   - name: v1alpha1
     schema:
@@ -15,9 +20,11 @@ spec:
         description: Component describes an Dapr component type.
         properties:
           apiVersion:
-            description: 'APIVersion defines the versioned schema of this representation
-              of an object. Servers should convert recognized schemas to the latest
-              internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
             type: string
           auth:
             description: Auth represents authentication details for the component.
@@ -28,9 +35,12 @@ spec:
             - secretStore
             type: object
           kind:
-            description: 'Kind is a string value representing the REST resource this
-              object represents. Servers may infer this from the endpoint the client
-              submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
             type: string
           metadata:
             type: object
@@ -85,14 +95,158 @@ spec:
             - type
             - version
             type: object
+          status:
+            description: |-
+              Status of the Component.
+              This is set and managed automatically.
+              Read-only.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#spec-and-status
+            properties:
+              appIDConditions:
+                description: |-
+                  AppIDConditions is a list of conditions indicating the state of each app
+                  ID consuming the Component.
+                items:
+                  description: |-
+                    ComponentAppIDCondition describes the state of an app ID consuming
+                    the Component.
+                  properties:
+                    appID:
+                      description: AppID is the ID of the app consuming the Component.
+                      type: string
+                    replicaConditions:
+                      description: |-
+                        ReplicaConditions is a list of conditions indicating the state of
+                        each replica consuming this Component.
+                      items:
+                        description: |-
+                          ComponentAppIDReplicaCondition describes the state of an app ID replica
+                          consuming the Component.
+                        properties:
+                          lastTransitionTime:
+                            description: |-
+                              LastTransitionTime is the timestamp corresponding to the last status
+                              change of this condition.
+                            format: date-time
+                            type: string
+                          message:
+                            description: |-
+                              Message is a human readable description of the details of the last
+                              transition, complementing reason.
+                            type: string
+                          observedGeneration:
+                            description: |-
+                              If set, this represents the .metadata.generation that the condition was
+                              set based upon.
+                              For instance, if .metadata.generation is currently 12, but the
+                              .status.condition[x].observedGeneration is 9, the condition is out of date
+                              with respect to the current state of the Component.
+                            format: int64
+                            type: integer
+                          podName:
+                            description: PodName is the name of the pod consuming
+                              the Component.
+                            type: string
+                          reason:
+                            description: |-
+                              Reason is a brief machine readable explanation for the condition's last
+                              transition.
+                            type: string
+                          status:
+                            description: Status of the condition, one of (`True`,
+                              `False`, `Unknown`).
+                            enum:
+                            - "True"
+                            - "False"
+                            - Unknown
+                            type: string
+                          type:
+                            description: Type of the condition, known values are (`Init`).
+                            type: string
+                        required:
+                        - podName
+                        - status
+                        - type
+                        type: object
+                      type: array
+                      x-kubernetes-list-map-keys:
+                      - podName
+                      x-kubernetes-list-type: map
+                  required:
+                  - appID
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - appID
+                x-kubernetes-list-type: map
+              conditions:
+                description: |-
+                  Conditions is a list of conditions indicating the state of the Component.
+                  Known condition types are (`Ready`).
+                items:
+                  description: ComponentStatus is the status for a Component resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        LastTransitionTime is the timestamp corresponding to the last status
+                        change of this condition.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        Message is a human readable description of the details of the last
+                        transition, complementing reason.
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        If set, this represents the .metadata.generation that the condition was
+                        set based upon.
+                        For instance, if .metadata.generation is currently 12, but the
+                        .status.condition[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the Component.
+                      format: int64
+                      type: integer
+                    reason:
+                      description: |-
+                        Reason is a brief machine readable explanation for the condition's last
+                        transition.
+                      type: string
+                    status:
+                      description: Status of the condition, one of (`True`, `False`,
+                        `Unknown`).
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: Type of the condition, known values are (`Ready`).
+                      type: string
+                  required:
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              initializedAppIDs:
+                description: |-
+                  InitializedAppIDs is a list of app IDs that have all initialized this
+                  Component.
+                items:
+                  type: string
+                type: array
+              notInitializedAppIDs:
+                description: |-
+                  NotInitializedAppIDs is a list of app IDs that have not initialized this
+                  Component due to an error.
+                items:
+                  type: string
+                type: array
+            type: object
         type: object
     served: true
     storage: true
-  names:
-    kind: Component
-    plural: components
-    singular: component
-    categories:
-    - all
-    - dapr
-  scope: Namespaced
+    subresources:
+      status: {}

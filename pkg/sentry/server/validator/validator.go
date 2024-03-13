@@ -16,8 +16,6 @@ package validator
 import (
 	"context"
 
-	"github.com/spiffe/go-spiffe/v2/spiffeid"
-
 	sentryv1pb "github.com/dapr/dapr/pkg/proto/sentry/v1"
 )
 
@@ -34,5 +32,5 @@ type Validator interface {
 	// permitted by the singing certificate.
 	// TODO: @joshvanl remove the overrideDuration bool in v1.13 when injector no
 	// longer needs to request other identities.
-	Validate(context.Context, *sentryv1pb.SignCertificateRequest) (spiffeid.TrustDomain, bool, error)
+	Validate(context.Context, *sentryv1pb.SignCertificateRequest) (*Identity, bool, error)
 }

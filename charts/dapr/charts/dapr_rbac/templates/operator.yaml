@@ -52,6 +52,9 @@ rules:
   - apiGroups: ["dapr.io"]
     resources: ["components", "configurations", "subscriptions", "resiliencies", "httpendpoints"]
     verbs: [ "get", "list", "watch"]
+  - apiGroups: ["dapr.io"]
+    resources: ["components", "components/status"]
+    verbs: [ "update" ]
 {{- end }}
 {{- if .Values.global.argoRolloutServiceReconciler.enabled }}
   - apiGroups: ["argoproj.io"]

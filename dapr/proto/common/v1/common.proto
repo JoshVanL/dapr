@@ -24,10 +24,10 @@ option go_package = "github.com/dapr/dapr/pkg/proto/common/v1;common";
 
 // HTTPExtension includes HTTP verb and querystring
 // when Dapr runtime delivers HTTP content.
-// 
+//
 // For example, when callers calls http invoke api
 // POST http://localhost:3500/v1.0/invoke/<app_id>/method/<method>?query1=value1&query2=value2
-// 
+//
 // Dapr runtime will parse POST as a verb and extract querystring to quersytring map.
 message HTTPExtension {
   // Type of HTTP 1.1 Methods
@@ -157,4 +157,11 @@ message ConfigurationItem {
 
   // the metadata which will be passed to/from configuration store component.
   map<string,string> metadata = 3;
+}
+
+// Condition represents the status of a Condition.
+enum ConditionStatus {
+  UNKNOWN = 0;
+  TRUE = 1;
+  FALSE = 2;
 }

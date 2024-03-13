@@ -21,11 +21,12 @@ import (
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 
 	sentryv1pb "github.com/dapr/dapr/pkg/proto/sentry/v1"
+	"github.com/dapr/dapr/pkg/sentry/server/validator"
 	"github.com/dapr/dapr/pkg/validation"
 )
 
 // Validate validates the common rules for all requests.
-func Validate(_ context.Context, req *sentryv1pb.SignCertificateRequest) (spiffeid.TrustDomain, bool, error) {
+func Validate(_ context.Context, req *sentryv1pb.SignCertificateRequest) (*validator.Identity, bool, error) {
 	err := errors.Join(
 		validation.ValidateSelfHostedAppID(req.GetId()),
 		appIDLessOrEqualTo64Characters(req.GetId()),
@@ -33,18 +34,24 @@ func Validate(_ context.Context, req *sentryv1pb.SignCertificateRequest) (spiffe
 		namespaceIsRequired(req.GetNamespace()),
 	)
 	if err != nil {
-		return spiffeid.TrustDomain{}, false, fmt.Errorf("invalid request: %w", err)
+		return nil, false, fmt.Errorf("invalid request: %w", err)
 	}
 
 	var td spiffeid.TrustDomain
 	if req.GetTrustDomain() == "" {
 		// Default to public trust domain if not specified.
 		td, err = spiffeid.TrustDomainFromString("public")
-		return td, false, err
+		if err != nil {
+			return nil, false, err
+		}
+		return validator.NewIdentity(td, nil), false, nil
 	}
 
 	td, err = spiffeid.TrustDomainFromString(req.GetTrustDomain())
-	return td, false, err
+	if err != nil {
+		return nil, false, err
+	}
+	return validator.NewIdentity(td, nil), false, nil
 }
 
 func appIDLessOrEqualTo64Characters(appID string) error {

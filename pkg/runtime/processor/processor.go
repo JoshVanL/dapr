@@ -147,6 +147,7 @@ func New(opts Options) *Processor {
 	})
 
 	state := state.New(state.Options{
+		OperatorClient: opts.OperatorClient,
 		ActorsEnabled:  opts.ActorsEnabled,
 		Registry:       opts.Registry.StateStores(),
 		ComponentStore: opts.ComponentStore,

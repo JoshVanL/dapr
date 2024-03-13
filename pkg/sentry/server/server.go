@@ -123,7 +123,7 @@ func (s *server) signCertificate(ctx context.Context, req *sentryv1pb.SignCertif
 
 	log.Debugf("Processing SignCertificate request for %s/%s (validator: %s)", namespace, req.GetId(), validator.String())
 
-	trustDomain, overrideDuration, err := s.vals[validator].Validate(ctx, req)
+	id, overrideDuration, err := s.vals[validator].Validate(ctx, req)
 	if err != nil {
 		log.Debugf("Failed to validate request for %s/%s: %s", namespace, req.GetId(), err)
 		return nil, status.Error(codes.PermissionDenied, err.Error())
@@ -170,12 +170,17 @@ func (s *server) signCertificate(ctx context.Context, req *sentryv1pb.SignCertif
 		dns = []string{fmt.Sprintf("%s.%s.svc.cluster.local", req.GetId(), namespace)}
 	}
 
+	var podName *string
+	if name, ok := id.PodName(); ok {
+		podName = &name
+	}
 	chain, err := s.ca.SignIdentity(ctx, &ca.SignRequest{
 		PublicKey:          csr.PublicKey,
 		SignatureAlgorithm: csr.SignatureAlgorithm,
-		TrustDomain:        trustDomain.String(),
+		TrustDomain:        id.TrustDomain().String(),
 		Namespace:          namespace,
 		AppID:              req.GetId(),
+		PodName:            podName,
 		DNS:                dns,
 	}, overrideDuration)
 	if err != nil {

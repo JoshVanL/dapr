@@ -16,6 +16,7 @@ syntax = "proto3";
 package dapr.proto.operator.v1;
 
 import "google/protobuf/empty.proto";
+import "dapr/proto/common/v1/common.proto";
 
 option go_package = "github.com/dapr/dapr/pkg/proto/operator/v1;operator";
 
@@ -38,6 +39,8 @@ service Operator {
   rpc ListHTTPEndpoints (ListHTTPEndpointsRequest) returns (ListHTTPEndpointsResponse) {}
   // Sends events to Dapr sidecars upon http endpoint changes.
   rpc HTTPEndpointUpdate (HTTPEndpointUpdateRequest) returns (stream HTTPEndpointUpdateEvent) {}
+
+  rpc ComponentReport(stream ComponentReportRequest) returns (google.protobuf.Empty) {}
 }
 
 // ResourceEventType is the type of event to a resource.
@@ -152,4 +155,28 @@ message HTTPEndpointUpdateRequest {
 // HTTPEndpointsUpdateEvent includes the updated http endpoint event.
 message HTTPEndpointUpdateEvent {
   bytes http_endpoints = 1;
+}
+
+// ComponentReportRequest is the request to report component status.
+message ComponentReportRequest {
+  enum Type{
+    // Not specified - use the default value.
+    UNKNOWN = 0;
+    // INIT indicates reporting the component initialization.
+    INIT = 1;
+  }
+
+  // type is the type of the report.
+  Type type = 1;
+
+  // status is the status of the component.
+  common.v1.ConditionStatus status = 2;
+
+  string component_name = 3;
+
+  int64 observed_generation = 4;
+
+  optional string reason = 5;
+
+  optional string message = 6;
 }

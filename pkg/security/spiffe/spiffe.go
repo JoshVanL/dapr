@@ -22,6 +22,7 @@ import (
 
 	"github.com/spiffe/go-spiffe/v2/spiffegrpc/grpccredentials"
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
+	"google.golang.org/grpc/peer"
 )
 
 // Parsed is a parsed SPIFFE ID according to the Dapr SPIFFE ID path format.
@@ -30,12 +31,18 @@ type Parsed struct {
 
 	namespace string
 	appID     string
+	podName   *string
 }
 
 // FromGRPCContext parses a SPIFFE ID from a gRPC context.
 func FromGRPCContext(ctx context.Context) (*Parsed, bool, error) {
+	p, ok := peer.FromContext(ctx)
+	if !ok {
+		return nil, false, nil
+	}
+
 	// Apply access control list filter
-	id, ok := grpccredentials.PeerIDFromContext(ctx)
+	id, ok := grpccredentials.PeerIDFromPeer(p)
 	if !ok {
 		return nil, false, nil
 	}
@@ -47,21 +54,32 @@ func FromGRPCContext(ctx context.Context) (*Parsed, bool, error) {
 		return nil, false, fmt.Errorf("malformed SPIFFE ID: %s", id.String())
 	}
 
+	fmt.Printf(">>>%s\n", split)
+	var podName *string
+	if len(split) > 4 {
+		podName = &split[4]
+	}
+
 	return &Parsed{
 		id:        id,
 		namespace: split[2],
 		appID:     split[3],
+		podName:   podName,
 	}, true, nil
 }
 
 // FromStrings builds a Dapr SPIFFE ID with the given namespace and app ID in
 // the given Trust Domain.
-func FromStrings(td spiffeid.TrustDomain, namespace, appID string) (*Parsed, error) {
-	if len(td.String()) == 0 || len(namespace) == 0 || len(appID) == 0 {
+func FromStrings(td spiffeid.TrustDomain, namespace, appID string, podName *string) (*Parsed, error) {
+	if len(td.String()) == 0 || len(namespace) == 0 || len(appID) == 0 || (podName != nil && len(*podName) == 0) {
 		return nil, errors.New("malformed SPIFFE ID")
 	}
 
-	id, err := spiffeid.FromSegments(td, "ns", namespace, appID)
+	segments := []string{"ns", namespace, appID}
+	if podName != nil {
+		segments = append(segments, *podName)
+	}
+	id, err := spiffeid.FromSegments(td, segments...)
 	if err != nil {
 		return nil, err
 	}
@@ -99,4 +117,11 @@ func (p *Parsed) URL() *url.URL {
 		return new(url.URL)
 	}
 	return p.id.URL()
+}
+
+func (p *Parsed) PodName() (string, bool) {
+	if p == nil || p.podName == nil {
+		return "", false
+	}
+	return *p.podName, true
 }

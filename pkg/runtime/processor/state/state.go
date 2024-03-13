@@ -19,6 +19,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"time"
 
 	contribstate "github.com/dapr/components-contrib/state"
 	compapi "github.com/dapr/dapr/pkg/apis/components/v1alpha1"
@@ -26,10 +27,13 @@ import (
 	diag "github.com/dapr/dapr/pkg/diagnostics"
 	"github.com/dapr/dapr/pkg/encryption"
 	"github.com/dapr/dapr/pkg/outbox"
+	commonv1pb "github.com/dapr/dapr/pkg/proto/common/v1"
+	operatorv1pb "github.com/dapr/dapr/pkg/proto/operator/v1"
 	"github.com/dapr/dapr/pkg/runtime/compstore"
 	rterrors "github.com/dapr/dapr/pkg/runtime/errors"
 	"github.com/dapr/dapr/pkg/runtime/meta"
 	"github.com/dapr/kit/logger"
+	"github.com/dapr/kit/ptr"
 	"github.com/dapr/kit/utils"
 )
 
@@ -45,13 +49,15 @@ type Options struct {
 	Meta           *meta.Meta
 	ActorsEnabled  bool
 	Outbox         outbox.Outbox
+	OperatorClient operatorv1pb.OperatorClient
 }
 
 type state struct {
-	registry  *compstate.Registry
-	compStore *compstore.ComponentStore
-	meta      *meta.Meta
-	lock      sync.RWMutex
+	registry       *compstate.Registry
+	compStore      *compstore.ComponentStore
+	meta           *meta.Meta
+	operatorClient operatorv1pb.OperatorClient
+	lock           sync.RWMutex
 
 	actorStateStoreName *string
 	actorsEnabled       bool
@@ -60,11 +66,12 @@ type state struct {
 
 func New(opts Options) *state {
 	return &state{
-		registry:      opts.Registry,
-		compStore:     opts.ComponentStore,
-		meta:          opts.Meta,
-		actorsEnabled: opts.ActorsEnabled,
-		outbox:        opts.Outbox,
+		registry:       opts.Registry,
+		compStore:      opts.ComponentStore,
+		meta:           opts.Meta,
+		operatorClient: opts.OperatorClient,
+		actorsEnabled:  opts.ActorsEnabled,
+		outbox:         opts.Outbox,
 	}
 }
 
@@ -145,6 +152,23 @@ func (s *state) Init(ctx context.Context, comp compapi.Component) error {
 	}
 
 	s.outbox.AddOrUpdateOutbox(comp)
+
+	stream, err := s.operatorClient.ComponentReport(ctx)
+	if err != nil {
+		return err
+	}
+	if err := stream.Send(&operatorv1pb.ComponentReportRequest{
+		Type:               operatorv1pb.ComponentReportRequest_INIT,
+		Status:             commonv1pb.ConditionStatus_TRUE,
+		ComponentName:      comp.ObjectMeta.Name,
+		Reason:             ptr.Of("Initialized"),
+		Message:            ptr.Of("Component initialized"),
+		ObservedGeneration: comp.ObjectMeta.Generation,
+	}); err != nil {
+		return err
+	}
+
+	time.Sleep(time.Second * 4)
 
 	diag.DefaultMonitoring.ComponentInitialized(comp.Spec.Type)
 

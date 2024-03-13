@@ -27,7 +27,7 @@ const (
 )
 
 //+genclient
-//+genclient:noStatus
+//+kubebuilder:subresource:status
 //+kubebuilder:object:root=true
 
 // Component describes an Dapr component type.
@@ -40,6 +40,13 @@ type Component struct {
 	//+optional
 	Auth          `json:"auth,omitempty"`
 	common.Scoped `json:",inline"`
+
+	// Status of the Component.
+	// This is set and managed automatically.
+	// Read-only.
+	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#spec-and-status
+	// +optional
+	Status ComponentStatus `json:"status,omitempty"`
 }
 
 // Kind returns the component kind.
@@ -109,3 +116,127 @@ type ComponentList struct {
 
 	Items []Component `json:"items"`
 }
+
+// ComponentStatus is the status for a Component resource.
+type ComponentStatus struct {
+	// Conditions is a list of conditions indicating the state of the Component.
+	// Known condition types are (`Ready`).
+	// +listType=map
+	// +listMapKey=type
+	// +optional
+	Conditions []ComponentCondition `json:"conditions,omitempty"`
+
+	// AppIDConditions is a list of conditions indicating the state of each app
+	// ID consuming the Component.
+	// +listType=map
+	// +listMapKey=appID
+	// +optional
+	AppIDConditions []ComponentAppIDCondition `json:"appIDConditions,omitempty"`
+
+	// InitializedAppIDs is a list of app IDs that have all initialized this
+	// Component.
+	// +optional
+	InitializedAppIDs []string `json:"initializedAppIDs,omitempty"`
+
+	// NotInitializedAppIDs is a list of app IDs that have not initialized this
+	// Component due to an error.
+	// +optional
+	NotInitializedAppIDs []string `json:"notInitializedAppIDs,omitempty"`
+}
+
+// ComponentStatus is the status for a Component resource.
+type ComponentCondition struct {
+	// Type of the condition, known values are (`Ready`).
+	Type ComponentConditionType `json:"type"`
+
+	// Status of the condition, one of (`True`, `False`, `Unknown`).
+	Status common.ConditionStatus `json:"status"`
+
+	// LastTransitionTime is the timestamp corresponding to the last status
+	// change of this condition.
+	LastTransitionTime *metav1.Time `json:"lastTransitionTime,omitempty"`
+
+	// Reason is a brief machine readable explanation for the condition's last
+	// transition.
+	// +optional
+	Reason *string `json:"reason,omitempty"`
+
+	// Message is a human readable description of the details of the last
+	// transition, complementing reason.
+	// +optional
+	Message *string `json:"message,omitempty"`
+
+	// If set, this represents the .metadata.generation that the condition was
+	// set based upon.
+	// For instance, if .metadata.generation is currently 12, but the
+	// .status.condition[x].observedGeneration is 9, the condition is out of date
+	// with respect to the current state of the Component.
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+}
+
+// ComponentAppIDCondition describes the state of an app ID consuming
+// the Component.
+type ComponentAppIDCondition struct {
+	//AppID is the ID of the app consuming the Component.
+	AppID string `json:"appID"`
+
+	// ReplicaConditions is a list of conditions indicating the state of
+	// each replica consuming this Component.
+	// +listType=map
+	// +listMapKey=podName
+	ReplicaConditions []ComponentAppIDReplicaCondition `json:"replicaConditions,omitempty"`
+}
+
+// ComponentAppIDReplicaCondition describes the state of an app ID replica
+// consuming the Component.
+type ComponentAppIDReplicaCondition struct {
+	// PodName is the name of the pod consuming the Component.
+	PodName string `json:"podName"`
+
+	// Type of the condition, known values are (`Init`).
+	Type ComponentAppIDReplicaConditionType `json:"type"`
+
+	// Status of the condition, one of (`True`, `False`, `Unknown`).
+	Status common.ConditionStatus `json:"status"`
+
+	// LastTransitionTime is the timestamp corresponding to the last status
+	// change of this condition.
+	LastTransitionTime *metav1.Time `json:"lastTransitionTime,omitempty"`
+
+	// Reason is a brief machine readable explanation for the condition's last
+	// transition.
+	// Typically empty if no error occurred.
+	// +optional
+	Reason *string `json:"reason,omitempty"`
+
+	// Message is a human readable description of the details of the last
+	// transition, complementing reason.
+	// Typically empty if no error occurred.
+	// +optional
+	Message *string `json:"message,omitempty"`
+
+	// If set, this represents the .metadata.generation that the condition was
+	// set based upon.
+	// For instance, if .metadata.generation is currently 12, but the
+	// .status.condition[x].observedGeneration is 9, the condition is out of date
+	// with respect to the current state of the Component.
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+}
+
+// ComponentConditionType is a type of condition for a Component.
+type ComponentConditionType string
+
+const (
+	// ComponentConditionTypeReady indicates a condition describing the
+	// readiness of the Component.
+	ComponentConditionTypeReady ComponentConditionType = "Ready"
+)
+
+// ComponentAppIDReplicaConditionType is a type of condition for an app replica
+type ComponentAppIDReplicaConditionType string
+
+const (
+	// ComponentConditionAppIDReplicaInit indicates a condition describing the
+	// initialization state of the Component.
+	ComponentConditionAppIDReplicaInit ComponentAppIDReplicaConditionType = "Init"
+)

@@ -25,14 +25,23 @@ import (
 // authzRequest ensures that the requesting identity resides in the same
 // namespace as that of the requested namespace.
 func (a *apiServer) authzRequest(ctx context.Context, namespace string) error {
-	spiffeID, ok, err := spiffe.FromGRPCContext(ctx)
-	if err != nil || !ok {
-		return status.New(codes.PermissionDenied, "failed to determine identity").Err()
+	id, err := a.idFromContext(ctx)
+	if err != nil {
+		return err
 	}
 
-	if len(namespace) == 0 || spiffeID.Namespace() != namespace {
+	if len(namespace) == 0 || id.Namespace() != namespace {
 		return status.New(codes.PermissionDenied, "identity does not match requested namespace").Err()
 	}
 
 	return nil
+}
+
+func (a *apiServer) idFromContext(ctx context.Context) (*spiffe.Parsed, error) {
+	spiffeID, ok, err := spiffe.FromGRPCContext(ctx)
+	if err != nil || !ok {
+		return nil, status.New(codes.PermissionDenied, "failed to determine identity").Err()
+	}
+
+	return spiffeID, nil
 }

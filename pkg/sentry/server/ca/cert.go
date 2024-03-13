@@ -99,7 +99,7 @@ func generateIssuerCert(trustDomain string, skew time.Duration, overrideTTL *tim
 		return nil, err
 	}
 
-	sentryID, err := spiffe.FromStrings(td, security.CurrentNamespace(), "dapr-sentry")
+	sentryID, err := spiffe.FromStrings(td, security.CurrentNamespace(), "dapr-sentry", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate sentry ID: %w", err)
 	}

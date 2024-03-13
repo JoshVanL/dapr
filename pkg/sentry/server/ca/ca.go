@@ -54,6 +54,9 @@ type SignRequest struct {
 
 	// Optional DNS names to add to the certificate.
 	DNS []string
+
+	// TODO:
+	PodName *string
 }
 
 // Signer is the interface for the CA.
@@ -147,7 +150,7 @@ func (c *ca) SignIdentity(ctx context.Context, req *SignRequest, overrideDuratio
 		return nil, err
 	}
 
-	spiffeID, err := spiffe.FromStrings(td, req.Namespace, req.AppID)
+	spiffeID, err := spiffe.FromStrings(td, req.Namespace, req.AppID, req.PodName)
 	if err != nil {
 		return nil, err
 	}
