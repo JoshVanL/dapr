@@ -44,7 +44,7 @@ func (s *subscriptions) update(ctx context.Context, sub subapi.Subscription) {
 	}
 
 	log.Infof("Adding Subscription for processing: %s", sub.Name)
-	if s.proc.AddPendingSubscription(ctx, sub) {
+	if s.proc.AddSubscription(ctx, sub) {
 		log.Infof("Subscription updated: %s", sub.Name)
 	}
 

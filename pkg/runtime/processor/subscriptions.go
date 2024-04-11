@@ -20,7 +20,7 @@ import (
 	"github.com/dapr/dapr/utils"
 )
 
-func (p *Processor) AddPendingSubscription(ctx context.Context, subscriptions ...subapi.Subscription) bool {
+func (p *Processor) AddSubscription(ctx context.Context, subscriptions ...subapi.Subscription) bool {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 	if p.shutdown.Load() {

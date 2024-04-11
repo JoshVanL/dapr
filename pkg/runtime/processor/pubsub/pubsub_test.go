@@ -18,11 +18,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
-<<<<<<< HEAD
-=======
-	"os"
-	"path/filepath"
->>>>>>> 2824726e5 (Subscriptions: Declarative Go Generic Loader)
 	"reflect"
 	"sort"
 	"strings"
@@ -465,15 +460,7 @@ func TestInitPubSub(t *testing.T) {
 			ComponentStore: compstore.New(),
 		})
 
-<<<<<<< HEAD
 		pst.compStore.AddDeclarativeSubscription(testDeclarativeSubscription())
-=======
-		s := testDeclarativeSubscription()
-
-		resourcesDir := writeComponentToDisk(t, s)
-
-		pst.resourcesPath = []string{resourcesDir}
->>>>>>> 2824726e5 (Subscriptions: Declarative Go Generic Loader)
 		subs, err := pst.declarativeSubscriptions(context.Background())
 		require.NoError(t, err)
 		if assert.Len(t, subs, 1) {
@@ -501,14 +488,7 @@ func TestInitPubSub(t *testing.T) {
 		s := testDeclarativeSubscription()
 		s.Scopes = []string{TestRuntimeConfigID}
 
-<<<<<<< HEAD
 		pst.compStore.AddDeclarativeSubscription(s)
-
-=======
-		resourcesDir := writeComponentToDisk(t, s)
-
-		pst.resourcesPath = []string{resourcesDir}
->>>>>>> 2824726e5 (Subscriptions: Declarative Go Generic Loader)
 		subs, err := pst.declarativeSubscriptions(context.Background())
 		require.NoError(t, err)
 		if assert.Len(t, subs, 1) {
@@ -536,14 +516,7 @@ func TestInitPubSub(t *testing.T) {
 
 		s := testDeclarativeSubscription()
 		s.Scopes = []string{"scope1"}
-<<<<<<< HEAD
 		pst.compStore.AddDeclarativeSubscription(s)
-=======
-
-		resourcesDir := writeComponentToDisk(t, s)
-
-		pst.resourcesPath = []string{resourcesDir}
->>>>>>> 2824726e5 (Subscriptions: Declarative Go Generic Loader)
 		subs, err := pst.declarativeSubscriptions(context.Background())
 		require.NoError(t, err)
 		assert.Empty(t, subs)
@@ -1432,18 +1405,6 @@ func testDeclarativeSubscription() subscriptionsapi.Subscription {
 	}
 }
 
-<<<<<<< HEAD
-=======
-func writeComponentToDisk(t *testing.T, content any) string {
-	dir := t.TempDir()
-	filePath := filepath.Join(dir, "comp.yaml")
-	b, err := yaml.Marshal(content)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filePath, b, 0o600))
-	return dir
-}
-
->>>>>>> 2824726e5 (Subscriptions: Declarative Go Generic Loader)
 func TestNamespacedPublisher(t *testing.T) {
 	reg := registry.New(registry.NewOptions())
 	ps := New(Options{
