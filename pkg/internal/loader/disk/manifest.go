@@ -44,7 +44,7 @@ type manifestSet[T meta.Resource] struct {
 	manifestIndex int
 
 	order []manifestOrder
-	ts    []T
+	ts    []*T
 }
 
 type manifestOrder struct {
@@ -147,7 +147,7 @@ func (m *manifestSet[T]) decodeYaml(f io.Reader) error {
 			fileIndex:     m.fileIndex,
 			manifestIndex: m.manifestIndex - 1,
 		})
-		m.ts = append(m.ts, manifest)
+		m.ts = append(m.ts, &manifest)
 	}
 
 	if len(errs) > 0 {

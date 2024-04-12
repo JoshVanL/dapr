@@ -64,7 +64,7 @@ func (c *components) recv() (*loader.Event[componentsapi.Component], error) {
 	}
 
 	return &loader.Event[componentsapi.Component]{
-		Resource: component,
+		Resource: &component,
 		Type:     event.GetType(),
 	}, nil
 }

@@ -48,7 +48,7 @@ func New(opts Options) *configuration {
 	}
 }
 
-func (c *configuration) Init(ctx context.Context, comp compapi.Component) error {
+func (c *configuration) Init(ctx context.Context, comp *compapi.Component) error {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
@@ -77,7 +77,7 @@ func (c *configuration) Init(ctx context.Context, comp compapi.Component) error 
 	return nil
 }
 
-func (c *configuration) Close(comp compapi.Component) error {
+func (c *configuration) Close(comp *compapi.Component) error {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 

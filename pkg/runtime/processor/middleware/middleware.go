@@ -51,7 +51,7 @@ func New(opts Options) *middleware {
 	}
 }
 
-func (m *middleware) Init(_ context.Context, comp compapi.Component) error {
+func (m *middleware) Init(_ context.Context, comp *compapi.Component) error {
 	meta, err := m.meta.ToBaseMetadata(comp)
 	if err != nil {
 		return err
@@ -72,7 +72,7 @@ func (m *middleware) Init(_ context.Context, comp compapi.Component) error {
 	return nil
 }
 
-func (m *middleware) Close(comp compapi.Component) error {
+func (m *middleware) Close(comp *compapi.Component) error {
 	m.http.Remove(comp.Name)
 	return nil
 }

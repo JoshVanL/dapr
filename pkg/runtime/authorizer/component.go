@@ -49,7 +49,7 @@ func newComponentDenyList(raw []string) componentDenyList {
 	return componentDenyList{list}
 }
 
-func (dl componentDenyList) IsAllowed(component componentsV1alpha1.Component) bool {
+func (dl componentDenyList) IsAllowed(component *componentsV1alpha1.Component) bool {
 	if component.Spec.Type == "" || component.Spec.Version == "" {
 		return false
 	}

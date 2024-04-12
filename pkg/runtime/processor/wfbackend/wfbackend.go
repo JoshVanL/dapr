@@ -58,7 +58,7 @@ func New(opts Options) *workflowBackend {
 	}
 }
 
-func (w *workflowBackend) Init(ctx context.Context, comp compapi.Component) error {
+func (w *workflowBackend) Init(ctx context.Context, comp *compapi.Component) error {
 	w.lock.Lock()
 	defer w.lock.Unlock()
 
@@ -104,7 +104,7 @@ func (w *workflowBackend) Init(ctx context.Context, comp compapi.Component) erro
 	return nil
 }
 
-func (w *workflowBackend) Close(comp compapi.Component) error {
+func (w *workflowBackend) Close(comp *compapi.Component) error {
 	w.lock.Lock()
 	defer w.lock.Unlock()
 
@@ -131,8 +131,8 @@ func (w *workflowBackend) Backend() (backend.Backend, bool) {
 	return w.backend, true
 }
 
-func ComponentDefinition() compapi.Component {
-	return compapi.Component{
+func ComponentDefinition() *compapi.Component {
+	return &compapi.Component{
 		TypeMeta:   metav1.TypeMeta{Kind: "Component"},
 		ObjectMeta: metav1.ObjectMeta{Name: "dapr"},
 		Spec:       compapi.ComponentSpec{Type: "workflow.dapr", Version: "v1"},

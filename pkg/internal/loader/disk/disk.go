@@ -43,7 +43,7 @@ func new[T meta.Resource](dirs ...string) *disk[T] {
 }
 
 // load loads manifests for the given directory.
-func (d *disk[T]) Load(context.Context) ([]T, error) {
+func (d *disk[T]) Load(context.Context) ([]*T, error) {
 	set, err := d.loadWithOrder()
 	if err != nil {
 		return nil, err
@@ -52,25 +52,25 @@ func (d *disk[T]) Load(context.Context) ([]T, error) {
 	nsDefined := len(os.Getenv("NAMESPACE")) != 0
 
 	names := make(map[string]string)
-	goodManifests := make([]T, 0)
+	goodManifests := make([]*T, 0)
 	var errs []error
 	for i := range set.ts {
 		// If the process or manifest namespace are not defined, ignore the
 		// manifest namespace.
-		ignoreNamespace := !nsDefined || len(set.ts[i].GetNamespace()) == 0
+		ignoreNamespace := !nsDefined || len((*set.ts[i]).GetNamespace()) == 0
 
 		// Ignore manifests that are not in the process security namespace.
-		if !ignoreNamespace && set.ts[i].GetNamespace() != d.namespace {
+		if !ignoreNamespace && (*set.ts[i]).GetNamespace() != d.namespace {
 			continue
 		}
 
-		if existing, ok := names[set.ts[i].GetName()]; ok {
+		if existing, ok := names[(*set.ts[i]).GetName()]; ok {
 			errs = append(errs, fmt.Errorf("duplicate definition of %s name %s with existing %s",
-				set.ts[i].Kind(), set.ts[i].LogName(), existing))
+				(*set.ts[i]).Kind(), (*set.ts[i]).LogName(), existing))
 			continue
 		}
 
-		names[set.ts[i].GetName()] = set.ts[i].LogName()
+		names[(*set.ts[i]).GetName()] = (*set.ts[i]).LogName()
 		goodManifests = append(goodManifests, set.ts[i])
 	}
 

@@ -34,7 +34,7 @@ func NewSubscriptions(paths ...string) loader.Loader[v2alpha1.Subscription] {
 	}
 }
 
-func (s *subscriptions) Load(context.Context) ([]v2alpha1.Subscription, error) {
+func (s *subscriptions) Load(context.Context) ([]*v2alpha1.Subscription, error) {
 	v1, err := s.v1.loadWithOrder()
 	if err != nil {
 		return nil, err
@@ -53,7 +53,7 @@ func (s *subscriptions) Load(context.Context) ([]v2alpha1.Subscription, error) {
 			return nil, err
 		}
 
-		v2.ts = append(v2.ts, subv2)
+		v2.ts = append(v2.ts, &subv2)
 	}
 
 	// Preserve manifest load order between v1 and v2.

@@ -23,7 +23,7 @@ import (
 	"github.com/dapr/dapr/pkg/internal/apis"
 )
 
-func (p *Processor) AddPendingEndpoint(ctx context.Context, endpoint httpendpointsapi.HTTPEndpoint) bool {
+func (p *Processor) AddPendingEndpoint(ctx context.Context, endpoint *httpendpointsapi.HTTPEndpoint) bool {
 	p.chlock.RLock()
 	defer p.chlock.RUnlock()
 	if p.shutdown.Load() {
@@ -42,10 +42,10 @@ func (p *Processor) AddPendingEndpoint(ctx context.Context, endpoint httpendpoin
 
 func (p *Processor) processHTTPEndpoints(ctx context.Context) error {
 	for endpoint := range p.pendingHTTPEndpoints {
-		if endpoint.Name == "" {
+		if endpoint == nil {
 			continue
 		}
-		p.processHTTPEndpointSecrets(ctx, &endpoint)
+		p.processHTTPEndpointSecrets(ctx, endpoint)
 		p.compStore.AddHTTPEndpoint(endpoint)
 	}
 

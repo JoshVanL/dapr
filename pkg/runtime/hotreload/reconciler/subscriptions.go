@@ -32,7 +32,7 @@ type subscriptions struct {
 // the generic reconciler.
 //
 //nolint:unused
-func (s *subscriptions) update(ctx context.Context, sub subapi.Subscription) {
+func (s *subscriptions) update(ctx context.Context, sub *subapi.Subscription) {
 	oldSub, exists := s.store.GetDeclarativeSubscription(sub.Name)
 
 	if exists {
@@ -52,7 +52,7 @@ func (s *subscriptions) update(ctx context.Context, sub subapi.Subscription) {
 }
 
 //nolint:unused
-func (s *subscriptions) delete(ctx context.Context, sub subapi.Subscription) {
+func (s *subscriptions) delete(ctx context.Context, sub *subapi.Subscription) {
 	if err := s.proc.CloseSubscription(ctx, sub); err != nil {
 		log.Errorf("Failed to close Subscription: %s", err)
 	}

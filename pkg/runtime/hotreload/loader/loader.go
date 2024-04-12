@@ -45,5 +45,5 @@ type Loader[T differ.Resource] interface {
 // Event is a component event.
 type Event[T differ.Resource] struct {
 	Type     operatorv1pb.ResourceEventType
-	Resource T
+	Resource *T
 }

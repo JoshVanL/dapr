@@ -74,7 +74,7 @@ func NewOutbox(publishFn func(context.Context, *contribPubsub.PublishRequest) er
 }
 
 // AddOrUpdateOutbox examines a statestore for outbox properties and saves it for later usage in outbox operations.
-func (o *outboxImpl) AddOrUpdateOutbox(stateStore v1alpha1.Component) {
+func (o *outboxImpl) AddOrUpdateOutbox(stateStore *v1alpha1.Component) {
 	var publishPubSub, publishTopicKey, outboxPubsub string
 	var outboxDiscardWhenMissingState bool
 

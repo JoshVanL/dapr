@@ -37,7 +37,7 @@ type components struct {
 // the generic reconciler.
 //
 //nolint:unused
-func (c *components) update(ctx context.Context, comp compapi.Component) {
+func (c *components) update(ctx context.Context, comp *compapi.Component) {
 	if !c.verify(comp) {
 		return
 	}
@@ -74,7 +74,7 @@ func (c *components) update(ctx context.Context, comp compapi.Component) {
 }
 
 //nolint:unused
-func (c *components) delete(_ context.Context, comp compapi.Component) {
+func (c *components) delete(_ context.Context, comp *compapi.Component) {
 	if !c.verify(comp) {
 		return
 	}
@@ -85,8 +85,8 @@ func (c *components) delete(_ context.Context, comp compapi.Component) {
 }
 
 //nolint:unused
-func (c *components) verify(vcomp compapi.Component) bool {
-	toverify := []compapi.Component{vcomp}
+func (c *components) verify(vcomp *compapi.Component) bool {
+	toverify := []*compapi.Component{vcomp}
 	if comp, ok := c.store.GetComponent(vcomp.Name); ok {
 		toverify = append(toverify, comp)
 	}

@@ -242,7 +242,24 @@ func (a *api) PublishEvent(ctx context.Context, in *runtimev1pb.PublishEventRequ
 }
 
 func (a *api) SubscribeTopicEvents(stream runtimev1pb.Dapr_SubscribeTopicEventsServer) error {
-	return a.processor.PubSub().Streamer().Subscribe(stream)
+	errCh := make(chan error, 2)
+	subDone := make(chan struct{})
+	a.wg.Add(2)
+	go func() {
+		defer a.wg.Done()
+		errCh <- a.processor.PubSub().Streamer().Subscribe(stream)
+		close(subDone)
+	}()
+	go func() {
+		defer a.wg.Done()
+		select {
+		case <-a.closeCh:
+		case <-subDone:
+		}
+		errCh <- nil
+	}()
+
+	return <-errCh
 }
 
 type invokeServiceResp struct {

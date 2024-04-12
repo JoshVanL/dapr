@@ -36,7 +36,7 @@ type HTTP struct {
 
 // Spec is a specification for a creating a middleware.
 type Spec struct {
-	Component      compapi.Component
+	Component      *compapi.Component
 	Implementation middleware.HTTP
 }
 

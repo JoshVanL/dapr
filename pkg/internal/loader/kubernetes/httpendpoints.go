@@ -44,7 +44,7 @@ func NewHTTPEndpoints(opts Options) loader.Loader[endpointapi.HTTPEndpoint] {
 }
 
 // Load loads dapr components from a given directory.
-func (h *httpendpoints) Load(ctx context.Context) ([]endpointapi.HTTPEndpoint, error) {
+func (h *httpendpoints) Load(ctx context.Context) ([]*endpointapi.HTTPEndpoint, error) {
 	resp, err := h.client.ListHTTPEndpoints(ctx, &operatorv1pb.ListHTTPEndpointsRequest{
 		Namespace: h.namespace,
 	}, grpcretry.WithMax(operatorMaxRetries), grpcretry.WithPerRetryTimeout(operatorCallTimeout))
@@ -59,14 +59,14 @@ func (h *httpendpoints) Load(ctx context.Context) ([]endpointapi.HTTPEndpoint, e
 		return nil, nil
 	}
 
-	endpoints := make([]endpointapi.HTTPEndpoint, len(ends))
+	endpoints := make([]*endpointapi.HTTPEndpoint, len(ends))
 	for i, e := range ends {
 		var endpoint endpointapi.HTTPEndpoint
 		if err := json.Unmarshal(e, &endpoint); err != nil {
 			return nil, fmt.Errorf("error deserializing http endpoint: %s", err)
 		}
 
-		endpoints[i] = endpoint
+		endpoints[i] = &endpoint
 	}
 
 	return endpoints, nil

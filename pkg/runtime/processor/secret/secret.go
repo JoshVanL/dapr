@@ -60,7 +60,7 @@ func New(opts Options) *secret {
 	}
 }
 
-func (s *secret) Init(ctx context.Context, comp compapi.Component) error {
+func (s *secret) Init(ctx context.Context, comp *compapi.Component) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
@@ -89,7 +89,7 @@ func (s *secret) Init(ctx context.Context, comp compapi.Component) error {
 	return nil
 }
 
-func (s *secret) Close(comp compapi.Component) error {
+func (s *secret) Close(comp *compapi.Component) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 

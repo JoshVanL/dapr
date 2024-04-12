@@ -22,7 +22,7 @@ import (
 
 // Outbox defines the interface for all Outbox pattern operations combining state and pubsub.
 type Outbox interface {
-	AddOrUpdateOutbox(stateStore v1alpha1.Component)
+	AddOrUpdateOutbox(stateStore *v1alpha1.Component)
 	Enabled(stateStore string) bool
 	PublishInternal(ctx context.Context, stateStore string, states []state.TransactionalStateOperation, source, traceID, traceState string) ([]state.TransactionalStateOperation, error)
 	SubscribeToInternalTopics(ctx context.Context, appID string) error

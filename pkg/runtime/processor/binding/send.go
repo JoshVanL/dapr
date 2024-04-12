@@ -60,7 +60,7 @@ func (b *binding) StartReadingFromBindings(ctx context.Context) error {
 	b.inputCancels = make(map[string]context.CancelFunc)
 
 	comps := b.compStore.ListComponents()
-	bindings := make(map[string]componentsV1alpha1.Component)
+	bindings := make(map[string]*componentsV1alpha1.Component)
 	for i, c := range comps {
 		if strings.HasPrefix(c.Spec.Type, string(components.CategoryBindings)) {
 			bindings[c.ObjectMeta.Name] = comps[i]
@@ -76,7 +76,7 @@ func (b *binding) StartReadingFromBindings(ctx context.Context) error {
 	return nil
 }
 
-func (b *binding) startInputBinding(comp componentsV1alpha1.Component, binding bindings.InputBinding) error {
+func (b *binding) startInputBinding(comp *componentsV1alpha1.Component, binding bindings.InputBinding) error {
 	var isSubscribed bool
 
 	meta, err := b.meta.ToBaseMetadata(comp)

@@ -54,10 +54,10 @@ func New(options Options) *Meta {
 	}
 }
 
-func (m *Meta) ToBaseMetadata(comp compapi.Component) (metadata.Base, error) {
+func (m *Meta) ToBaseMetadata(comp *compapi.Component) (metadata.Base, error) {
 	// Add global wasm strict sandbox config to the wasm component metadata
 	if components.IsWasmComponentType(comp.Spec.Type) {
-		m.AddWasmStrictSandbox(&comp)
+		m.AddWasmStrictSandbox(comp)
 	}
 
 	props, err := m.convertItemsToProps(comp.Spec.Metadata)

@@ -47,7 +47,7 @@ func New(opts Options) *lock {
 	}
 }
 
-func (l *lock) Init(ctx context.Context, comp compapi.Component) error {
+func (l *lock) Init(ctx context.Context, comp *compapi.Component) error {
 	// create the component
 	fName := comp.LogName()
 	store, err := l.registry.Create(comp.Spec.Type, comp.Spec.Version, fName)
@@ -88,7 +88,7 @@ func (l *lock) Init(ctx context.Context, comp compapi.Component) error {
 	return nil
 }
 
-func (l *lock) Close(comp compapi.Component) error {
+func (l *lock) Close(comp *compapi.Component) error {
 	lock, ok := l.compStore.GetLock(comp.ObjectMeta.Name)
 	if !ok {
 		return nil

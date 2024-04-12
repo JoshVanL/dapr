@@ -73,13 +73,13 @@ func (r *resource[T]) List(ctx context.Context) (*differ.LocalRemoteResources[T]
 		return nil, err
 	}
 
-	remotes := make([]T, len(resp))
+	remotes := make([]*T, len(resp))
 	for i, c := range resp {
 		var obj T
 		if err := json.Unmarshal(c, &obj); err != nil {
 			return nil, fmt.Errorf("error deserializing object: %s", err)
 		}
-		remotes[i] = obj
+		remotes[i] = &obj
 	}
 
 	return &differ.LocalRemoteResources[T]{

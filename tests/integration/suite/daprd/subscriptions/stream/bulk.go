@@ -29,14 +29,14 @@ import (
 )
 
 func init() {
-	suite.Register(new(basic))
+	suite.Register(new(bulk))
 }
 
-type basic struct {
+type bulk struct {
 	daprd *daprd.Daprd
 }
 
-func (b *basic) Setup(t *testing.T) []framework.Option {
+func (b *bulk) Setup(t *testing.T) []framework.Option {
 	app := app.New(t)
 	b.daprd = daprd.New(t,
 		daprd.WithAppProtocol("grpc"),
@@ -55,7 +55,7 @@ spec:
 	}
 }
 
-func (b *basic) Run(t *testing.T, ctx context.Context) {
+func (b *bulk) Run(t *testing.T, ctx context.Context) {
 	b.daprd.WaitUntilRunning(t, ctx)
 
 	client := b.daprd.GRPCClient(t, ctx)
@@ -69,33 +69,44 @@ func (b *basic) Run(t *testing.T, ctx context.Context) {
 			},
 		},
 	}))
+	t.Cleanup(func() {
+		require.NoError(t, stream.CloseSend())
+	})
 
 	assert.EventuallyWithT(t, func(c *assert.CollectT) {
 		assert.Len(c, b.daprd.GetMetaSubscriptions(c, ctx), 1)
 	}, time.Second*10, time.Millisecond*10)
 
-	_, err = client.PublishEvent(ctx, &rtv1.PublishEventRequest{
-		PubsubName: "mypub", Topic: "a",
-		Data:            []byte(`{"status": "completed"}`),
-		DataContentType: "application/json",
+	errCh := make(chan error, 8)
+	go func() {
+		for i := 0; i < 4; i++ {
+			event, serr := stream.Recv()
+			errCh <- serr
+			errCh <- stream.Send(&rtv1.SubscribeTopicEventsRequest{
+				SubscribeTopicEventsRequestType: &rtv1.SubscribeTopicEventsRequest_EventResponse{
+					EventResponse: &rtv1.SubscribeTopicEventsResponse{
+						Id:     event.GetId(),
+						Status: &rtv1.TopicEventResponse{Status: rtv1.TopicEventResponse_SUCCESS},
+					},
+				},
+			})
+		}
+	}()
+
+	resp, err := client.BulkPublishEventAlpha1(ctx, &rtv1.BulkPublishRequest{
+		PubsubName: "mypub",
+		Topic:      "a",
+		Entries: []*rtv1.BulkPublishRequestEntry{
+			{EntryId: "1", Event: []byte(`{"id": 1}`), ContentType: "application/json"},
+			{EntryId: "2", Event: []byte(`{"id": 2}`), ContentType: "application/json"},
+			{EntryId: "3", Event: []byte(`{"id": 3}`), ContentType: "application/json"},
+			{EntryId: "4", Event: []byte(`{"id": 4}`), ContentType: "application/json"},
+		},
 	})
 	require.NoError(t, err)
+	assert.Empty(t, len(resp.GetFailedEntries()))
 
-	event, err := stream.Recv()
-	require.NoError(t, err)
-	assert.Equal(t, "a", event.GetTopic())
-	assert.Equal(t, "mypub", event.GetPubsubName())
-	assert.JSONEq(t, `{"status": "completed"}`, string(event.GetData()))
-	assert.Equal(t, "/", event.GetPath())
-
-	require.NoError(t, stream.Send(&rtv1.SubscribeTopicEventsRequest{
-		SubscribeTopicEventsRequestType: &rtv1.SubscribeTopicEventsRequest_EventResponse{
-			EventResponse: &rtv1.SubscribeTopicEventsResponse{
-				Id:     event.GetId(),
-				Status: &rtv1.TopicEventResponse{Status: rtv1.TopicEventResponse_SUCCESS},
-			},
-		},
-	}))
-
-	require.NoError(t, stream.CloseSend())
+	for i := 0; i < 8; i++ {
+		require.NoError(t, <-errCh)
+	}
 }

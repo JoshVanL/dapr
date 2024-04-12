@@ -68,6 +68,7 @@ func (p *pubsub) startSubscriptions(ctx context.Context) error {
 }
 
 func (p *pubsub) stopSubscriptions() {
+	p.subCacheWarm = false
 	for subKey := range p.topicCancels {
 		p.unsubscribeTopic(subKey)
 		p.compStore.DeleteTopicRoute(subKey)
@@ -78,12 +79,10 @@ func (p *pubsub) stopSubscriptions() {
 func (p *pubsub) ReloadSubscriptions(ctx context.Context) error {
 	p.lock.Lock()
 	defer p.lock.Unlock()
-	p.compStore.SetSubscriptions(nil)
 	isSubscribing := p.subscribing
 	if !isSubscribing {
 		return nil
 	}
-	p.compStore.SetTopicRoutes(nil)
 	p.stopSubscriptions()
 	return p.startSubscriptions(ctx)
 }
@@ -112,8 +111,8 @@ func (p *pubsub) beginPubSub(ctx context.Context, name string) error {
 
 // topicRoutes returns a map of topic routes for all pubsubs.
 func (p *pubsub) topicRoutes(ctx context.Context) (map[string]compstore.TopicRoutes, error) {
-	if routes := p.compStore.GetTopicRoutes(); len(routes) > 0 {
-		return routes, nil
+	if p.subCacheWarm {
+		return p.compStore.GetTopicRoutes(), nil
 	}
 
 	topicRoutes := make(map[string]compstore.TopicRoutes)
@@ -123,7 +122,7 @@ func (p *pubsub) topicRoutes(ctx context.Context) (map[string]compstore.TopicRou
 		return topicRoutes, nil
 	}
 
-	subscriptions, err := p.subscriptions(ctx)
+	subscriptions, err := p.loadSubscriptions(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -155,16 +154,11 @@ func (p *pubsub) topicRoutes(ctx context.Context) (map[string]compstore.TopicRou
 		}
 	}
 	p.compStore.SetTopicRoutes(topicRoutes)
+	p.subCacheWarm = true
 	return topicRoutes, nil
 }
 
-func (p *pubsub) subscriptions(ctx context.Context) ([]rtpubsub.Subscription, error) {
-	// Check nil so that GetSubscriptions is not called twice, even if there is
-	// no subscriptions.
-	if subs := p.compStore.ListSubscriptions(); subs != nil {
-		return subs, nil
-	}
-
+func (p *pubsub) loadSubscriptions(ctx context.Context) ([]*rtpubsub.Subscription, error) {
 	appChannel := p.channels.AppChannel()
 	if appChannel == nil {
 		log.Warn("app channel not initialized, make sure -app-port is specified if pubsub subscription is required")
@@ -172,13 +166,13 @@ func (p *pubsub) subscriptions(ctx context.Context) ([]rtpubsub.Subscription, er
 	}
 
 	var (
-		subscriptions []rtpubsub.Subscription
-		err           error
+		programatic []rtpubsub.Subscription
+		err         error
 	)
 
 	// handle app subscriptions
 	if p.isHTTP {
-		subscriptions, err = rtpubsub.GetSubscriptionsHTTP(ctx, appChannel, log, p.resiliency)
+		programatic, err = rtpubsub.GetSubscriptionsHTTP(ctx, appChannel, log, p.resiliency)
 	} else {
 		var conn grpc.ClientConnInterface
 		conn, err = p.grpc.GetAppClient()
@@ -186,79 +180,13 @@ func (p *pubsub) subscriptions(ctx context.Context) ([]rtpubsub.Subscription, er
 			return nil, fmt.Errorf("error while getting app client: %w", err)
 		}
 		client := runtimev1pb.NewAppCallbackClient(conn)
-		subscriptions, err = rtpubsub.GetSubscriptionsGRPC(ctx, client, log, p.resiliency)
+		programatic, err = rtpubsub.GetSubscriptionsGRPC(ctx, client, log, p.resiliency)
 	}
 	if err != nil {
 		return nil, err
 	}
 
-	// handle declarative subscriptions
-	ds, err := p.declarativeSubscriptions(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for _, s := range ds {
-		skip := false
+	p.compStore.SetProgramaticSubscriptions(programatic...)
 
-		// don't register duplicate subscriptions
-		for _, sub := range subscriptions {
-			if sub.PubsubName == s.PubsubName && sub.Topic == s.Topic {
-				log.Warnf("two identical subscriptions found (sources: declarative, app endpoint). pubsubname: %s, topic: %s",
-					s.PubsubName, s.Topic)
-				skip = true
-				break
-			}
-		}
-
-		if !skip {
-			subscriptions = append(subscriptions, s)
-		}
-	}
-
-	// If subscriptions is nil, set to empty slice to prevent successive calls.
-	if subscriptions == nil {
-		subscriptions = make([]rtpubsub.Subscription, 0)
-	}
-
-	p.compStore.SetSubscriptions(subscriptions)
-	return subscriptions, nil
-}
-
-// Refer for state store api decision
-// https://github.com/dapr/dapr/blob/master/docs/decision_records/api/API-008-multi-state-store-api-design.md
-func (p *pubsub) declarativeSubscriptions(ctx context.Context) ([]rtpubsub.Subscription, error) {
-	subsv2 := p.compStore.ListDeclarativeSubscriptions()
-
-	subs := make([]rtpubsub.Subscription, len(subsv2))
-
-	for i, subv2 := range subsv2 {
-		sub := rtpubsub.Subscription{
-			PubsubName:      subv2.Spec.Pubsubname,
-			Topic:           subv2.Spec.Topic,
-			DeadLetterTopic: subv2.Spec.DeadLetterTopic,
-			Metadata:        subv2.Spec.Metadata,
-			Scopes:          subv2.Scopes,
-			BulkSubscribe: &rtpubsub.BulkSubscribe{
-				Enabled:            subv2.Spec.BulkSubscribe.Enabled,
-				MaxMessagesCount:   subv2.Spec.BulkSubscribe.MaxMessagesCount,
-				MaxAwaitDurationMs: subv2.Spec.BulkSubscribe.MaxAwaitDurationMs,
-			},
-		}
-		for _, rule := range subv2.Spec.Routes.Rules {
-			erule, err := rtpubsub.CreateRoutingRule(rule.Match, rule.Path)
-			if err != nil {
-				return nil, err
-			}
-			sub.Rules = append(sub.Rules, erule)
-		}
-		if len(subv2.Spec.Routes.Default) > 0 {
-			sub.Rules = append(sub.Rules, &rtpubsub.Rule{
-				Path: subv2.Spec.Routes.Default,
-			})
-		}
-
-		subs[i] = sub
-	}
-
-	return subs, nil
+	return p.compStore.ListSubscriptions(log), nil
 }

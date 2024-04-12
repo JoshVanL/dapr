@@ -18,5 +18,5 @@ import (
 )
 
 type Store[T differ.Resource] interface {
-	List() []T
+	List() []*T
 }

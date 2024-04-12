@@ -28,6 +28,6 @@ func NewSubscriptions(compStore *compstore.ComponentStore) Store[subapi.Subscrip
 	}
 }
 
-func (s *subscriptions) List() []subapi.Subscription {
+func (s *subscriptions) List() []*subapi.Subscription {
 	return s.compStore.ListDeclarativeSubscriptions()
 }

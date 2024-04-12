@@ -27,11 +27,11 @@ var log = logger.NewLogger("dapr.runtime.authorizer")
 
 // Type of function that determines if a component is authorized.
 // The function receives the component and must return true if the component is authorized.
-type ComponentAuthorizer func(component componentsapi.Component) bool
+type ComponentAuthorizer func(component *componentsapi.Component) bool
 
 // Type of function that determines if an http endpoint is authorized.
 // The function receives the http endpoint and must return true if the http endpoint is authorized.
-type HTTPEndpointAuthorizer func(endpoint httpendpointsapi.HTTPEndpoint) bool
+type HTTPEndpointAuthorizer func(endpoint *httpendpointsapi.HTTPEndpoint) bool
 
 type Options struct {
 	ID           string
@@ -77,13 +77,13 @@ func (a *Authorizer) GetAuthorizedObjects(objects any, authorizer func(any) bool
 
 func (a *Authorizer) IsObjectAuthorized(object any) bool {
 	switch obj := object.(type) {
-	case httpendpointsapi.HTTPEndpoint:
+	case *httpendpointsapi.HTTPEndpoint:
 		for _, auth := range a.httpEndpointAuthorizers {
 			if !auth(obj) {
 				return false
 			}
 		}
-	case componentsapi.Component:
+	case *componentsapi.Component:
 		for _, auth := range a.componentAuthorizers {
 			if !auth(obj) {
 				return false
@@ -93,7 +93,7 @@ func (a *Authorizer) IsObjectAuthorized(object any) bool {
 	return true
 }
 
-func (a *Authorizer) namespaceHTTPEndpointAuthorizer(endpoint httpendpointsapi.HTTPEndpoint) bool {
+func (a *Authorizer) namespaceHTTPEndpointAuthorizer(endpoint *httpendpointsapi.HTTPEndpoint) bool {
 	switch {
 	case a.namespace == "",
 		endpoint.ObjectMeta.Namespace == "",
@@ -104,7 +104,7 @@ func (a *Authorizer) namespaceHTTPEndpointAuthorizer(endpoint httpendpointsapi.H
 	}
 }
 
-func (a *Authorizer) namespaceComponentAuthorizer(comp componentsapi.Component) bool {
+func (a *Authorizer) namespaceComponentAuthorizer(comp *componentsapi.Component) bool {
 	if a.namespace == "" || comp.ObjectMeta.Namespace == "" || (a.namespace != "" && comp.ObjectMeta.Namespace == a.namespace) {
 		return comp.IsAppScoped(a.id)
 	}

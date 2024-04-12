@@ -223,7 +223,7 @@ func (c *Channels) initEndpointChannels() (map[string]channel.HTTPEndpointAppCha
 	return channels, nil
 }
 
-func (c *Channels) getHTTPEndpointAppChannel(endpoint httpendpapi.HTTPEndpoint) (channelhttp.ChannelConfiguration, error) {
+func (c *Channels) getHTTPEndpointAppChannel(endpoint *httpendpapi.HTTPEndpoint) (channelhttp.ChannelConfiguration, error) {
 	conf := channelhttp.ChannelConfiguration{
 		CompStore:          c.compStore,
 		MaxConcurrency:     c.appConnectionConfig.MaxConcurrency,

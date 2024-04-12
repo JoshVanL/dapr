@@ -106,10 +106,10 @@ type Processor struct {
 	binding         BindingManager
 	workflowBackend WorkflowBackendManager
 
-	pendingHTTPEndpoints       chan httpendpointsapi.HTTPEndpoint
-	pendingComponents          chan componentsapi.Component
+	pendingHTTPEndpoints       chan *httpendpointsapi.HTTPEndpoint
+	pendingComponents          chan *componentsapi.Component
 	pendingComponentsWaiting   sync.WaitGroup
-	pendingComponentDependents map[string][]componentsapi.Component
+	pendingComponentDependents map[string][]*componentsapi.Component
 	subErrCh                   chan error
 
 	lock     sync.RWMutex
@@ -171,9 +171,9 @@ func New(opts Options) *Processor {
 
 	return &Processor{
 		appID:                      opts.ID,
-		pendingHTTPEndpoints:       make(chan httpendpointsapi.HTTPEndpoint),
-		pendingComponents:          make(chan componentsapi.Component),
-		pendingComponentDependents: make(map[string][]componentsapi.Component),
+		pendingHTTPEndpoints:       make(chan *httpendpointsapi.HTTPEndpoint),
+		pendingComponents:          make(chan *componentsapi.Component),
+		pendingComponentDependents: make(map[string][]*componentsapi.Component),
 		subErrCh:                   make(chan error),
 		closedCh:                   make(chan struct{}),
 		compStore:                  opts.ComponentStore,

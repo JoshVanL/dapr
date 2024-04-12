@@ -27,7 +27,7 @@ import (
 )
 
 // Init initializes a component of a category.
-func (p *Processor) Init(ctx context.Context, comp componentsapi.Component) error {
+func (p *Processor) Init(ctx context.Context, comp *componentsapi.Component) error {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
@@ -48,7 +48,7 @@ func (p *Processor) Init(ctx context.Context, comp componentsapi.Component) erro
 }
 
 // Close closes the component.
-func (p *Processor) Close(comp componentsapi.Component) error {
+func (p *Processor) Close(comp *componentsapi.Component) error {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
@@ -66,7 +66,7 @@ func (p *Processor) Close(comp componentsapi.Component) error {
 	return nil
 }
 
-func (p *Processor) AddPendingComponent(ctx context.Context, comp componentsapi.Component) bool {
+func (p *Processor) AddPendingComponent(ctx context.Context, comp *componentsapi.Component) bool {
 	p.chlock.RLock()
 	defer p.chlock.RUnlock()
 
@@ -88,8 +88,8 @@ func (p *Processor) AddPendingComponent(ctx context.Context, comp componentsapi.
 }
 
 func (p *Processor) processComponents(ctx context.Context) error {
-	process := func(comp componentsapi.Component) error {
-		if comp.Name == "" {
+	process := func(comp *componentsapi.Component) error {
+		if comp == nil {
 			return nil
 		}
 
@@ -121,9 +121,9 @@ func (p *Processor) WaitForEmptyComponentQueue() {
 	p.pendingComponentsWaiting.Wait()
 }
 
-func (p *Processor) processComponentAndDependents(ctx context.Context, comp componentsapi.Component) error {
+func (p *Processor) processComponentAndDependents(ctx context.Context, comp *componentsapi.Component) error {
 	log.Debug("Loading component: " + comp.LogName())
-	res := p.preprocessOneComponent(ctx, &comp)
+	res := p.preprocessOneComponent(ctx, comp)
 	if res.unreadyDependency != "" {
 		p.pendingComponentDependents[res.unreadyDependency] = append(p.pendingComponentDependents[res.unreadyDependency], comp)
 		return nil
@@ -184,7 +184,7 @@ func (p *Processor) preprocessOneComponent(ctx context.Context, comp *components
 	return componentPreprocessRes{}
 }
 
-func (p *Processor) category(comp componentsapi.Component) components.Category {
+func (p *Processor) category(comp *componentsapi.Component) components.Category {
 	for category := range p.managers {
 		if strings.HasPrefix(comp.Spec.Type, string(category)+".") {
 			return category

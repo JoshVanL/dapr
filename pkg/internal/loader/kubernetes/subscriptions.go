@@ -41,7 +41,7 @@ func NewSubscriptions(opts Options) loader.Loader[subapi.Subscription] {
 	}
 }
 
-func (s *subscriptions) Load(ctx context.Context) ([]subapi.Subscription, error) {
+func (s *subscriptions) Load(ctx context.Context) ([]*subapi.Subscription, error) {
 	resp, err := s.client.ListSubscriptionsV2(ctx, &operatorv1pb.ListSubscriptionsRequest{
 		Namespace: s.namespace,
 		PodName:   s.podName,
@@ -51,14 +51,14 @@ func (s *subscriptions) Load(ctx context.Context) ([]subapi.Subscription, error)
 	}
 	subs := resp.GetSubscriptions()
 
-	subscriptions := make([]subapi.Subscription, len(subs))
+	subscriptions := make([]*subapi.Subscription, len(subs))
 	for i, s := range subs {
 		var subscription subapi.Subscription
 		if err := json.Unmarshal(s, &subscription); err != nil {
 			return nil, fmt.Errorf("error deserializing subscription: %s", err)
 		}
 
-		subscriptions[i] = subscription
+		subscriptions[i] = &subscription
 	}
 
 	return subscriptions, nil

@@ -27,9 +27,7 @@ import (
 	"github.com/dapr/components-contrib/workflows"
 	compsv1alpha1 "github.com/dapr/dapr/pkg/apis/components/v1alpha1"
 	httpEndpointV1alpha1 "github.com/dapr/dapr/pkg/apis/httpEndpoint/v1alpha1"
-	subapi "github.com/dapr/dapr/pkg/apis/subscriptions/v2alpha1"
 	"github.com/dapr/dapr/pkg/config"
-	rtpubsub "github.com/dapr/dapr/pkg/runtime/pubsub"
 )
 
 // ComponentStore is a store of all components which have been configured for the
@@ -38,25 +36,24 @@ import (
 type ComponentStore struct {
 	lock sync.RWMutex
 
-	states                   map[string]state.Store
-	configurations           map[string]configuration.Store
-	configurationSubscribes  map[string]chan struct{}
-	secretsConfigurations    map[string]config.SecretsScope
-	secrets                  map[string]secretstores.SecretStore
-	inputBindings            map[string]bindings.InputBinding
-	inputBindingRoutes       map[string]string
-	outputBindings           map[string]bindings.OutputBinding
-	locks                    map[string]lock.Store
-	pubSubs                  map[string]PubsubItem
-	topicRoutes              map[string]TopicRoutes
-	workflowComponents       map[string]workflows.Workflow
-	workflowBackends         map[string]backend.Backend
-	cryptoProviders          map[string]crypto.SubtleCrypto
-	components               []compsv1alpha1.Component
-	subscriptions            []rtpubsub.Subscription
-	declarativeSubscriptions []subapi.Subscription
-	httpEndpoints            []httpEndpointV1alpha1.HTTPEndpoint
-	actorStateStore          struct {
+	states                  map[string]state.Store
+	configurations          map[string]configuration.Store
+	configurationSubscribes map[string]chan struct{}
+	secretsConfigurations   map[string]config.SecretsScope
+	secrets                 map[string]secretstores.SecretStore
+	inputBindings           map[string]bindings.InputBinding
+	inputBindingRoutes      map[string]string
+	outputBindings          map[string]bindings.OutputBinding
+	locks                   map[string]lock.Store
+	pubSubs                 map[string]PubsubItem
+	topicRoutes             map[string]TopicRoutes
+	workflowComponents      map[string]workflows.Workflow
+	workflowBackends        map[string]backend.Backend
+	cryptoProviders         map[string]crypto.SubtleCrypto
+	components              []*compsv1alpha1.Component
+	subscriptions           *keyedSubscriptions
+	httpEndpoints           []*httpEndpointV1alpha1.HTTPEndpoint
+	actorStateStore         struct {
 		name  string
 		store state.Store
 	}
@@ -81,5 +78,6 @@ func New() *ComponentStore {
 		workflowBackends:        make(map[string]backend.Backend),
 		cryptoProviders:         make(map[string]crypto.SubtleCrypto),
 		topicRoutes:             make(map[string]TopicRoutes),
+		subscriptions:           new(keyedSubscriptions),
 	}
 }

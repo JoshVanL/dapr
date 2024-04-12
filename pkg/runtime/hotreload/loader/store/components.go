@@ -28,6 +28,6 @@ func NewComponents(compStore *compstore.ComponentStore) Store[compapi.Component]
 	}
 }
 
-func (c *components) List() []compapi.Component {
+func (c *components) List() []*compapi.Component {
 	return c.compStore.ListComponents()
 }

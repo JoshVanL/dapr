@@ -290,7 +290,7 @@ func newDaprRuntime(ctx context.Context,
 			comps := rt.compStore.ListComponents()
 			errCh := make(chan error)
 			for _, comp := range comps {
-				go func(comp compapi.Component) {
+				go func(comp *compapi.Component) {
 					log.Infof("Shutting down component %s", comp.LogName())
 					errCh <- rt.processor.Close(comp)
 				}(comp)
@@ -1010,7 +1010,7 @@ func (a *DaprRuntime) loadComponents(ctx context.Context) error {
 		return err
 	}
 
-	authorizedComps := a.authz.GetAuthorizedObjects(comps, a.authz.IsObjectAuthorized).([]compapi.Component)
+	authorizedComps := a.authz.GetAuthorizedObjects(comps, a.authz.IsObjectAuthorized).([]*compapi.Component)
 
 	// Iterate through the list twice
 	// First, we look for secret stores and load those, then all other components
@@ -1070,7 +1070,7 @@ func (a *DaprRuntime) flushOutstandingHTTPEndpoints(ctx context.Context) {
 	log.Info("Waiting for all outstanding http endpoints to be processed…")
 	// We flush by sending a no-op http endpoint. Since the processHTTPEndpoints goroutine only reads one http endpoint at a time,
 	// We know that once the no-op http endpoint is read from the channel, all previous http endpoints will have been fully processed.
-	a.processor.AddPendingEndpoint(ctx, endpointapi.HTTPEndpoint{})
+	a.processor.AddPendingEndpoint(ctx, nil)
 	log.Info("All outstanding http endpoints processed")
 }
 
@@ -1078,7 +1078,7 @@ func (a *DaprRuntime) flushOutstandingComponents(ctx context.Context) {
 	log.Info("Waiting for all outstanding components to be processed…")
 	// We flush by sending a no-op component. Since the processComponents goroutine only reads one component at a time,
 	// We know that once the no-op component is read from the channel, all previous components will have been fully processed.
-	a.processor.AddPendingComponent(ctx, compapi.Component{})
+	a.processor.AddPendingComponent(ctx, nil)
 	log.Info("All outstanding components processed")
 }
 
@@ -1105,7 +1105,7 @@ func (a *DaprRuntime) loadHTTPEndpoints(ctx context.Context) error {
 		return err
 	}
 
-	authorizedHTTPEndpoints := a.authz.GetAuthorizedObjects(endpoints, a.authz.IsObjectAuthorized).([]endpointapi.HTTPEndpoint)
+	authorizedHTTPEndpoints := a.authz.GetAuthorizedObjects(endpoints, a.authz.IsObjectAuthorized).([]*endpointapi.HTTPEndpoint)
 
 	for _, e := range authorizedHTTPEndpoints {
 		log.Infof("Found http endpoint: %s", e.Name)
@@ -1225,7 +1225,7 @@ func (a *DaprRuntime) appendBuiltinSecretStore(ctx context.Context) {
 	switch a.runtimeConfig.mode {
 	case modes.KubernetesMode:
 		// Preload Kubernetes secretstore
-		a.processor.AddPendingComponent(ctx, compapi.Component{
+		a.processor.AddPendingComponent(ctx, &compapi.Component{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: secretstoresLoader.BuiltinKubernetesSecretStore,
 			},

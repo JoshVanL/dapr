@@ -34,14 +34,14 @@ type Resource interface {
 }
 
 type Result[T Resource] struct {
-	Deleted []T
-	Updated []T
-	Created []T
+	Deleted []*T
+	Updated []*T
+	Created []*T
 }
 
 type LocalRemoteResources[T Resource] struct {
-	Local  []T
-	Remote []T
+	Local  []*T
+	Remote []*T
 }
 
 // Diff returns the difference between the local and remote resources of the
@@ -58,7 +58,7 @@ func Diff[T Resource](resources *LocalRemoteResources[T]) *Result[T] {
 
 	// deleted are the resources which exist locally but which don't exist
 	// remotely or have changed.
-	deleted := detectDiff(resources.Remote, resources.Local, func(r T) bool {
+	deleted := detectDiff(resources.Remote, resources.Local, func(r *T) bool {
 		if comp, ok := any(r).(componentsapi.Component); ok {
 			// Ignore the built-in Kubernetes secret store and workflow engine.
 			if comp.Name == secretstores.BuiltinKubernetesSecretStore &&
@@ -78,13 +78,13 @@ func Diff[T Resource](resources *LocalRemoteResources[T]) *Result[T] {
 	var result Result[T]
 
 	for i := range deleted {
-		if _, ok := missing[deleted[i].GetName()]; !ok {
+		if _, ok := missing[(*deleted[i]).GetName()]; !ok {
 			result.Deleted = append(result.Deleted, deleted[i])
 		}
 	}
 
 	for i := range missing {
-		if _, ok := deleted[missing[i].GetName()]; ok {
+		if _, ok := deleted[(*missing[i]).GetName()]; ok {
 			result.Updated = append(result.Updated, missing[i])
 		} else {
 			result.Created = append(result.Created, missing[i])
@@ -100,8 +100,8 @@ func Diff[T Resource](resources *LocalRemoteResources[T]) *Result[T] {
 // target.
 // If skipTarget is not nil, if it called on target resources, and if returns
 // true, will skip checking whether that base resource exists in the target.
-func detectDiff[T Resource](base, target []T, skipTarget func(T) bool) map[string]T {
-	notExist := make(map[string]T)
+func detectDiff[T Resource](base, target []*T, skipTarget func(*T) bool) map[string]*T {
+	notExist := make(map[string]*T)
 	for i := range target {
 		if skipTarget != nil && skipTarget(target[i]) {
 			continue
@@ -115,7 +115,7 @@ func detectDiff[T Resource](base, target []T, skipTarget func(T) bool) map[strin
 			}
 		}
 		if !found {
-			notExist[target[i].GetName()] = target[i]
+			notExist[(*target[i]).GetName()] = target[i]
 		}
 	}
 
@@ -123,12 +123,12 @@ func detectDiff[T Resource](base, target []T, skipTarget func(T) bool) map[strin
 }
 
 // AreSame returns true if the resources have the same functional spec.
-func AreSame[T Resource](r1, r2 T) bool {
+func AreSame[T Resource](r1, r2 *T) bool {
 	return reflect.DeepEqual(toComparableObj(r1), toComparableObj(r2))
 }
 
 // toComparableObj returns the object but which strips out values which should
 // not be compared as they don't change the spec of the resource.
-func toComparableObj[T Resource](r T) metav1.Object {
-	return r.EmptyMetaDeepCopy()
+func toComparableObj[T Resource](r *T) metav1.Object {
+	return (*r).EmptyMetaDeepCopy()
 }

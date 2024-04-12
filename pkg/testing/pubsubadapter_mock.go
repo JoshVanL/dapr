@@ -50,7 +50,7 @@ func (a *MockPubSubAdapter) Outbox() outbox.Outbox {
 
 type outboxMock struct{}
 
-func (o *outboxMock) AddOrUpdateOutbox(stateStore v1alpha1.Component) {}
+func (o *outboxMock) AddOrUpdateOutbox(stateStore *v1alpha1.Component) {}
 
 func (o *outboxMock) Enabled(stateStore string) bool {
 	return false

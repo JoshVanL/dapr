@@ -24,23 +24,19 @@ import (
 	rtv1 "github.com/dapr/dapr/pkg/proto/runtime/v1"
 	"github.com/dapr/dapr/tests/integration/framework"
 	"github.com/dapr/dapr/tests/integration/framework/process/daprd"
-	"github.com/dapr/dapr/tests/integration/framework/process/grpc/app"
 	"github.com/dapr/dapr/tests/integration/suite"
 )
 
 func init() {
-	suite.Register(new(basic))
+	suite.Register(new(noapp))
 }
 
-type basic struct {
+type noapp struct {
 	daprd *daprd.Daprd
 }
 
-func (b *basic) Setup(t *testing.T) []framework.Option {
-	app := app.New(t)
-	b.daprd = daprd.New(t,
-		daprd.WithAppProtocol("grpc"),
-		daprd.WithAppPort(app.Port(t)),
+func (n *noapp) Setup(t *testing.T) []framework.Option {
+	n.daprd = daprd.New(t,
 		daprd.WithResourceFiles(`apiVersion: dapr.io/v1alpha1
 kind: Component
 metadata:
@@ -51,14 +47,14 @@ spec:
 `))
 
 	return []framework.Option{
-		framework.WithProcesses(app, b.daprd),
+		framework.WithProcesses(n.daprd),
 	}
 }
 
-func (b *basic) Run(t *testing.T, ctx context.Context) {
-	b.daprd.WaitUntilRunning(t, ctx)
+func (n *noapp) Run(t *testing.T, ctx context.Context) {
+	n.daprd.WaitUntilRunning(t, ctx)
 
-	client := b.daprd.GRPCClient(t, ctx)
+	client := n.daprd.GRPCClient(t, ctx)
 
 	stream, err := client.SubscribeTopicEvents(ctx)
 	require.NoError(t, err)
@@ -71,7 +67,7 @@ func (b *basic) Run(t *testing.T, ctx context.Context) {
 	}))
 
 	assert.EventuallyWithT(t, func(c *assert.CollectT) {
-		assert.Len(c, b.daprd.GetMetaSubscriptions(c, ctx), 1)
+		assert.Len(c, n.daprd.GetMetaSubscriptions(c, ctx), 1)
 	}, time.Second*10, time.Millisecond*10)
 
 	_, err = client.PublishEvent(ctx, &rtv1.PublishEventRequest{
@@ -86,7 +82,6 @@ func (b *basic) Run(t *testing.T, ctx context.Context) {
 	assert.Equal(t, "a", event.GetTopic())
 	assert.Equal(t, "mypub", event.GetPubsubName())
 	assert.JSONEq(t, `{"status": "completed"}`, string(event.GetData()))
-	assert.Equal(t, "/", event.GetPath())
 
 	require.NoError(t, stream.Send(&rtv1.SubscribeTopicEventsRequest{
 		SubscribeTopicEventsRequestType: &rtv1.SubscribeTopicEventsRequest_EventResponse{

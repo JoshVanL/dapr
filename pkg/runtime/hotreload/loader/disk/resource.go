@@ -112,7 +112,7 @@ func (r *resource[T]) triggerDiff(ctx context.Context, conn *loader.StreamConn[T
 	// updated, and created. This ensures we close before initing a resource
 	// with the same name.
 	for _, group := range []struct {
-		resources []T
+		resources []*T
 		eventType operatorpb.ResourceEventType
 	}{
 		{r.currentResult.Deleted, operatorpb.ResourceEventType_DELETED},

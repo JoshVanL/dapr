@@ -50,7 +50,7 @@ func (s *streamconn) registerPublishResponse(id string) (chan *rtv1pb.SubscribeT
 	s.lock.Unlock()
 	return ch, func() {
 		s.lock.Lock()
-		defer s.lock.Unlock()
 		delete(s.publishResponses, id)
+		s.lock.Unlock()
 	}
 }

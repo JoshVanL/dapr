@@ -52,7 +52,7 @@ type Key struct {
 }
 
 // ComponentEncryptionKey checks if a component definition contains an encryption key and extracts it using the supplied secret store.
-func ComponentEncryptionKey(component v1alpha1.Component, secretStore secretstores.SecretStore) (ComponentEncryptionKeys, error) {
+func ComponentEncryptionKey(component *v1alpha1.Component, secretStore secretstores.SecretStore) (ComponentEncryptionKeys, error) {
 	if secretStore == nil {
 		return ComponentEncryptionKeys{}, nil
 	}

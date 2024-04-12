@@ -64,7 +64,7 @@ func (s *subscriptions) recv() (*loader.Event[subapi.Subscription], error) {
 	}
 
 	return &loader.Event[subapi.Subscription]{
-		Resource: subscription,
+		Resource: &subscription,
 		Type:     event.GetType(),
 	}, nil
 }

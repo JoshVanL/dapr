@@ -50,7 +50,7 @@ func New(opts Options) *workflow {
 	}
 }
 
-func (w *workflow) Init(ctx context.Context, comp compapi.Component) error {
+func (w *workflow) Init(ctx context.Context, comp *compapi.Component) error {
 	w.lock.Lock()
 	defer w.lock.Unlock()
 
@@ -86,7 +86,7 @@ func (w *workflow) Init(ctx context.Context, comp compapi.Component) error {
 	return nil
 }
 
-func (w *workflow) Close(comp compapi.Component) error {
+func (w *workflow) Close(comp *compapi.Component) error {
 	w.lock.Lock()
 	defer w.lock.Unlock()
 

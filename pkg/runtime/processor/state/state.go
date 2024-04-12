@@ -68,7 +68,7 @@ func New(opts Options) *state {
 	}
 }
 
-func (s *state) Init(ctx context.Context, comp compapi.Component) error {
+func (s *state) Init(ctx context.Context, comp *compapi.Component) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
@@ -83,7 +83,7 @@ func (s *state) Init(ctx context.Context, comp compapi.Component) error {
 		return nil
 	}
 
-	secretStoreName := s.meta.AuthSecretStoreOrDefault(&comp)
+	secretStoreName := s.meta.AuthSecretStoreOrDefault(comp)
 
 	secretStore, _ := s.compStore.GetSecretStore(secretStoreName)
 	encKeys, err := encryption.ComponentEncryptionKey(comp, secretStore)
@@ -151,7 +151,7 @@ func (s *state) Init(ctx context.Context, comp compapi.Component) error {
 	return nil
 }
 
-func (s *state) Close(comp compapi.Component) error {
+func (s *state) Close(comp *compapi.Component) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 

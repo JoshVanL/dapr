@@ -20,14 +20,14 @@ import (
 	"github.com/dapr/dapr/utils"
 )
 
-func (p *Processor) AddSubscription(ctx context.Context, subscriptions ...subapi.Subscription) bool {
+func (p *Processor) AddSubscription(ctx context.Context, subscriptions ...*subapi.Subscription) bool {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 	if p.shutdown.Load() {
 		return false
 	}
 
-	scopedSubs := make([]subapi.Subscription, 0, len(subscriptions))
+	scopedSubs := make([]*subapi.Subscription, 0, len(subscriptions))
 	for i, subscription := range subscriptions {
 		if len(subscription.Scopes) > 0 && !utils.Contains[string](subscription.Scopes, p.appID) {
 			continue
@@ -56,7 +56,7 @@ func (p *Processor) AddSubscription(ctx context.Context, subscriptions ...subapi
 	return true
 }
 
-func (p *Processor) CloseSubscription(ctx context.Context, sub subapi.Subscription) error {
+func (p *Processor) CloseSubscription(ctx context.Context, sub *subapi.Subscription) error {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 	if _, ok := p.compStore.GetDeclarativeSubscription(sub.Name); !ok {

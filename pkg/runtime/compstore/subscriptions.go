@@ -17,8 +17,18 @@ import (
 	"fmt"
 
 	subapi "github.com/dapr/dapr/pkg/apis/subscriptions/v2alpha1"
+	rtv1pb "github.com/dapr/dapr/pkg/proto/runtime/v1"
 	rtpubsub "github.com/dapr/dapr/pkg/runtime/pubsub"
+	"github.com/dapr/kit/logger"
 )
+
+type keyedSubscriptions struct {
+	streamKeys      []string
+	streams         []*rtpubsub.Subscription
+	declarativeObjs []*subapi.Subscription
+	declaratives    []*rtpubsub.Subscription
+	programatic     []*rtpubsub.Subscription
+}
 
 type TopicRoutes map[string]TopicRouteElem
 
@@ -47,50 +57,105 @@ func (c *ComponentStore) GetTopicRoutes() map[string]TopicRoutes {
 	return c.topicRoutes
 }
 
-func (c *ComponentStore) SetSubscriptions(subscriptions []rtpubsub.Subscription) {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-	c.subscriptions = subscriptions
-}
-
-func (c *ComponentStore) ListSubscriptions() []rtpubsub.Subscription {
+func (c *ComponentStore) ListSubscriptions(log logger.Logger) []*rtpubsub.Subscription {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
-	return c.subscriptions
-}
 
-func (c *ComponentStore) AddDeclarativeSubscription(subscriptions ...subapi.Subscription) error {
-	c.lock.Lock()
-	defer c.lock.Unlock()
+	subscriptions := make([]*rtpubsub.Subscription, len(c.subscriptions.streams)+len(c.subscriptions.programatic))
+	copy(subscriptions, c.subscriptions.streams)
+	copy(subscriptions[len(c.subscriptions.streams):], c.subscriptions.programatic)
 
-	for _, sub := range subscriptions {
-		for _, existing := range c.declarativeSubscriptions {
-			if existing.ObjectMeta.Name == sub.ObjectMeta.Name {
-				return fmt.Errorf("subscription with name %s already exists", sub.ObjectMeta.Name)
+	for _, sub := range c.subscriptions.declaratives {
+		skip := false
+
+		// don't register duplicate subscriptions
+		for _, s := range subscriptions {
+			if sub.PubsubName == s.PubsubName && sub.Topic == s.Topic {
+				log.Warnf("two identical subscriptions found (sources: declarative, app endpoint). pubsubname: %s, topic: %s",
+					s.PubsubName, s.Topic)
+				skip = true
+				break
 			}
+		}
+
+		if !skip {
+			subscriptions = append(subscriptions, sub)
 		}
 	}
 
-	c.declarativeSubscriptions = append(c.declarativeSubscriptions, subscriptions...)
+	return subscriptions
+}
+
+func (c *ComponentStore) SetProgramaticSubscriptions(subs ...rtpubsub.Subscription) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	c.subscriptions.programatic = make([]*rtpubsub.Subscription, len(subs))
+	for i := range subs {
+		c.subscriptions.programatic[i] = &subs[i]
+	}
+}
+
+func (c *ComponentStore) AddDeclarativeSubscription(objs ...*subapi.Subscription) error {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
+	for i := range objs {
+		obj := objs[i]
+
+		for _, existing := range c.subscriptions.declarativeObjs {
+			if existing.Name == obj.Name {
+				return fmt.Errorf("subscription with name %s already exists", obj.Name)
+			}
+		}
+
+		sub := rtpubsub.Subscription{
+			PubsubName:      obj.Spec.Pubsubname,
+			Topic:           obj.Spec.Topic,
+			DeadLetterTopic: obj.Spec.DeadLetterTopic,
+			Metadata:        obj.Spec.Metadata,
+			Scopes:          obj.Scopes,
+			BulkSubscribe: &rtpubsub.BulkSubscribe{
+				Enabled:            obj.Spec.BulkSubscribe.Enabled,
+				MaxMessagesCount:   obj.Spec.BulkSubscribe.MaxMessagesCount,
+				MaxAwaitDurationMs: obj.Spec.BulkSubscribe.MaxAwaitDurationMs,
+			},
+		}
+		for _, rule := range obj.Spec.Routes.Rules {
+			erule, err := rtpubsub.CreateRoutingRule(rule.Match, rule.Path)
+			if err != nil {
+				return err
+			}
+			sub.Rules = append(sub.Rules, erule)
+		}
+		if len(obj.Spec.Routes.Default) > 0 {
+			sub.Rules = append(sub.Rules, &rtpubsub.Rule{
+				Path: obj.Spec.Routes.Default,
+			})
+		}
+
+		c.subscriptions.declarativeObjs = append(c.subscriptions.declarativeObjs, obj)
+		c.subscriptions.declaratives = append(c.subscriptions.declaratives, &sub)
+	}
 
 	return nil
 }
 
-func (c *ComponentStore) ListDeclarativeSubscriptions() []subapi.Subscription {
+func (c *ComponentStore) ListDeclarativeSubscriptions() []*subapi.Subscription {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
-	return c.declarativeSubscriptions
+	return c.subscriptions.declarativeObjs
 }
 
-func (c *ComponentStore) GetDeclarativeSubscription(name string) (subapi.Subscription, bool) {
+func (c *ComponentStore) GetDeclarativeSubscription(name string) (*subapi.Subscription, bool) {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
-	for i, sub := range c.declarativeSubscriptions {
+	for i, sub := range c.subscriptions.declarativeObjs {
 		if sub.ObjectMeta.Name == name {
-			return c.declarativeSubscriptions[i], true
+			return c.subscriptions.declarativeObjs[i], true
 		}
 	}
-	return subapi.Subscription{}, false
+
+	return nil, false
 }
 
 func (c *ComponentStore) DeleteDeclaraiveSubscription(names ...string) {
@@ -98,9 +163,49 @@ func (c *ComponentStore) DeleteDeclaraiveSubscription(names ...string) {
 	defer c.lock.Unlock()
 
 	for _, name := range names {
-		for i, sub := range c.declarativeSubscriptions {
+		for i, sub := range c.subscriptions.declarativeObjs {
 			if sub.ObjectMeta.Name == name {
-				c.declarativeSubscriptions = append(c.declarativeSubscriptions[:i], c.declarativeSubscriptions[i+1:]...)
+				c.subscriptions.declarativeObjs = append(c.subscriptions.declarativeObjs[:i], c.subscriptions.declarativeObjs[i+1:]...)
+				c.subscriptions.declaratives = append(c.subscriptions.declaratives[:i], c.subscriptions.declaratives[i+1:]...)
+				break
+			}
+		}
+	}
+}
+
+func (c *ComponentStore) AddStreamSubscription(key string, req *rtv1pb.SubscribeTopicEventsInitialRequest) error {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
+	for _, existing := range c.subscriptions.streamKeys {
+		if existing == key {
+			return fmt.Errorf("stream subscription with key %s already exists", key)
+		}
+	}
+
+	sub := rtpubsub.Subscription{
+		PubsubName:      req.GetPubsubName(),
+		Topic:           req.GetTopic(),
+		DeadLetterTopic: req.GetDeadLetterTopic(),
+		Metadata:        req.GetMetadata(),
+		Rules:           []*rtpubsub.Rule{{Path: "/"}},
+	}
+
+	c.subscriptions.streamKeys = append(c.subscriptions.streamKeys, key)
+	c.subscriptions.streams = append(c.subscriptions.streams, &sub)
+
+	return nil
+}
+
+func (c *ComponentStore) DeleteStreamSubscription(keys ...string) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
+	for _, key := range keys {
+		for i, k := range c.subscriptions.streamKeys {
+			if key == k {
+				c.subscriptions.streamKeys = append(c.subscriptions.streamKeys[:i], c.subscriptions.streamKeys[i+1:]...)
+				c.subscriptions.streams = append(c.subscriptions.streams[:i], c.subscriptions.streams[i+1:]...)
 				break
 			}
 		}

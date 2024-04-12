@@ -20,7 +20,7 @@ import (
 	compsv1alpha1 "github.com/dapr/dapr/pkg/apis/components/v1alpha1"
 )
 
-func (c *ComponentStore) GetComponent(name string) (compsv1alpha1.Component, bool) {
+func (c *ComponentStore) GetComponent(name string) (*compsv1alpha1.Component, bool) {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 	for i, comp := range c.components {
@@ -28,10 +28,10 @@ func (c *ComponentStore) GetComponent(name string) (compsv1alpha1.Component, boo
 			return c.components[i], true
 		}
 	}
-	return compsv1alpha1.Component{}, false
+	return nil, false
 }
 
-func (c *ComponentStore) AddPendingComponentForCommit(component compsv1alpha1.Component) error {
+func (c *ComponentStore) AddPendingComponentForCommit(component *compsv1alpha1.Component) error {
 	c.compPendingLock.Lock()
 	c.lock.Lock()
 	defer c.lock.Unlock()
@@ -48,7 +48,7 @@ func (c *ComponentStore) AddPendingComponentForCommit(component compsv1alpha1.Co
 		}
 	}
 
-	c.compPending = &component
+	c.compPending = component
 
 	return nil
 }
@@ -75,17 +75,17 @@ func (c *ComponentStore) CommitPendingComponent() error {
 		return errors.New("no pending component to commit")
 	}
 
-	c.components = append(c.components, *c.compPending)
+	c.components = append(c.components, c.compPending)
 	c.compPending = nil
 	c.compPendingLock.Unlock()
 
 	return nil
 }
 
-func (c *ComponentStore) ListComponents() []compsv1alpha1.Component {
+func (c *ComponentStore) ListComponents() []*compsv1alpha1.Component {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
-	comps := make([]compsv1alpha1.Component, len(c.components))
+	comps := make([]*compsv1alpha1.Component, len(c.components))
 	copy(comps, c.components)
 	return comps
 }

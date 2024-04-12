@@ -45,7 +45,7 @@ func NewComponents(opts Options) loader.Loader[compapi.Component] {
 }
 
 // Load loads dapr components from a given directory.
-func (c *components) Load(ctx context.Context) ([]compapi.Component, error) {
+func (c *components) Load(ctx context.Context) ([]*compapi.Component, error) {
 	resp, err := c.client.ListComponents(ctx, &operatorv1pb.ListComponentsRequest{
 		Namespace: c.namespace,
 		PodName:   c.podName,
@@ -55,14 +55,14 @@ func (c *components) Load(ctx context.Context) ([]compapi.Component, error) {
 	}
 	comps := resp.GetComponents()
 
-	components := make([]compapi.Component, len(comps))
+	components := make([]*compapi.Component, len(comps))
 	for i, c := range comps {
 		var component compapi.Component
 		if err := json.Unmarshal(c, &component); err != nil {
 			return nil, fmt.Errorf("error deserializing component: %s", err)
 		}
 
-		components[i] = component
+		components[i] = &component
 	}
 	return components, nil
 }

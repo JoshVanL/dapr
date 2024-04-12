@@ -22,10 +22,7 @@ import (
 	"sync"
 	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
 	contribpubsub "github.com/dapr/components-contrib/pubsub"
-	subapi "github.com/dapr/dapr/pkg/apis/subscriptions/v2alpha1"
 	"github.com/dapr/dapr/pkg/config"
 	diag "github.com/dapr/dapr/pkg/diagnostics"
 	rtv1pb "github.com/dapr/dapr/pkg/proto/runtime/v1"
@@ -52,6 +49,10 @@ func (s *streamer) Subscribe(stream rtv1pb.Dapr_SubscribeTopicEventsServer) erro
 
 	req := ireq.GetInitialRequest()
 
+	if req == nil {
+		return errors.New("initial request is required")
+	}
+
 	if len(req.GetPubsubName()) == 0 {
 		return errors.New("pubsubName name is required")
 	}
@@ -74,24 +75,14 @@ func (s *streamer) Subscribe(stream rtv1pb.Dapr_SubscribeTopicEventsServer) erro
 	}
 	s.subscribers[key] = conn
 
-	objName := "__dapr_streamer_" + key
-	if err := s.compStore.AddDeclarativeSubscription(subapi.Subscription{
-		ObjectMeta: metav1.ObjectMeta{Name: objName},
-		Spec: subapi.SubscriptionSpec{
-			Pubsubname:      req.GetPubsubName(),
-			Topic:           req.GetTopic(),
-			DeadLetterTopic: req.GetDeadLetterTopic(),
-			Metadata:        req.GetMetadata(),
-			Routes:          subapi.Routes{Default: "/"},
-		},
-	}); err != nil {
+	if err := s.compStore.AddStreamSubscription(key, req); err != nil {
 		delete(s.subscribers, key)
 		s.lock.Unlock()
 		return err
 	}
 
 	if err := s.pubsub.ReloadSubscriptions(stream.Context()); err != nil {
-		s.compStore.DeleteDeclaraiveSubscription(objName)
+		s.compStore.DeleteStreamSubscription(key)
 		delete(s.subscribers, key)
 		s.lock.Unlock()
 		return err
@@ -102,7 +93,7 @@ func (s *streamer) Subscribe(stream rtv1pb.Dapr_SubscribeTopicEventsServer) erro
 
 	defer func() {
 		s.lock.Lock()
-		s.compStore.DeleteDeclaraiveSubscription(objName)
+		s.compStore.DeleteStreamSubscription(key)
 		delete(s.subscribers, key)
 		s.lock.Unlock()
 		if err := s.pubsub.ReloadSubscriptions(stream.Context()); err != nil {
@@ -121,23 +112,27 @@ func (s *streamer) Subscribe(stream rtv1pb.Dapr_SubscribeTopicEventsServer) erro
 
 		if err != nil {
 			log.Errorf("error receiving message from client stream: %s", err)
-			continue
+			return err
+		}
+
+		eventResp := resp.GetEventResponse()
+		if eventResp == nil {
+			return errors.New("duplicate initial request received")
 		}
 
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			conn.notifyPublishResponse(stream.Context(), resp.GetEventResponse())
+			conn.notifyPublishResponse(stream.Context(), eventResp)
 		}()
 	}
 }
 
 func (s *streamer) Publish(ctx context.Context, msg *rtpubsub.SubscribedMessage) (bool, error) {
 	s.lock.RLock()
-	defer s.lock.RUnlock()
-
 	key := streamerKey(msg.PubSub, msg.Topic)
 	conn, ok := s.subscribers[key]
+	s.lock.RUnlock()
 	if !ok {
 		return false, nil
 	}

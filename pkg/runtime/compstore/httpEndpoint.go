@@ -15,7 +15,7 @@ package compstore
 
 import httpEndpointv1alpha1 "github.com/dapr/dapr/pkg/apis/httpEndpoint/v1alpha1"
 
-func (c *ComponentStore) GetHTTPEndpoint(name string) (httpEndpointv1alpha1.HTTPEndpoint, bool) {
+func (c *ComponentStore) GetHTTPEndpoint(name string) (*httpEndpointv1alpha1.HTTPEndpoint, bool) {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 	for i, endpoint := range c.httpEndpoints {
@@ -23,10 +23,10 @@ func (c *ComponentStore) GetHTTPEndpoint(name string) (httpEndpointv1alpha1.HTTP
 			return c.httpEndpoints[i], true
 		}
 	}
-	return httpEndpointv1alpha1.HTTPEndpoint{}, false
+	return nil, false
 }
 
-func (c *ComponentStore) AddHTTPEndpoint(httpEndpoint httpEndpointv1alpha1.HTTPEndpoint) {
+func (c *ComponentStore) AddHTTPEndpoint(httpEndpoint *httpEndpointv1alpha1.HTTPEndpoint) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
@@ -40,10 +40,10 @@ func (c *ComponentStore) AddHTTPEndpoint(httpEndpoint httpEndpointv1alpha1.HTTPE
 	c.httpEndpoints = append(c.httpEndpoints, httpEndpoint)
 }
 
-func (c *ComponentStore) ListHTTPEndpoints() []httpEndpointv1alpha1.HTTPEndpoint {
+func (c *ComponentStore) ListHTTPEndpoints() []*httpEndpointv1alpha1.HTTPEndpoint {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
-	endpoints := make([]httpEndpointv1alpha1.HTTPEndpoint, len(c.httpEndpoints))
+	endpoints := make([]*httpEndpointv1alpha1.HTTPEndpoint, len(c.httpEndpoints))
 	copy(endpoints, c.httpEndpoints)
 	return endpoints
 }

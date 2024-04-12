@@ -50,8 +50,8 @@ type Reconciler[T differ.Resource] struct {
 
 type manager[T differ.Resource] interface {
 	loader.Loader[T]
-	update(context.Context, T)
-	delete(context.Context, T)
+	update(context.Context, *T)
+	delete(context.Context, *T)
 }
 
 func NewComponents(opts Options[compapi.Component]) *Reconciler[compapi.Component] {
@@ -132,7 +132,7 @@ func (r *Reconciler[T]) reconcile(ctx context.Context, result *differ.Result[T])
 
 	var wg sync.WaitGroup
 	for _, group := range []struct {
-		resources []T
+		resources []*T
 		eventType operatorpb.ResourceEventType
 	}{
 		{result.Deleted, operatorpb.ResourceEventType_DELETED},
@@ -141,7 +141,7 @@ func (r *Reconciler[T]) reconcile(ctx context.Context, result *differ.Result[T])
 	} {
 		wg.Add(len(group.resources))
 		for _, resource := range group.resources {
-			go func(resource T, eventType operatorpb.ResourceEventType) {
+			go func(resource *T, eventType operatorpb.ResourceEventType) {
 				defer wg.Done()
 				r.handleEvent(ctx, &loader.Event[T]{
 					Type:     eventType,
@@ -155,17 +155,17 @@ func (r *Reconciler[T]) reconcile(ctx context.Context, result *differ.Result[T])
 }
 
 func (r *Reconciler[T]) handleEvent(ctx context.Context, event *loader.Event[T]) {
-	log.Debugf("Received %s event %s: %s", event.Resource.Kind(), event.Type, event.Resource.LogName())
+	log.Debugf("Received %s event %s: %s", (*event.Resource).Kind(), event.Type, (*event.Resource).LogName())
 
 	switch event.Type {
 	case operatorpb.ResourceEventType_CREATED:
-		log.Infof("Received %s creation: %s", r.kind, event.Resource.LogName())
+		log.Infof("Received %s creation: %s", r.kind, (*event.Resource).LogName())
 		r.manager.update(ctx, event.Resource)
 	case operatorpb.ResourceEventType_UPDATED:
-		log.Infof("Received %s update: %s", r.kind, event.Resource.LogName())
+		log.Infof("Received %s update: %s", r.kind, (*event.Resource).LogName())
 		r.manager.update(ctx, event.Resource)
 	case operatorpb.ResourceEventType_DELETED:
-		log.Infof("Received %s deletion, closing: %s", r.kind, event.Resource.LogName())
+		log.Infof("Received %s deletion, closing: %s", r.kind, (*event.Resource).LogName())
 		r.manager.delete(ctx, event.Resource)
 	}
 }

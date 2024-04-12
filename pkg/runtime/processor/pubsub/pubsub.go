@@ -77,9 +77,10 @@ type pubsub struct {
 	channels       *channels.Channels
 	operatorClient operatorv1.OperatorClient
 
-	lock        sync.RWMutex
-	subscribing bool
-	stopForever bool
+	lock         sync.RWMutex
+	subCacheWarm bool
+	subscribing  bool
+	stopForever  bool
 
 	topicCancels map[string]context.CancelFunc
 	outbox       outbox.Outbox
@@ -113,7 +114,7 @@ func New(opts Options) *pubsub {
 	return ps
 }
 
-func (p *pubsub) Init(ctx context.Context, comp compapi.Component) error {
+func (p *pubsub) Init(ctx context.Context, comp *compapi.Component) error {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
@@ -162,7 +163,7 @@ func (p *pubsub) Init(ctx context.Context, comp compapi.Component) error {
 	return nil
 }
 
-func (p *pubsub) Close(comp compapi.Component) error {
+func (p *pubsub) Close(comp *compapi.Component) error {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 

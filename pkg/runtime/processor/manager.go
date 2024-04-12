@@ -29,8 +29,8 @@ import (
 
 // manager implements the life cycle events of a component category.
 type manager interface {
-	Init(context.Context, componentsapi.Component) error
-	Close(componentsapi.Component) error
+	Init(context.Context, *componentsapi.Component) error
+	Close(*componentsapi.Component) error
 }
 
 type StateManager interface {
@@ -67,7 +67,7 @@ type WorkflowBackendManager interface {
 	Backend() (backend.Backend, bool)
 }
 
-func (p *Processor) managerFromComp(comp componentsapi.Component) (manager, error) {
+func (p *Processor) managerFromComp(comp *componentsapi.Component) (manager, error) {
 	category := p.category(comp)
 	m, ok := p.managers[category]
 	if !ok {
