@@ -77,11 +77,11 @@ func (a *api) onCreateScheduleHandler() http.HandlerFunc {
 
 				job := &runtimev1pb.Job{
 					Name:     chi.URLParam(r, nameParam),
-					Schedule: in.GetJob().GetSchedule(),
-					Data:     in.GetJob().GetData(),
-					Repeats:  in.GetJob().GetRepeats(),
-					DueTime:  in.GetJob().GetDueTime(),
-					Ttl:      in.GetJob().GetTtl(),
+					Schedule: in.GetJob().Schedule,
+					Data:     in.GetJob().Data,
+					Repeats:  in.GetJob().Repeats,
+					DueTime:  in.GetJob().DueTime,
+					Ttl:      in.GetJob().Ttl,
 				}
 
 				in.Job = job

@@ -30,6 +30,7 @@ import (
 
 	"github.com/microsoft/durabletask-go/api"
 	"github.com/microsoft/durabletask-go/backend"
+	"google.golang.org/protobuf/types/known/anypb"
 
 	"github.com/dapr/dapr/pkg/actors"
 	diag "github.com/dapr/dapr/pkg/diagnostics"
@@ -59,11 +60,6 @@ type workflowActor struct {
 	activityResultAwaited atomic.Bool
 }
 
-type durableTimer struct {
-	Bytes      []byte `json:"bytes"`
-	Generation uint64 `json:"generation"`
-}
-
 type recoverableError struct {
 	cause error
 }
@@ -75,10 +71,6 @@ type CreateWorkflowInstanceRequest struct {
 
 // workflowScheduler is a func interface for pushing workflow (orchestration) work items into the backend
 type workflowScheduler func(ctx context.Context, wi *backend.OrchestrationWorkItem) error
-
-func NewDurableTimer(bytes []byte, generation uint64) durableTimer {
-	return durableTimer{bytes, generation}
-}
 
 func newRecoverableError(err error) recoverableError {
 	return recoverableError{cause: err}
@@ -425,21 +417,19 @@ func (wf *workflowActor) runWorkflow(ctx context.Context, reminder actors.Intern
 	}
 
 	if strings.HasPrefix(reminder.Name, "timer-") {
-		var timerData durableTimer
-		if err = reminder.DecodeData(&timerData); err != nil {
-			// Likely the result of an incompatible durable task timer format change. This is non-recoverable.
-			return err
+		var timerData internalsv1pb.TimerFiredEvent
+		if err := reminder.Data.UnmarshalTo(&timerData); err != nil {
+			return fmt.Errorf("failed to unmarshal timer fired event: %w", err)
 		}
 		if timerData.Generation < state.Generation {
 			wfLogger.Infof("Workflow actor '%s': ignoring durable timer from previous generation '%v'", wf.actorID, timerData.Generation)
 			return nil
 		} else {
-			e, eventErr := backend.UnmarshalHistoryEvent(timerData.Bytes)
-			if eventErr != nil {
-				// Likely the result of an incompatible durable task timer format change. This is non-recoverable.
-				return fmt.Errorf("failed to unmarshal timer data %w", eventErr)
+			var historyEvent backend.HistoryEvent
+			if err := reminder.Data.UnmarshalTo(&historyEvent); err != nil {
+				return fmt.Errorf("failed to unmarshal timer history event: %w", err)
 			}
-			state.Inbox = append(state.Inbox, e)
+			state.Inbox = append(state.Inbox, &historyEvent)
 		}
 	}
 
@@ -561,18 +551,16 @@ func (wf *workflowActor) runWorkflow(ctx context.Context, reminder actors.Intern
 			if tf == nil {
 				return errors.New("invalid event in the PendingTimers list")
 			}
-			timerBytes, errMarshal := backend.MarshalHistoryEvent(t)
-			if errMarshal != nil {
-				return fmt.Errorf("failed to marshal pending timer data: %w", errMarshal)
-			}
 			delay := time.Until(tf.GetFireAt().AsTime())
 			if delay < 0 {
 				delay = 0
 			}
 			reminderPrefix := "timer-" + strconv.Itoa(int(tf.GetTimerId()))
-			data := NewDurableTimer(timerBytes, state.Generation)
 			wfLogger.Debugf("Workflow actor '%s': creating reminder '%s' for the durable timer", wf.actorID, reminderPrefix)
-			if _, err = wf.createReliableReminder(ctx, reminderPrefix, data, delay); err != nil {
+			if _, err = wf.createReliableReminder(ctx, reminderPrefix, &internalsv1pb.TimerFiredEvent{
+				FireAt:  tf.FireAt,
+				TimerId: tf.TimerId,
+			}, delay); err != nil {
 				executionStatus = diag.StatusRecoverable
 				return newRecoverableError(fmt.Errorf("actor '%s' failed to create reminder for timer: %w", wf.actorID, err))
 			}
@@ -772,7 +760,7 @@ func (wf *workflowActor) saveInternalState(ctx context.Context, state *workflowS
 	return nil
 }
 
-func (wf *workflowActor) createReliableReminder(ctx context.Context, namePrefix string, data any, delay time.Duration) (string, error) {
+func (wf *workflowActor) createReliableReminder(ctx context.Context, namePrefix string, event *internalsv1pb.TimerFiredEvent, delay time.Duration) (string, error) {
 	// Reminders need to have unique names or else they may not fire in certain race conditions.
 	b := make([]byte, 6)
 	_, err := io.ReadFull(rand.Reader, b)
@@ -782,15 +770,15 @@ func (wf *workflowActor) createReliableReminder(ctx context.Context, namePrefix 
 	reminderName := namePrefix + "-" + base64.RawURLEncoding.EncodeToString(b)
 	wfLogger.Debugf("Workflow actor '%s': creating '%s' reminder with DueTime = '%s'", wf.actorID, reminderName, delay)
 
-	dataEnc, err := json.Marshal(data)
+	data, err := anypb.New(event)
 	if err != nil {
-		return reminderName, fmt.Errorf("failed to encode data as JSON: %w", err)
+		return reminderName, fmt.Errorf("failed to create reminder data: %w", err)
 	}
 
 	return reminderName, wf.actors.CreateReminder(ctx, &actors.CreateReminderRequest{
 		ActorType: wf.config.workflowActorType,
 		ActorID:   wf.actorID,
-		Data:      dataEnc,
+		Data:      data,
 		DueTime:   delay.String(),
 		Name:      reminderName,
 		Period:    wf.reminderInterval.String(),

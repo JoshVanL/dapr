@@ -24,16 +24,27 @@ import (
 	"github.com/dapr/dapr/pkg/modes"
 )
 
-func (s *Server) conf() *embed.Config {
+func config(opts Options) (*embed.Config, error) {
+	clientPorts := make(map[string]string)
+	for _, input := range opts.EtcdClientPorts {
+		idAndPort := strings.Split(input, "=")
+		if len(idAndPort) != 2 {
+			return nil, fmt.Errorf("Incorrect format for client ports: %s. Should contain <id>=<client-port>", input)
+		}
+		schedulerID := strings.TrimSpace(idAndPort[0])
+		port := strings.TrimSpace(idAndPort[1])
+		clientPorts[schedulerID] = port
+	}
+
 	config := embed.NewConfig()
 
-	config.Name = s.etcdID
-	config.Dir = s.dataDir
-	config.InitialCluster = strings.Join(s.etcdInitialPeers, ",")
+	config.Name = opts.EtcdID
+	config.Dir = opts.DataDir
+	config.InitialCluster = strings.Join(opts.EtcdInitialPeers, ",")
 
-	etcdURL, peerPort, err := peerHostAndPort(s.etcdID, s.etcdInitialPeers)
+	etcdURL, peerPort, err := peerHostAndPort(opts.EtcdID, opts.EtcdInitialPeers)
 	if err != nil {
-		log.Warnf("Invalid format for initial cluster. Make sure to include 'http://' in Scheduler URL")
+		return nil, err
 	}
 
 	config.AdvertisePeerUrls = []url.URL{{
@@ -43,10 +54,10 @@ func (s *Server) conf() *embed.Config {
 
 	config.AdvertiseClientUrls = []url.URL{{
 		Scheme: "http",
-		Host:   fmt.Sprintf("%s:%s", etcdURL, s.etcdClientPorts[s.etcdID]),
+		Host:   fmt.Sprintf("%s:%s", etcdURL, clientPorts[opts.EtcdID]),
 	}}
 
-	switch s.mode {
+	switch opts.Mode {
 	// can't use domain name for k8s for config.ListenPeerUrls && config.ListenClientUrls
 	case modes.KubernetesMode:
 		etcdIP := "0.0.0.0"
@@ -56,7 +67,7 @@ func (s *Server) conf() *embed.Config {
 		}}
 		config.ListenClientUrls = []url.URL{{
 			Scheme: "http",
-			Host:   fmt.Sprintf("%s:%s", etcdIP, s.etcdClientPorts[s.etcdID]),
+			Host:   fmt.Sprintf("%s:%s", etcdIP, clientPorts[opts.EtcdID]),
 		}}
 	default:
 		config.ListenPeerUrls = []url.URL{{
@@ -65,7 +76,7 @@ func (s *Server) conf() *embed.Config {
 		}}
 		config.ListenClientUrls = []url.URL{{
 			Scheme: "http",
-			Host:   fmt.Sprintf("%s:%s", etcdURL, s.etcdClientPorts[s.etcdID]),
+			Host:   fmt.Sprintf("%s:%s", etcdURL, clientPorts[opts.EtcdID]),
 		}}
 	}
 
@@ -76,7 +87,7 @@ func (s *Server) conf() *embed.Config {
 	// TODO: Cassie do extra validation if people forget to put http:// -> dont fail silently
 	// TODO: Cassie do extra validation to ensure that the list of ids sent in for the clientPort == list of ids from initial cluster
 
-	return config
+	return config, nil
 }
 
 func peerHostAndPort(name string, initialCluster []string) (string, string, error) {

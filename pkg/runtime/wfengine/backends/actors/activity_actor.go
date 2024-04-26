@@ -121,7 +121,7 @@ func (a *activityActor) InvokeMethod(ctx context.Context, methodName string, dat
 	}
 
 	// The actual execution is triggered by a reminder
-	err = a.createReliableReminder(ctx, nil)
+	err = a.createReliableReminder(ctx)
 	return nil, err
 }
 
@@ -357,17 +357,12 @@ func (a *activityActor) purgeActivityState(ctx context.Context) error {
 	return nil
 }
 
-func (a *activityActor) createReliableReminder(ctx context.Context, data any) error {
+func (a *activityActor) createReliableReminder(ctx context.Context) error {
 	const reminderName = "run-activity"
 	wfLogger.Debugf("Activity actor '%s': creating reminder '%s' for immediate execution", a.actorID, reminderName)
-	dataEnc, err := json.Marshal(data)
-	if err != nil {
-		return fmt.Errorf("failed to encode data as JSON: %w", err)
-	}
 	return a.actorRuntime.CreateReminder(ctx, &actors.CreateReminderRequest{
 		ActorType: a.config.activityActorType,
 		ActorID:   a.actorID,
-		Data:      dataEnc,
 		DueTime:   "0s",
 		Name:      reminderName,
 		Period:    a.reminderInterval.String(),

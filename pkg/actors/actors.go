@@ -55,7 +55,7 @@ import (
 	"github.com/dapr/dapr/pkg/resiliency"
 	"github.com/dapr/dapr/pkg/retry"
 	"github.com/dapr/dapr/pkg/runtime/compstore"
-	"github.com/dapr/dapr/pkg/runtime/scheduler"
+	"github.com/dapr/dapr/pkg/runtime/scheduler/clients"
 	"github.com/dapr/dapr/pkg/security"
 	"github.com/dapr/kit/logger"
 	"github.com/dapr/kit/ptr"
@@ -86,6 +86,7 @@ type ActorRuntime interface {
 	IsActorHosted(ctx context.Context, req *ActorHostedRequest) bool
 	GetRuntimeStatus(ctx context.Context) *runtimev1pb.ActorRuntime
 	RegisterInternalActor(ctx context.Context, actorType string, actor InternalActorFactory, actorIdleTimeout time.Duration) error
+	Entites() []string
 }
 
 // Actors allow calling into virtual actors as well as actor state management.
@@ -116,7 +117,7 @@ type GRPCConnectionFn func(ctx context.Context, address string, id string, names
 type actorsRuntime struct {
 	appChannel         channel.AppChannel
 	placement          placement.PlacementService
-	schedulerManager   *scheduler.Manager
+	schedulerClients   *clients.Clients
 	placementEnabled   bool
 	grpcConnectionFn   GRPCConnectionFn
 	actorsConfig       Config
@@ -130,6 +131,7 @@ type actorsRuntime struct {
 	clock              clock.WithTicker
 	internalActorTypes *haxmap.Map[string, InternalActorFactory]
 	internalActors     *haxmap.Map[string, InternalActor]
+	entities           []string
 	sec                security.Handler
 	checker            *health.Checker
 	wg                 sync.WaitGroup
@@ -228,7 +230,7 @@ func newActorsWithClock(opts ActorsOpts, clock clock.WithTicker) (ActorRuntime, 
 
 	a.timers.SetExecuteTimerFn(a.executeTimer)
 
-	if opts.Config.SchedulerManager != nil {
+	if opts.Config.SchedulerClients != nil {
 		log.Info("Using Scheduler service for reminders.")
 	}
 
@@ -301,11 +303,16 @@ func (a *actorsRuntime) Init(ctx context.Context) (err error) {
 		}()
 	}
 
+	for actorType := range a.actorsConfig.EntityConfigs {
+		a.entities = append(a.entities, actorType)
+	}
+
 	for _, actorType := range hat {
 		err = a.placement.AddHostedActorType(actorType, a.actorsConfig.GetIdleTimeoutForType(actorType))
 		if err != nil {
 			return fmt.Errorf("failed to register actor '%s': %w", actorType, err)
 		}
+		a.entities = append(a.entities, actorType)
 	}
 
 	a.wg.Add(1)
@@ -1182,45 +1189,39 @@ func (a *actorsRuntime) doExecuteReminderOrTimer(ctx context.Context, reminder *
 }
 
 func (a *actorsRuntime) CreateReminder(ctx context.Context, req *CreateReminderRequest) error {
-	if a.schedulerManager != nil {
-		metadata := map[string]string{
-			"scope":        "actor",
-			"namespace":    a.actorsConfig.Namespace,
-			"appId":        a.actorsConfig.AppID,
-			"actorType":    req.ActorType,
-			"actorId":      req.ActorID,
-			"reminder":     req.Name,
-			"content-type": "application/json",
+	if a.schedulerClients != nil {
+		var dueTime *string
+		if len(req.DueTime) > 0 {
+			dueTime = ptr.Of(req.DueTime)
 		}
-
-		jobName := constructCompositeKey(
-			a.actorsConfig.Namespace,
-			"reminder",
-			req.ActorType,
-			req.ActorID,
-			req.Name,
-		)
-
-		data, err := req.Data.MarshalJSON()
-		if err != nil {
-			return err
+		var ttl *string
+		if len(req.TTL) > 0 {
+			ttl = ptr.Of(req.TTL)
 		}
 
 		internalScheduleJobReq := &schedulerv1pb.ScheduleJobRequest{
-			Job: &runtimev1pb.Job{
-				Name:     jobName,
-				Schedule: "@every " + req.Period,
-				Data: &anypb.Any{
-					TypeUrl: "type.googleapis.com/google.protobuf.BytesValue",
-					Value:   data, // TODO: this should go to actorStateStore
-				},
-				DueTime: req.DueTime,
-				Ttl:     req.TTL,
+			Name: req.Name,
+			Job: &schedulerv1pb.Job{
+				Schedule: ptr.Of("@every " + req.Period),
+				DueTime:  dueTime,
+				Ttl:      ttl,
+				Data:     req.Data,
 			},
-			Metadata: metadata,
+			Metadata: &schedulerv1pb.ScheduleJobMetadata{
+				AppId:     a.actorsConfig.AppID,
+				Namespace: a.actorsConfig.Namespace,
+				Type: &schedulerv1pb.ScheduleJobMetadataType{
+					Source: &schedulerv1pb.ScheduleJobMetadataType_Actor{
+						Actor: &schedulerv1pb.ScheduleJobMetadataSourceActorReminder{
+							Id:   req.ActorID,
+							Type: req.ActorType,
+						},
+					},
+				},
+			},
 		}
 
-		_, err = a.schedulerManager.NextClient().ScheduleJob(ctx, internalScheduleJobReq)
+		_, err := a.schedulerClients.Next().ScheduleJob(ctx, internalScheduleJobReq)
 		return err
 	}
 
@@ -1251,29 +1252,24 @@ func (a *actorsRuntime) CreateTimer(ctx context.Context, req *CreateTimerRequest
 }
 
 func (a *actorsRuntime) DeleteReminder(ctx context.Context, req *DeleteReminderRequest) error {
-	if a.schedulerManager != nil {
-		metadata := map[string]string{
-			"scope":     "actor",
-			"namespace": a.actorsConfig.Namespace,
-			"appId":     a.actorsConfig.AppID,
-			"actorType": req.ActorType,
-			"actorId":   req.ActorID,
-		}
-
-		jobName := constructCompositeKey(
-			a.actorsConfig.Namespace,
-			"reminder",
-			req.ActorType,
-			req.ActorID,
-			req.Name,
-		)
-
+	if a.schedulerClients != nil {
 		internalDeleteJobReq := &schedulerv1pb.DeleteJobRequest{
-			JobName:  jobName,
-			Metadata: metadata,
+			Name: req.Name,
+			Metadata: &schedulerv1pb.ScheduleJobMetadata{
+				AppId:     a.actorsConfig.AppID,
+				Namespace: a.actorsConfig.Namespace,
+				Type: &schedulerv1pb.ScheduleJobMetadataType{
+					Source: &schedulerv1pb.ScheduleJobMetadataType_Actor{
+						Actor: &schedulerv1pb.ScheduleJobMetadataSourceActorReminder{
+							Id:   req.ActorID,
+							Type: req.ActorType,
+						},
+					},
+				},
+			},
 		}
 
-		_, err := a.schedulerManager.NextClient().DeleteJob(ctx, internalDeleteJobReq)
+		_, err := a.schedulerClients.Next().DeleteJob(ctx, internalDeleteJobReq)
 		return err
 	}
 
@@ -1408,4 +1404,8 @@ func (a *actorsRuntime) stateStore() (string, internal.TransactionalStateStore, 
 	}
 
 	return a.storeName, store, nil
+}
+
+func (a *actorsRuntime) Entites() []string {
+	return a.entities
 }

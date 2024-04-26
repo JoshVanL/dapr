@@ -27,6 +27,8 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"k8s.io/utils/clock"
 
@@ -611,8 +613,16 @@ func (r *reminders) serializeRemindersToProto(reminders []internal.Reminder) ([]
 		if !rm.ExpirationTime.IsZero() {
 			pb.Reminders[i].ExpirationTime = timestamppb.New(rm.ExpirationTime)
 		}
-		if len(rm.Data) > 0 && !bytes.Equal(rm.Data, []byte("null")) {
-			pb.Reminders[i].Data = rm.Data
+		if rm.Data != nil {
+			var jspb structpb.Struct
+			if err := rm.Data.UnmarshalTo(&jspb); err != nil {
+				return nil, fmt.Errorf("failed to serialize reminder data: %w", err)
+			}
+			b, err := jspb.MarshalJSON()
+			if err != nil {
+				return nil, fmt.Errorf("failed to serialize reminder data: %w", err)
+			}
+			pb.Reminders[i].Data = b
 		}
 	}
 	res, err := proto.Marshal(pb)
@@ -660,7 +670,15 @@ func (r *reminders) unserializeRemindersFromProto(data []byte) ([]internal.Remin
 		}
 
 		if len(rm.Data) > 0 {
-			res[i].Data = rm.Data
+			var jspb structpb.Struct
+			if err := jspb.UnmarshalJSON(rm.Data); err != nil {
+				return nil, fmt.Errorf("failed to unserialize reminder data: %w", err)
+			}
+			data, err := anypb.New(&jspb)
+			if err != nil {
+				return nil, fmt.Errorf("failed to unserialize reminder data: %w", err)
+			}
+			res[i].Data = data
 		}
 		if rm.Period != "" {
 			err = res[i].Period.UnmarshalJSON([]byte(rm.Period))

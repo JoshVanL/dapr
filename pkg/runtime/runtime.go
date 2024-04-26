@@ -76,6 +76,7 @@ import (
 	"github.com/dapr/dapr/pkg/runtime/processor/workflow"
 	"github.com/dapr/dapr/pkg/runtime/registry"
 	runtimeScheduler "github.com/dapr/dapr/pkg/runtime/scheduler"
+	"github.com/dapr/dapr/pkg/runtime/scheduler/clients"
 	"github.com/dapr/dapr/pkg/runtime/wfengine"
 	"github.com/dapr/dapr/pkg/security"
 	"github.com/dapr/dapr/utils"
@@ -295,11 +296,14 @@ func newDaprRuntime(ctx context.Context,
 
 	var schedulerManager *runtimeScheduler.Manager
 	if runtimeConfig.SchedulerEnabled() {
+		schedulerClients := clients.New(clients.Options{
+			Addressses: runtimeConfig.schedulerAddress,
+			Security:   sec,
+		})
 		schedulerManager = runtimeScheduler.NewManager(ctx, runtimeScheduler.Options{
-			Namespace: namespace,
-			AppID:     runtimeConfig.id,
-			Addresses: runtimeConfig.schedulerAddress,
-			Security:  sec,
+			Namespace:  namespace,
+			AppID:      runtimeConfig.id,
+			ActorTypes: rt.appConfig.Entities,
 		})
 		if err := rt.runnerCloser.Add(schedulerManager.Run); err != nil {
 			return nil, err

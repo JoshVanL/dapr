@@ -26,15 +26,14 @@ import (
 )
 
 type Options struct {
-	Port        int
-	HealthzPort int
+	ListenAddress string
+	Port          int
+	HealthzPort   int
 
-	ListenAddress    string
 	TLSEnabled       bool
 	TrustDomain      string
 	TrustAnchorsFile string
 	SentryAddress    string
-	PlacementAddress string
 	Mode             string
 
 	EtcdID           string
@@ -76,7 +75,6 @@ func New(origArgs []string) *Options {
 	fs.StringVar(&opts.TrustDomain, "trust-domain", "localhost", "Trust domain for the Dapr control plane")
 	fs.StringVar(&opts.TrustAnchorsFile, "trust-anchors-file", securityConsts.ControlPlaneDefaultTrustAnchorsPath, "Filepath to the trust anchors for the Dapr control plane")
 	fs.StringVar(&opts.SentryAddress, "sentry-address", fmt.Sprintf("dapr-sentry.%s.svc:443", security.CurrentNamespace()), "Address of the Sentry service")
-	fs.StringVar(&opts.PlacementAddress, "placement-address", "", "Addresses for Dapr Actor Placement service")
 	fs.StringVar(&opts.Mode, "mode", string(modes.StandaloneMode), "Runtime mode for Dapr Scheduler")
 
 	fs.StringVar(&opts.EtcdID, "id", "dapr-scheduler-server-0", "Scheduler server ID")

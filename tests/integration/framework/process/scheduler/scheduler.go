@@ -27,7 +27,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 
+	schedulerv1pb "github.com/dapr/dapr/pkg/proto/scheduler/v1"
 	"github.com/dapr/dapr/tests/integration/framework/binary"
 	"github.com/dapr/dapr/tests/integration/framework/process"
 	"github.com/dapr/dapr/tests/integration/framework/process/exec"
@@ -194,14 +197,20 @@ func (s *Scheduler) InitialClusterPorts() []int {
 	return s.initialClusterPorts
 }
 
-func (s *Scheduler) ListenAddress() string {
-	return "localhost"
-}
-
 func (s *Scheduler) DataDir() string {
 	return s.dataDir
 }
 
 func (s *Scheduler) PlacementAddress() string {
 	return s.placementAddress
+}
+
+func (s *Scheduler) Client(t *testing.T, ctx context.Context) schedulerv1pb.SchedulerClient {
+	conn, err := grpc.DialContext(ctx, s.Address(), grpc.WithBlock(), grpc.WithReturnConnectionError(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, conn.Close()) })
+
+	return schedulerv1pb.NewSchedulerClient(conn)
 }

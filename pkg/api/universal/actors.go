@@ -15,11 +15,12 @@ package universal
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"time"
 
+	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	"github.com/dapr/dapr/pkg/actors"
 	"github.com/dapr/dapr/pkg/messages"
@@ -82,14 +83,14 @@ func (a *Universal) RegisterActorTimer(ctx context.Context, in *runtimev1pb.Regi
 	}
 
 	if in.GetData() != nil {
-		var j []byte
-		j, err = json.Marshal(in.GetData())
+		ba, err := anypb.New(wrapperspb.Bytes(in.GetData()))
 		if err != nil {
 			err = messages.ErrMalformedRequest.WithFormat(err)
 			a.logger.Debug(err)
 			return nil, err
 		}
-		req.Data = j
+
+		req.Data = ba
 	}
 	err = a.Actors().CreateTimer(ctx, req)
 	if err != nil {
@@ -137,14 +138,14 @@ func (a *Universal) RegisterActorReminder(ctx context.Context, in *runtimev1pb.R
 	}
 
 	if in.GetData() != nil {
-		var j []byte
-		j, err = json.Marshal(in.GetData())
+		ba, err := anypb.New(wrapperspb.Bytes(in.GetData()))
 		if err != nil {
 			err = messages.ErrMalformedRequest.WithFormat(err)
 			a.logger.Debug(err)
 			return nil, err
 		}
-		req.Data = j
+
+		req.Data = ba
 	}
 	err = a.Actors().CreateReminder(ctx, req)
 	if err != nil {

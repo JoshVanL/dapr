@@ -14,14 +14,16 @@ limitations under the License.
 package internal
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"reflect"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
+	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/types/known/structpb"
 
+	"github.com/dapr/kit/ptr"
 	timeutils "github.com/dapr/kit/time"
 )
 
@@ -29,15 +31,15 @@ const daprSeparator = "||"
 
 // Reminder represents a reminder or timer for a unique actor.
 type Reminder struct {
-	ActorID        string          `json:"actorID,omitempty"`
-	ActorType      string          `json:"actorType,omitempty"`
-	Name           string          `json:"name,omitempty"`
-	Data           json.RawMessage `json:"data,omitempty"`
-	Period         ReminderPeriod  `json:"period,omitempty"`
-	RegisteredTime time.Time       `json:"registeredTime,omitempty"`
-	DueTime        string          `json:"dueTime,omitempty"` // Exact input value from user
-	ExpirationTime time.Time       `json:"expirationTime,omitempty"`
-	Callback       string          `json:"callback,omitempty"` // Used by timers only
+	ActorID        string         `json:"actorID,omitempty"`
+	ActorType      string         `json:"actorType,omitempty"`
+	Name           string         `json:"name,omitempty"`
+	Data           *anypb.Any     `json:"data,omitempty"`
+	Period         ReminderPeriod `json:"period,omitempty"`
+	RegisteredTime time.Time      `json:"registeredTime,omitempty"`
+	DueTime        string         `json:"dueTime,omitempty"` // Exact input value from user
+	ExpirationTime time.Time      `json:"expirationTime,omitempty"`
+	Callback       string         `json:"callback,omitempty"` // Used by timers only
 }
 
 // ActorKey returns the key of the actor for this reminder.
@@ -125,8 +127,16 @@ func (r *Reminder) MarshalJSON() ([]byte, error) {
 	}
 
 	m.Period = r.Period.String()
-	if len(r.Data) > 0 && !bytes.Equal(r.Data, []byte("null")) {
-		m.Data = &r.Data
+	if r.Data != nil {
+		var jspb structpb.Struct
+		if err := r.Data.UnmarshalTo(&jspb); err != nil {
+			return nil, err
+		}
+		b, err := jspb.MarshalJSON()
+		if err != nil {
+			return nil, err
+		}
+		m.Data = ptr.Of(json.RawMessage(b))
 	}
 
 	return json.Marshal(m)

@@ -18,11 +18,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/gob"
-	"encoding/json"
-	"fmt"
 	"io"
 
 	"github.com/dapr/dapr/pkg/actors/internal"
+	"google.golang.org/protobuf/types/known/anypb"
 )
 
 const InternalActorTypePrefix = "dapr.internal."
@@ -40,7 +39,7 @@ type InternalActor interface {
 
 type InternalActorReminder struct {
 	Name    string
-	Data    []byte
+	Data    *anypb.Any
 	DueTime string
 	Period  string
 }
@@ -52,15 +51,6 @@ func newInternalActorReminder(r *internal.Reminder) InternalActorReminder {
 		DueTime: r.DueTime,
 		Period:  r.Period.String(),
 	}
-}
-
-// DecodeData decodes internal actor reminder data payloads and stores the result in dest.
-func (ir InternalActorReminder) DecodeData(dest any) error {
-	err := json.Unmarshal(ir.Data, dest)
-	if err != nil {
-		return fmt.Errorf("unrecognized internal actor reminder payload: %w", err)
-	}
-	return nil
 }
 
 // EncodeInternalActorData encodes result using the encoding/gob format.

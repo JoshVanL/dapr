@@ -26,7 +26,6 @@ import (
 	"github.com/dapr/dapr/pkg/placement/monitoring"
 	"github.com/dapr/dapr/pkg/scheduler/server"
 	"github.com/dapr/dapr/pkg/security"
-	"github.com/dapr/dapr/utils"
 	"github.com/dapr/kit/concurrency"
 	"github.com/dapr/kit/logger"
 	"github.com/dapr/kit/signals"
@@ -68,11 +67,6 @@ func Run() {
 		log.Fatal(err)
 	}
 
-	hostAddress, err := utils.GetHostAddress()
-	if err != nil {
-		log.Fatal(fmt.Errorf("failed to determine host address: %w", err))
-	}
-
 	err = concurrency.NewRunnerManager(
 		metricsExporter.Run,
 		secProvider.Run,
@@ -82,20 +76,20 @@ func Run() {
 				return serr
 			}
 
-			server := server.New(server.Options{
-				AppID:            appID,
-				HostAddress:      hostAddress,
-				ListenAddress:    opts.ListenAddress,
-				PlacementAddress: opts.PlacementAddress,
-				Mode:             modes.DaprMode(opts.Mode),
-				Port:             opts.Port,
-				Security:         secHandler,
+			server, err := server.New(server.Options{
+				ListenAddress: opts.ListenAddress,
+				Port:          opts.Port,
+				Security:      secHandler,
+				Mode:          modes.DaprMode(opts.Mode),
 
 				DataDir:          opts.EtcdDataDir,
 				EtcdID:           opts.EtcdID,
 				EtcdInitialPeers: opts.EtcdInitialPeers,
 				EtcdClientPorts:  opts.EtcdClientPorts,
 			})
+			if err != nil {
+				return err
+			}
 
 			return server.Run(ctx)
 		},
