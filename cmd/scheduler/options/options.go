@@ -16,6 +16,7 @@ package options
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/pflag"
 
@@ -100,8 +101,11 @@ func New(origArgs []string) (*Options, error) {
 
 	replicaID, err := strconv.ParseUint(opts.replicaIDStr, 10, 32)
 	if err != nil {
-		//split := strings.X
-		return nil, fmt.Errorf("failed to parse '--replica-id' flag: %s", err)
+		suffix := opts.replicaIDStr[strings.LastIndex(opts.replicaIDStr, "-")+1:]
+		replicaID, err = strconv.ParseUint(suffix, 10, 32)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse '--replica-id' flag: %s", err)
+		}
 	}
 
 	opts.ReplicaID = uint32(replicaID)

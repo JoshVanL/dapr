@@ -119,6 +119,10 @@ spec:
         - {{ include "dapr_scheduler.etcdclientports" . | toYaml | trim }}
         - "--log-level"
         - {{ .Values.logLevel }}
+        - "--replica-id"
+        - "$(SCHEDULER_ID)"
+        - "--replica-total"
+        - "{{ .Values.replicaCount }}"
 {{- if eq .Values.global.logAsJson true }}
         - "--log-as-json"
 {{- end }}

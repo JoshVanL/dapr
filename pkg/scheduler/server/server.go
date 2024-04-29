@@ -122,7 +122,7 @@ func (s *Server) runServer(ctx context.Context) error {
 
 	return concurrency.NewRunnerManager(
 		func(ctx context.Context) error {
-			log.Info("Running gRPC server on port %d", s.port)
+			log.Infof("Running gRPC server on port %d", s.port)
 			if err := srv.Serve(listener); err != nil {
 				return fmt.Errorf("failed to serve: %w", err)
 			}
