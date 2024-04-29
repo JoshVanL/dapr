@@ -107,12 +107,15 @@ func (p *Pool) Add(req *scheduler.WatchJobsRequest, stream schedulerv1pb.Schedul
 					log.Warnf("Error sending job to connection: %v", err)
 				}
 			case <-p.closeCh:
+				close(conn.closeCh)
+				p.remove(req, uuid)
 				return
 			case <-stream.Context().Done():
 				close(conn.closeCh)
 				p.remove(req, uuid)
 				return
 			case <-conn.closeCh:
+				p.remove(req, uuid)
 				return
 			}
 		}
@@ -223,7 +226,6 @@ func (p *Pool) getConn(meta *schedulerv1pb.ScheduleJobMetadata) (*conn, error) {
 			return nil, fmt.Errorf("no connections available for appID: %s", meta.GetAppId())
 		}
 		conn := nsPool.cons[appIDConns[int(idx)%len(appIDConns)]]
-		conn.wg.Add(1)
 		return conn, nil
 
 	case *schedulerv1pb.ScheduleJobMetadataType_Actor:
@@ -233,7 +235,6 @@ func (p *Pool) getConn(meta *schedulerv1pb.ScheduleJobMetadata) (*conn, error) {
 		}
 
 		conn := nsPool.cons[actorTypeConns[int(idx)%len(actorTypeConns)]]
-		conn.wg.Add(1)
 		return conn, nil
 
 	default:

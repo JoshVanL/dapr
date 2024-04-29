@@ -15,6 +15,7 @@ package options
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/spf13/pflag"
 
@@ -29,6 +30,10 @@ type Options struct {
 	ListenAddress string
 	Port          int
 	HealthzPort   int
+
+	ReplicaID    uint32
+	replicaIDStr string
+	ReplicaTotal uint32
 
 	TLSEnabled       bool
 	TrustDomain      string
@@ -45,7 +50,7 @@ type Options struct {
 	Metrics *metrics.Options
 }
 
-func New(origArgs []string) *Options {
+func New(origArgs []string) (*Options, error) {
 	// We are using pflag to parse the CLI flags
 	// pflag is a drop-in replacement for the standard library's "flag" package, however…
 	// There's one key difference: with the stdlib's "flag" package, there are no short-hand options so options can be defined with a single slash (such as "daprd -mode").
@@ -70,6 +75,9 @@ func New(origArgs []string) *Options {
 	fs.IntVar(&opts.Port, "port", 50006, "The port for the scheduler server to listen on")
 	fs.IntVar(&opts.HealthzPort, "healthz-port", 8080, "The port for the healthz server to listen on")
 
+	fs.StringVar(&opts.replicaIDStr, "replica-id", "0", "The ID of the scheduler replica. Optionally takes a Kubernetes stateful set pod name and parses the ID from the suffix")
+	fs.Uint32Var(&opts.ReplicaTotal, "replica-total", 1, "The total number of scheduler replicas in the cluster")
+
 	fs.StringVar(&opts.ListenAddress, "listen-address", "127.0.0.1", "The address for the Scheduler to listen on")
 	fs.BoolVar(&opts.TLSEnabled, "tls-enabled", false, "Should TLS be enabled for the scheduler gRPC server")
 	fs.StringVar(&opts.TrustDomain, "trust-domain", "localhost", "Trust domain for the Dapr control plane")
@@ -90,5 +98,13 @@ func New(origArgs []string) *Options {
 
 	_ = fs.Parse(args)
 
-	return &opts
+	replicaID, err := strconv.ParseUint(opts.replicaIDStr, 10, 32)
+	if err != nil {
+		//split := strings.X
+		return nil, fmt.Errorf("failed to parse '--replica-id' flag: %s", err)
+	}
+
+	opts.ReplicaID = uint32(replicaID)
+
+	return &opts, nil
 }

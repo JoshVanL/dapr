@@ -41,6 +41,8 @@ type Options struct {
 	ListenAddress string
 	Port          int
 
+	ReplicaTotal     uint32
+	ReplicaID        uint32
 	Mode             modes.DaprMode
 	DataDir          string
 	EtcdID           string
@@ -52,6 +54,8 @@ type Options struct {
 type Server struct {
 	listenAddress string
 	port          int
+	replicaTotal  uint32
+	replicaID     uint32
 
 	sec            security.Handler
 	config         *embed.Config
@@ -74,6 +78,8 @@ func New(opts Options) (*Server, error) {
 	return &Server{
 		port:           opts.Port,
 		listenAddress:  opts.ListenAddress,
+		replicaTotal:   opts.ReplicaTotal,
+		replicaID:      opts.ReplicaID,
 		sec:            opts.Security,
 		config:         config,
 		connectionPool: internal.NewPool(),
@@ -163,11 +169,10 @@ func (s *Server) runEtcdCron(ctx context.Context) error {
 
 	// pass in initial cluster endpoints, but with client ports
 	s.cron, err = etcdcron.New(etcdcron.Options{
-		Client:    client,
-		Namespace: "dapr",
-		// TODO:
-		PartitionID:    0,
-		PartitionTotal: 1,
+		Client:         client,
+		Namespace:      "dapr",
+		PartitionID:    s.replicaID,
+		PartitionTotal: s.replicaTotal,
 		TriggerFn:      s.triggerJob,
 	})
 	if err != nil {

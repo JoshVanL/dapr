@@ -153,6 +153,7 @@ type ActorsOpts struct {
 	StateStoreName   string
 	CompStore        *compstore.ComponentStore
 	Security         security.Handler
+	SchedulerClients *clients.Clients
 
 	// TODO: @joshvanl Remove in Dapr 1.12 when ActorStateTTL is finalized.
 	StateTTLEnabled bool
@@ -182,6 +183,7 @@ func newActorsWithClock(opts ActorsOpts, clock clock.WithTicker) (ActorRuntime, 
 		internalActors:     haxmap.New[string, InternalActor](32),
 		compStore:          opts.CompStore,
 		sec:                opts.Security,
+		schedulerClients:   opts.SchedulerClients,
 
 		// TODO: @joshvanl Remove in Dapr 1.12 when ActorStateTTL is finalized.
 		stateTTLEnabled: opts.StateTTLEnabled,
@@ -1199,10 +1201,15 @@ func (a *actorsRuntime) CreateReminder(ctx context.Context, req *CreateReminderR
 			ttl = ptr.Of(req.TTL)
 		}
 
+		var schedule *string
+		if len(req.Period) > 0 {
+			schedule = ptr.Of("@every " + req.Period)
+		}
+
 		internalScheduleJobReq := &schedulerv1pb.ScheduleJobRequest{
 			Name: req.Name,
 			Job: &schedulerv1pb.Job{
-				Schedule: ptr.Of("@every " + req.Period),
+				Schedule: schedule,
 				DueTime:  dueTime,
 				Ttl:      ttl,
 				Data:     req.Data,

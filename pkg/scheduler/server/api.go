@@ -75,7 +75,8 @@ func (s *Server) triggerJob(ctx context.Context, req *api.TriggerRequest) bool {
 		}
 
 		if err := s.connectionPool.Send(&schedulerv1pb.WatchJobsResponse{
-			Name:     req.GetName()[strings.LastIndex(req.GetName(), "||"):],
+			// TODO: @joshvanl fix possible panic
+			Name:     req.GetName()[strings.LastIndex(req.GetName(), "||")+2:],
 			Data:     req.Payload,
 			Metadata: &meta,
 		}); err != nil {

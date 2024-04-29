@@ -75,16 +75,12 @@ func (a *api) onCreateScheduleHandler() http.HandlerFunc {
 					return nil, apierrors.SchedulerURLName(map[string]string{"appId": a.universal.AppID()})
 				}
 
-				job := &runtimev1pb.Job{
-					Name:     chi.URLParam(r, nameParam),
-					Schedule: in.GetJob().Schedule,
-					Data:     in.GetJob().Data,
-					Repeats:  in.GetJob().Repeats,
-					DueTime:  in.GetJob().DueTime,
-					Ttl:      in.GetJob().Ttl,
+				if in.Job == nil {
+					in.Job = new(runtimev1pb.Job)
 				}
 
-				in.Job = job
+				in.Job.Name = chi.URLParam(r, nameParam)
+
 				return in, nil
 			},
 			OutModifier: func(out *emptypb.Empty) (any, error) {

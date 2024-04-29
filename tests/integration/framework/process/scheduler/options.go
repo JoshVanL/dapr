@@ -35,7 +35,6 @@ type options struct {
 	sentryAddress    *string
 	trustAnchorsFile *string
 	listenAddress    *string
-	placementAddress *string
 }
 
 func WithExecOptions(execOptions ...exec.Option) Option {
@@ -108,12 +107,6 @@ func WithSentryAddress(sentryAddress string) Option {
 func WithTrustAnchorsFile(file string) Option {
 	return func(o *options) {
 		o.trustAnchorsFile = &file
-	}
-}
-
-func WithPlacementAddress(placementAddress string) Option {
-	return func(o *options) {
-		o.placementAddress = &placementAddress
 	}
 }
 

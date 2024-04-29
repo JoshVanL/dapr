@@ -36,7 +36,10 @@ var log = logger.NewLogger("dapr.scheduler")
 const appID = "dapr-scheduler"
 
 func Run() {
-	opts := options.New(os.Args[1:])
+	opts, err := options.New(os.Args[1:])
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Apply options to all loggers.
 	if err := logger.ApplyOptionsToLoggers(&opts.Logger); err != nil {
@@ -48,8 +51,7 @@ func Run() {
 
 	metricsExporter := metrics.NewExporterWithOptions(log, metrics.DefaultMetricNamespace, opts.Metrics)
 
-	err := monitoring.InitMetrics()
-	if err != nil {
+	if err := monitoring.InitMetrics(); err != nil {
 		log.Fatal(err)
 	}
 
@@ -81,6 +83,8 @@ func Run() {
 				Port:          opts.Port,
 				Security:      secHandler,
 				Mode:          modes.DaprMode(opts.Mode),
+				ReplicaTotal:  opts.ReplicaTotal,
+				ReplicaID:     opts.ReplicaID,
 
 				DataDir:          opts.EtcdDataDir,
 				EtcdID:           opts.EtcdID,

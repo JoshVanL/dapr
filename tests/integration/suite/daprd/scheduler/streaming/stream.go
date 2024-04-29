@@ -30,6 +30,7 @@ import (
 	"github.com/dapr/dapr/tests/integration/framework/process/ports"
 	"github.com/dapr/dapr/tests/integration/framework/process/scheduler"
 	"github.com/dapr/dapr/tests/integration/suite"
+	"github.com/dapr/kit/ptr"
 )
 
 func init() {
@@ -121,8 +122,8 @@ func (s *streaming) Run(t *testing.T, ctx context.Context) {
 		req := &runtimev1pb.ScheduleJobRequest{
 			Job: &runtimev1pb.Job{
 				Name:     "test",
-				Schedule: "@every 1s",
-				Repeats:  1,
+				Schedule: ptr.Of("@every 1s"),
+				Repeats:  ptr.Of(uint32(1)),
 				Data: &anypb.Any{
 					TypeUrl: "type.googleapis.com/google.type.Expr",
 				},
@@ -141,8 +142,8 @@ func (s *streaming) Run(t *testing.T, ctx context.Context) {
 		req := &runtimev1pb.ScheduleJobRequest{
 			Job: &runtimev1pb.Job{
 				Name:     "test",
-				Schedule: "@every 1s",
-				Repeats:  1,
+				Schedule: ptr.Of("@every 1s"),
+				Repeats:  ptr.Of(uint32(1)),
 				Data: &anypb.Any{
 					TypeUrl: "type.googleapis.com/google.type.Expr",
 				},

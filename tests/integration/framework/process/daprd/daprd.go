@@ -144,7 +144,7 @@ func New(t *testing.T, fopts ...Option) *Daprd {
 		args = append(args, "--dapr-block-shutdown-duration="+*opts.blockShutdownDuration)
 	}
 	if len(opts.schedulerAddresses) > 0 {
-		args = append(args, "--scheduler-host-address="+strings.Join(opts.schedulerAddresses, ","))
+		args = append(args, "--scheduler-host-addresses="+strings.Join(opts.schedulerAddresses, ","))
 	}
 	if opts.controlPlaneTrustDomain != nil {
 		args = append(args, "--control-plane-trust-domain="+*opts.controlPlaneTrustDomain)

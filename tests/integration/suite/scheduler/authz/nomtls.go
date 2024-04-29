@@ -21,11 +21,11 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	runtimev1pb "github.com/dapr/dapr/pkg/proto/runtime/v1"
 	schedulerv1pb "github.com/dapr/dapr/pkg/proto/scheduler/v1"
 	"github.com/dapr/dapr/tests/integration/framework"
 	"github.com/dapr/dapr/tests/integration/framework/process/scheduler"
 	"github.com/dapr/dapr/tests/integration/suite"
+	"github.com/dapr/kit/ptr"
 )
 
 func init() {
@@ -59,13 +59,18 @@ func (n *nomtls) Run(t *testing.T, ctx context.Context) {
 	client := schedulerv1pb.NewSchedulerClient(conn)
 
 	req := &schedulerv1pb.ScheduleJobRequest{
-		Job: &runtimev1pb.Job{
-			Name:     "testJob",
-			Schedule: "@daily",
+		Name: "testJob",
+		Job: &schedulerv1pb.Job{
+			Schedule: ptr.Of("@daily"),
 		},
-		Metadata: map[string]string{
-			"appId":     "test",
-			"namespace": "default",
+		Metadata: &schedulerv1pb.ScheduleJobMetadata{
+			AppId:     "test",
+			Namespace: "default",
+			Type: &schedulerv1pb.ScheduleJobMetadataType{
+				Source: &schedulerv1pb.ScheduleJobMetadataType_App{
+					App: new(schedulerv1pb.ScheduleJobMetadataSourceApp),
+				},
+			},
 		},
 	}
 

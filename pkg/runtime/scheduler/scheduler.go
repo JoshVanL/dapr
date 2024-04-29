@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"sync"
@@ -43,7 +44,6 @@ var log = logger.NewLogger("dapr.runtime.scheduler")
 type Options struct {
 	Namespace string
 	AppID     string
-	Actors    actors.ActorRuntime
 	Clients   *clients.Clients
 	Resilicy  resiliency.Provider
 	Channels  *channels.Channels
@@ -58,21 +58,23 @@ type Manager struct {
 	resiliency resiliency.Provider
 	channels   *channels.Channels
 
+	startCh chan struct{}
+	started atomic.Bool
 	wg      sync.WaitGroup
 	jobCh   chan *schedulerv1pb.WatchJobsResponse
 	closeCh chan struct{}
 	running atomic.Bool
 }
 
-func New(ctx context.Context, opts Options) (*Manager, error) {
+func New(opts Options) (*Manager, error) {
 	return &Manager{
 		namespace:  opts.Namespace,
 		appID:      opts.AppID,
-		actors:     opts.Actors,
 		clients:    opts.Clients,
 		resiliency: opts.Resilicy,
 		channels:   opts.Channels,
 		jobCh:      make(chan *schedulerv1pb.WatchJobsResponse),
+		startCh:    make(chan struct{}),
 		closeCh:    make(chan struct{}),
 	}, nil
 }
@@ -81,6 +83,12 @@ func New(ctx context.Context, opts Options) (*Manager, error) {
 func (m *Manager) Run(ctx context.Context) error {
 	if !m.running.CompareAndSwap(false, true) {
 		return errors.New("scheduler manager is already running")
+	}
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-m.startCh:
 	}
 
 	clients := m.clients.All()
@@ -102,6 +110,13 @@ func (m *Manager) Run(ctx context.Context) error {
 
 	defer m.wg.Wait()
 	return concurrency.NewRunnerManager(runners...).Run(ctx)
+}
+
+func (m *Manager) Start(actors actors.ActorRuntime) {
+	if m.started.CompareAndSwap(false, true) {
+		m.actors = actors
+		close(m.startCh)
+	}
 }
 
 func (m *Manager) establishConnection(ctx context.Context, client *client.Client) error {
@@ -153,7 +168,6 @@ func (m *Manager) processStream(ctx context.Context, client *client.Client, stre
 				continue
 			}
 		}
-
 		log.Infof("Established stream conn to Scheduler at address %s", client.Address)
 
 		for {
@@ -278,8 +292,10 @@ func (m *Manager) invokeActorReminder(ctx context.Context, job *schedulerv1pb.Wa
 	actor := job.GetMetadata().GetType().GetActor()
 
 	var jspb structpb.Struct
-	if err := job.GetData().UnmarshalTo(&jspb); err != nil {
-		return err
+	if job.Data != nil {
+		if err := job.GetData().UnmarshalTo(&jspb); err != nil {
+			return fmt.Errorf("failed to unmarshal reminder data: %s", err)
+		}
 	}
 
 	data, err := json.Marshal(&actors.ReminderResponse{
@@ -323,12 +339,15 @@ func (m *Manager) establishSchedulerConn(ctx context.Context, client *client.Cli
 
 // watchJobs starts watching for job triggers from a single scheduler client.
 func (m *Manager) watchJobs(ctx context.Context, client *client.Client) error {
+	var entities []string
+	if m.actors != nil {
+		entities = m.actors.Entites()
+	}
+
 	streamReq := &schedulerv1pb.WatchJobsRequest{
-		AppId:     m.appID,
-		Namespace: m.namespace,
-		// TODO: We need to watch, then unwatch scheduler based on app health
-		// status.
-		ActorTypes: m.actors.Entites(),
+		AppId:      m.appID,
+		Namespace:  m.namespace,
+		ActorTypes: entities,
 	}
 	return m.establishSchedulerConn(ctx, client, streamReq)
 }

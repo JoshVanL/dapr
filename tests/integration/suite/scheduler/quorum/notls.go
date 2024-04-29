@@ -31,13 +31,13 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/anypb"
 
-	runtimev1pb "github.com/dapr/dapr/pkg/proto/runtime/v1"
 	schedulerv1pb "github.com/dapr/dapr/pkg/proto/scheduler/v1"
 	"github.com/dapr/dapr/tests/integration/framework"
 	"github.com/dapr/dapr/tests/integration/framework/process/daprd"
 	"github.com/dapr/dapr/tests/integration/framework/process/ports"
 	"github.com/dapr/dapr/tests/integration/framework/process/scheduler"
 	"github.com/dapr/dapr/tests/integration/suite"
+	"github.com/dapr/kit/ptr"
 )
 
 func init() {
@@ -106,23 +106,24 @@ func (n *notls) Run(t *testing.T, ctx context.Context) {
 
 	client := schedulerv1pb.NewSchedulerClient(conn)
 
-	appID := n.daprd.AppID()
-
 	req := &schedulerv1pb.ScheduleJobRequest{
-		Job: &runtimev1pb.Job{
-			Name:     n.jobName,
-			Schedule: "@every 10s", // Set to 10 so the job doesn't get cleaned up before I check for it in etcd
-			Repeats:  1,
+		Name: n.jobName,
+		Job: &schedulerv1pb.Job{
+			Schedule: ptr.Of("@every 10s"), // Set to 10 so the job doesn't get cleaned up before I check for it in etcd
+			Repeats:  ptr.Of(uint32(1)),
 			Data: &anypb.Any{
 				TypeUrl: "type.googleapis.com/google.type.Expr",
 			},
 		},
-		Metadata: map[string]string{
-			"namespace": n.daprd.Namespace(),
-			"appID":     appID,
+		Metadata: &schedulerv1pb.ScheduleJobMetadata{
+			AppId:     n.daprd.Namespace(),
+			Namespace: n.daprd.AppID(),
+			Type: &schedulerv1pb.ScheduleJobMetadataType{
+				Source: &schedulerv1pb.ScheduleJobMetadataType_App{
+					App: new(schedulerv1pb.ScheduleJobMetadataSourceApp),
+				},
+			},
 		},
-		Namespace: n.daprd.Namespace(),
-		AppId:     appID,
 	}
 
 	_, err = client.ScheduleJob(ctx, req)

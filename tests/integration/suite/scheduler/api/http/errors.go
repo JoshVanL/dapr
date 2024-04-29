@@ -89,7 +89,7 @@ func (e *standardizedErrors) Run(t *testing.T, ctx context.Context) {
 		// Confirm that the 'errorCode' field exists and contains the correct error code
 		errCode, exists := data["errorCode"]
 		require.True(t, exists)
-		require.Equal(t, apierrors.ConstructReason(apierrors.CodePrefixScheduler, apierrors.InFixJob, apierrors.InFixName, apierrors.PostFixEmpty), errCode)
+		require.Equal(t, apierrors.ConstructReason(apierrors.CodePrefixScheduler, apierrors.InFixSchedule, apierrors.PostFixEmpty), errCode)
 
 		// Confirm that the 'message' field exists and contains the correct error message
 		errMsg, exists := data["message"]
