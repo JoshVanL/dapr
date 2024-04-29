@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -29,6 +30,7 @@ import (
 	kube "github.com/dapr/dapr/tests/platforms/kubernetes"
 	"github.com/dapr/dapr/tests/runner"
 	"github.com/dapr/dapr/tests/runner/summary"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -38,8 +40,17 @@ const (
 	actorType       = "PerfTestActorReminder"
 	appName         = "perf-actor-reminder-service"
 
-	// Target for the QPS
-	targetQPS = 56
+	// Number between 0 and 1 representing the actual QPS ratio to the target QPS.
+	minRelativeQPS = float64(0.98)
+
+	// Target for the QPS.
+	// Calibrated with 3 and 5 replicas of scheduler service.
+	// If you run with only 1 replica, the QPS is much higher.
+	targetRegisterQPS = 1500
+
+	// Trigger QPS expected in aggregate of reminders firing ev 1s.
+	// Calibrated with 3 replicas of scheduler service.
+	targetTriggerQPS = 520
 )
 
 var tr *runner.TestRunner
@@ -75,7 +86,7 @@ func TestMain(m *testing.M) {
 
 func TestActorReminderRegistrationPerformance(t *testing.T) {
 	p := perf.Params(
-		perf.WithQPS(500),
+		perf.WithQPS(targetRegisterQPS),
 		perf.WithConnections(8),
 		perf.WithDuration("1m"),
 		perf.WithPayload("{}"),
@@ -162,5 +173,55 @@ func TestActorReminderRegistrationPerformance(t *testing.T) {
 	assert.Equal(t, 0, daprResult.RetCodes.Num400)
 	assert.Equal(t, 0, daprResult.RetCodes.Num500)
 	assert.Equal(t, 0, restarts)
-	assert.True(t, daprResult.ActualQPS > targetQPS)
+	assert.GreaterOrEqual(t, daprResult.ActualQPS, targetRegisterQPS*minRelativeQPS)
+}
+
+func TestActorReminderTriggerPerformance(t *testing.T) {
+	// Get the ingress external url of test app
+	testAppURL := tr.Platform.AcquireAppExternalURL(appName)
+	require.NotEmpty(t, testAppURL, "test app external URL must not be empty")
+
+	// Check if test app endpoint is available
+	t.Logf("test app url: %s", testAppURL+"/health")
+	_, err := utils.HTTPGetNTimes(testAppURL+"/health", numHealthChecks)
+	require.NoError(t, err)
+
+	t.Logf("Registering reminders ...")
+	// Each reminder should fire at 1 qps
+	numReminders := targetTriggerQPS
+	reminderBody := []byte("{\"data\":\"reminderdata\",\"period\": \"1s\",\"ttl\":\"90s\"}")
+	for numReminders > 0 {
+		numReminders--
+		daprResp, err := utils.HTTPPost(fmt.Sprintf("%s/call/%v/%v/reminders/myreminder", testAppURL, actorType, uuid.New().String()), reminderBody)
+
+		t.Log("checking err...")
+		require.NoError(t, err)
+		require.Empty(t, daprResp)
+	}
+
+	// Reset counters to start counting all together
+	{
+		resp, err := utils.HTTPDelete(fmt.Sprintf("%s/counter", testAppURL))
+
+		t.Log("checking err...")
+		require.NoError(t, err)
+		require.Equal(t, "0", string(resp))
+	}
+
+	// Wait for reminders to trigger.
+	time.Sleep(60 * time.Second)
+
+	// Now see how many times they triggered in aggregate.
+	{
+		resp, err := utils.HTTPGet(fmt.Sprintf("%s/counter", testAppURL))
+
+		t.Log("checking err...")
+		require.NoError(t, err)
+		require.NotEmpty(t, string(resp))
+
+		count, err := strconv.Atoi(string(resp))
+		require.NoError(t, err)
+
+		assert.GreaterOrEqual(t, float64(count/60.0), targetTriggerQPS*minRelativeQPS)
+	}
 }
