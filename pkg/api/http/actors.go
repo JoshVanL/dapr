@@ -23,7 +23,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/dapr/dapr/pkg/actors"
 	actorerrors "github.com/dapr/dapr/pkg/actors/errors"
@@ -169,8 +171,26 @@ func (a *api) onCreateActorReminder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req actors.CreateReminderRequest
+	type createReminderRequestJSON struct {
+		Name      string
+		ActorType string
+		ActorID   string
+		Data      *structpb.Struct `json:"data"`
+		DueTime   string           `json:"dueTime"`
+		Period    string           `json:"period"`
+		TTL       string           `json:"ttl"`
+	}
+
+	var req createReminderRequestJSON
 	err = json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
+		msg := messages.ErrMalformedRequest.WithFormat(err)
+		respondWithError(w, msg)
+		log.Debug(msg)
+		return
+	}
+
+	data, err := anypb.New(req.Data)
 	if err != nil {
 		msg := messages.ErrMalformedRequest.WithFormat(err)
 		respondWithError(w, msg)
@@ -182,7 +202,15 @@ func (a *api) onCreateActorReminder(w http.ResponseWriter, r *http.Request) {
 	req.ActorType = chi.URLParamFromCtx(ctx, actorTypeParam)
 	req.ActorID = chi.URLParamFromCtx(ctx, actorIDParam)
 
-	err = a.universal.Actors().CreateReminder(ctx, &req)
+	err = a.universal.Actors().CreateReminder(ctx, &actors.CreateReminderRequest{
+		Name:      req.Name,
+		ActorType: req.ActorType,
+		ActorID:   req.ActorID,
+		Data:      data,
+		DueTime:   req.DueTime,
+		Period:    req.Period,
+		TTL:       req.TTL,
+	})
 	if err != nil {
 		if errors.Is(err, actors.ErrReminderOpActorNotHosted) {
 			msg := messages.ErrActorReminderOpActorNotHosted
