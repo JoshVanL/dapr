@@ -120,7 +120,7 @@ func (c *SidecarConfig) getSidecarContainer(opts getSidecarContainerOpts) (*core
 
 	// Scheduler address could be empty if scheduler service is disabled
 	if c.SchedulerAddress != "" {
-		args = append(args, "--scheduler-host-address", c.SchedulerAddress)
+		args = append(args, "--scheduler-host-addresses", c.SchedulerAddress)
 	}
 
 	// --enable-api-logging is set if and only if there's an explicit value (true or false) for that
