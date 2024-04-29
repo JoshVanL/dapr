@@ -25,7 +25,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/emptypb"
-	"google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	"github.com/dapr/dapr/pkg/actors"
 	actorerrors "github.com/dapr/dapr/pkg/actors/errors"
@@ -175,10 +175,10 @@ func (a *api) onCreateActorReminder(w http.ResponseWriter, r *http.Request) {
 		Name      string
 		ActorType string
 		ActorID   string
-		Data      *structpb.Struct `json:"data"`
-		DueTime   string           `json:"dueTime"`
-		Period    string           `json:"period"`
-		TTL       string           `json:"ttl"`
+		Data      []byte `json:"data"`
+		DueTime   string `json:"dueTime"`
+		Period    string `json:"period"`
+		TTL       string `json:"ttl"`
 	}
 
 	var req createReminderRequestJSON
@@ -190,7 +190,7 @@ func (a *api) onCreateActorReminder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := anypb.New(req.Data)
+	data, err := anypb.New(wrapperspb.Bytes(req.Data))
 	if err != nil {
 		msg := messages.ErrMalformedRequest.WithFormat(err)
 		respondWithError(w, msg)
