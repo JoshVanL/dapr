@@ -25,7 +25,7 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/dapr/dapr/tests/e2e/utils"
+	"github.com/dapr/dapr/tests/apps/utils"
 	chi "github.com/go-chi/chi/v5"
 )
 
@@ -106,8 +106,8 @@ func getActorType() []string {
 	return actorTypes
 }
 
-var httpClient = utils.NewHTTPClient(true)
-var counter = atomic.Int32{}
+var httpClient = utils.NewHTTPClient()
+var counter atomic.Int32
 
 // indexHandler is the handler for root path
 func indexHandler(w http.ResponseWriter, r *http.Request) {
@@ -145,8 +145,6 @@ func deactivateActorHandler(w http.ResponseWriter, r *http.Request) {
 
 // calls Dapr's Actor method/timer/reminder: simulating actor client call.
 func testCallActorHandler(w http.ResponseWriter, r *http.Request) {
-	log.Printf("Processing %s test request for %s", r.Method, r.URL.RequestURI())
-
 	actorType := chi.URLParam(r, "actorType")
 	id := chi.URLParam(r, "id")
 	callType := chi.URLParam(r, "callType")
@@ -154,7 +152,6 @@ func testCallActorHandler(w http.ResponseWriter, r *http.Request) {
 
 	url := fmt.Sprintf(actorMethodURLFormat, actorType, id, callType, method)
 
-	log.Printf("Invoking: %s %s\n", r.Method, url)
 	expectedHTTPCode := 200
 	var req timerReminderRequest
 	switch callType {
@@ -175,7 +172,6 @@ func testCallActorHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		log.Println("Body data: " + string(body))
 		json.Unmarshal(body, &req)
 	}
 
