@@ -111,6 +111,7 @@ spec:
         - "/scheduler"
         - "--"
 {{- end }}
+        - "--listen-address=0.0.0.0"
         - "--id"
         - "$(SCHEDULER_ID)"
         - "--initial-cluster"

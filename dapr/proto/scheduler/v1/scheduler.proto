@@ -15,7 +15,7 @@ service Scheduler {
 	rpc DeleteJob(DeleteJobRequest) returns (DeleteJobResponse) {}
 	// WatchJobs is used by the daprd sidecar to connect to the Scheduler
 	// service to watch for jobs triggering back.
-	rpc WatchJobs(WatchJobsRequest) returns (stream WatchJobsResponse) {}
+	rpc WatchJobs(stream WatchJobsRequest) returns (stream WatchJobsResponse) {}
 }
 
 message Job {
@@ -71,8 +71,16 @@ message ScheduleJobMetadata {
 }
 
 // WatchJobsRequest is the message used by the daprd sidecar to connect to the
-// Scheduler.
+// Scheduler and send Job process results.
 message WatchJobsRequest {
+  oneof watch_job_request_type {
+    WatchJobsRequestInitial initial = 1;
+    WatchJobsRequestResult result = 2;
+  }
+}
+
+// WatchJobsRequestInitial is the initial request to start watching for jobs.
+message WatchJobsRequestInitial {
   // app_id is the App ID of the requester.
   string app_id = 1;
 
@@ -83,16 +91,27 @@ message WatchJobsRequest {
   repeated string actorTypes = 3;
 }
 
+// WatchJobsRequestResult is the result of a job execution to allow the job to
+// be marked as processed.
+message WatchJobsRequestResult {
+  // uuid is the uuid of the job that has finished processing.
+  uint32 uuid = 1;
+}
+
 // WatchJobsResponse is the response message to convey the details of a job.
 message WatchJobsResponse {
   // name is the name of the job which was triggered.
   string name = 1;
 
+  // uuid is the uuid of the job trigger event which should be sent back from
+  // the client to be marked as processed.
+  uint32 uuid = 2;
+
 	// Job data.
-	google.protobuf.Any data = 2;
+	google.protobuf.Any data = 3;
 
 	// The metadata associated with the job.
-	ScheduleJobMetadata metadata = 3;
+	ScheduleJobMetadata metadata = 4;
 }
 
 message ScheduleJobRequest {

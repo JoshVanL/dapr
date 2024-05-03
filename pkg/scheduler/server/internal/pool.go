@@ -1,9 +1,23 @@
+/*
+Copyright 2024 The Dapr Authors
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+    http://www.apache.org/licenses/LICENSE-2.0
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package internal
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -32,12 +46,6 @@ type namespacedPool struct {
 	cons      map[uint64]*conn
 }
 
-type conn struct {
-	wg      sync.WaitGroup
-	closeCh chan struct{}
-	ch      chan *schedulerv1pb.WatchJobsResponse
-}
-
 func NewPool() *Pool {
 	return &Pool{
 		nsPool:  make(map[string]*namespacedPool),
@@ -59,7 +67,7 @@ func (p *Pool) Run(ctx context.Context) error {
 }
 
 // Add adds a connection to the pool for a given namespace/appID.
-func (p *Pool) Add(req *scheduler.WatchJobsRequest, stream schedulerv1pb.Scheduler_WatchJobsServer) {
+func (p *Pool) Add(req *scheduler.WatchJobsRequestInitial, stream schedulerv1pb.Scheduler_WatchJobsServer) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
@@ -77,6 +85,9 @@ func (p *Pool) Add(req *scheduler.WatchJobsRequest, stream schedulerv1pb.Schedul
 	conn := &conn{
 		ch:      make(chan *schedulerv1pb.WatchJobsResponse, 10),
 		closeCh: make(chan struct{}),
+		streamer: &streamer{
+			subs: make(map[uint32]chan struct{}),
+		},
 	}
 
 	ok = true
@@ -120,11 +131,30 @@ func (p *Pool) Add(req *scheduler.WatchJobsRequest, stream schedulerv1pb.Schedul
 			}
 		}
 	}()
+
+	p.wg.Add(1)
+	go func() {
+		defer p.wg.Done()
+		defer conn.wg.Wait()
+
+		for {
+			resp, err := stream.Recv()
+			if errors.Is(err, context.Canceled) || errors.Is(err, io.EOF) {
+				return
+			}
+			if err != nil {
+				log.Warnf("Error receiving from connection: %v", err)
+				return
+			}
+
+			conn.streamer.handleResponse(resp.GetResult().Uuid)
+		}
+	}()
 }
 
 // Send is a blocking function that sends a job trigger to a correct job
 // recipient.
-func (p *Pool) Send(job *schedulerv1pb.WatchJobsResponse) error {
+func (p *Pool) Send(ctx context.Context, job *schedulerv1pb.WatchJobsResponse) error {
 	p.lock.RLock()
 
 	conn, err := p.getConn(job.GetMetadata())
@@ -137,17 +167,13 @@ func (p *Pool) Send(job *schedulerv1pb.WatchJobsResponse) error {
 	p.lock.RUnlock()
 	defer conn.wg.Done()
 
-	select {
-	case conn.ch <- job:
-	case <-p.closeCh:
-	case <-conn.closeCh:
-	}
+	p.sendWaitForResponse(ctx, conn, job)
 
 	return nil
 }
 
 // remove removes a connection from the pool with the given UUID.
-func (p *Pool) remove(req *scheduler.WatchJobsRequest, uuid uint64) {
+func (p *Pool) remove(req *scheduler.WatchJobsRequestInitial, uuid uint64) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 

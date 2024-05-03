@@ -17,7 +17,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"strings"
+	"time"
 
 	"github.com/diagridio/go-etcd-cron/api"
 	"google.golang.org/protobuf/types/known/anypb"
@@ -64,27 +66,26 @@ func (s *Server) ScheduleJob(ctx context.Context, req *schedulerv1pb.ScheduleJob
 func (s *Server) triggerJob(ctx context.Context, req *api.TriggerRequest) bool {
 	log.Debugf("Triggering job")
 
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
+	ctx, cancel := context.WithTimeout(ctx, time.Second*45)
+	defer cancel()
 
-		var meta schedulerv1pb.ScheduleJobMetadata
-		if err := req.Metadata.UnmarshalTo(&meta); err != nil {
-			log.Errorf("Error unmarshalling metadata: %s", err)
-			return
-		}
+	var meta schedulerv1pb.ScheduleJobMetadata
+	if err := req.Metadata.UnmarshalTo(&meta); err != nil {
+		log.Errorf("Error unmarshalling metadata: %s", err)
+		return true
+	}
 
-		if err := s.connectionPool.Send(&schedulerv1pb.WatchJobsResponse{
-			// TODO: @joshvanl fix possible panic
-			Name:     req.GetName()[strings.LastIndex(req.GetName(), "||")+2:],
-			Data:     req.Payload,
-			Metadata: &meta,
-		}); err != nil {
-			// TODO: add job to a queue or something to try later this should be
-			// another long running go routine that accepts this job on a channel
-			log.Errorf("Error sending job to connection stream: %s", err)
-		}
-	}()
+	if err := s.connectionPool.Send(ctx, &schedulerv1pb.WatchJobsResponse{
+		// TODO: @joshvanl fix possible panic
+		Name:     req.GetName()[strings.LastIndex(req.GetName(), "||")+2:],
+		Data:     req.Payload,
+		Metadata: &meta,
+		Uuid:     rand.Uint32(),
+	}); err != nil {
+		// TODO: add job to a queue or something to try later this should be
+		// another long running go routine that accepts this job on a channel
+		log.Errorf("Error sending job to connection stream: %s", err)
+	}
 
 	return true
 }
@@ -146,8 +147,19 @@ func (s *Server) GetJob(ctx context.Context, req *schedulerv1pb.GetJobRequest) (
 }
 
 // WatchJobs sends jobs to Dapr sidecars upon component changes.
-func (s *Server) WatchJobs(req *schedulerv1pb.WatchJobsRequest, stream schedulerv1pb.Scheduler_WatchJobsServer) error {
-	s.connectionPool.Add(req, stream)
+func (s *Server) WatchJobs(stream schedulerv1pb.Scheduler_WatchJobsServer) error {
+	// TODO: @joshvanl mTLS authz request
+
+	req, err := stream.Recv()
+	if err != nil {
+		return err
+	}
+
+	if req.GetInitial() == nil {
+		return errors.New("initial request is required on stream connection")
+	}
+
+	s.connectionPool.Add(req.GetInitial(), stream)
 
 	select {
 	case <-s.closeCh:

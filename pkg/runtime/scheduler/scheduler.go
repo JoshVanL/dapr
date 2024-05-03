@@ -154,7 +154,7 @@ func (m *Manager) processStream(ctx context.Context, client *client.Client, stre
 			return ctx.Err()
 		default:
 			var err error
-			stream, err = client.Scheduler.WatchJobs(ctx, streamReq)
+			stream, err = client.Scheduler.WatchJobs(ctx)
 			if err != nil {
 				log.Errorf("Error while streaming with Scheduler at address %s: %v. Going to close and reconnect.", client.Address, err)
 				if err := client.CloseAndReconnect(ctx); err != nil {
@@ -167,62 +167,97 @@ func (m *Manager) processStream(ctx context.Context, client *client.Client, stre
 				}
 				continue
 			}
+			if err := stream.Send(streamReq); err != nil {
+				log.Errorf("Error sending stream request to Scheduler at address %s: %v", client.Address, err)
+				continue
+			}
 		}
 		log.Infof("Established stream conn to Scheduler at address %s", client.Address)
 
+		if err := m.handleStream(ctx, client, stream); err != nil {
+			return err
+		}
+	}
+}
+
+func (m *Manager) handleStream(ctx context.Context, client *client.Client, stream schedulerv1pb.Scheduler_WatchJobsClient) error {
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	respCh := make(chan uint32)
+
+	go func() {
+		defer wg.Done()
 		for {
 			select {
 			case <-stream.Context().Done():
-				if err := stream.CloseSend(); err != nil {
-					log.Errorf("Error closing stream for Scheduler address %s: %v", client.Address, err)
-				}
-				if err := client.CloseConnection(); err != nil {
-					log.Errorf("Error closing conn for Scheduler address %s: %v", client.Address, err)
-				}
-				return stream.Context().Err()
 			case <-ctx.Done():
-				if err := stream.CloseSend(); err != nil {
-					log.Errorf("Error closing stream for Scheduler address %s", client.Address)
+			case uuid := <-respCh:
+				if err := stream.Send(&schedulerv1pb.WatchJobsRequest{
+					WatchJobRequestType: &schedulerv1pb.WatchJobsRequest_Result{
+						Result: &schedulerv1pb.WatchJobsRequestResult{
+							Uuid: uuid,
+						},
+					},
+				}); err != nil {
+					log.Errorf("Error sending response to Scheduler at address %s: %v", client.Address, err)
 				}
-				if err := client.CloseConnection(); err != nil {
-					log.Errorf("Error closing connection for Scheduler address %s: %v", client.Address, err)
-				}
-				return ctx.Err()
+			}
+		}
+	}()
+
+	for {
+		select {
+		case <-stream.Context().Done():
+			if err := stream.CloseSend(); err != nil {
+				log.Errorf("Error closing stream for Scheduler address %s: %v", client.Address, err)
+			}
+			if err := client.CloseConnection(); err != nil {
+				log.Errorf("Error closing conn for Scheduler address %s: %v", client.Address, err)
+			}
+			return stream.Context().Err()
+		case <-ctx.Done():
+			if err := stream.CloseSend(); err != nil {
+				log.Errorf("Error closing stream for Scheduler address %s", client.Address)
+			}
+			if err := client.CloseConnection(); err != nil {
+				log.Errorf("Error closing connection for Scheduler address %s: %v", client.Address, err)
+			}
+			return ctx.Err()
+		default:
+			resp, err := stream.Recv()
+			if err == nil {
+				m.wg.Add(1)
+				go func() {
+					defer m.wg.Done()
+					select {
+					case <-ctx.Done():
+					case m.jobCh <- resp:
+					}
+				}()
+
+				continue
+			}
+
+			switch status.Code(err) {
+			case codes.Canceled:
+				log.Errorf("Sidecar cancelled the stream ctx for Scheduler address %s.", client.Address)
+			case codes.Unavailable:
+				log.Errorf("Scheduler cancelled the stream ctx for address %s.", client.Address)
 			default:
-				resp, err := stream.Recv()
-				if err == nil {
-					m.wg.Add(1)
-					go func() {
-						defer m.wg.Done()
-						select {
-						case <-ctx.Done():
-						case m.jobCh <- resp:
-						}
-					}()
-
-					continue
+				if err == io.EOF {
+					log.Errorf("Scheduler cancelled the Sidecar stream ctx for Scheduler address %s.", client.Address)
+				} else {
+					log.Errorf("Error while receiving job trigger from Scheduler at address %s: %v", client.Address, err)
 				}
 
-				switch status.Code(err) {
-				case codes.Canceled:
-					log.Errorf("Sidecar cancelled the stream ctx for Scheduler address %s.", client.Address)
-				case codes.Unavailable:
-					log.Errorf("Scheduler cancelled the stream ctx for address %s.", client.Address)
-				default:
-					if err == io.EOF {
-						log.Errorf("Scheduler cancelled the Sidecar stream ctx for Scheduler address %s.", client.Address)
-					} else {
-						log.Errorf("Error while receiving job trigger from Scheduler at address %s: %v", client.Address, err)
-					}
-
-					if nerr := stream.CloseSend(); nerr != nil {
-						log.Errorf("Error closing stream for Scheduler address: %s", client.Address)
-					}
-					if nerr := client.CloseConnection(); nerr != nil {
-						log.Errorf("Error closing conn for Scheduler address %s: %v", client.Address, nerr)
-					}
-					return err
+				if nerr := stream.CloseSend(); nerr != nil {
+					log.Errorf("Error closing stream for Scheduler address: %s", client.Address)
 				}
+				if nerr := client.CloseConnection(); nerr != nil {
+					log.Errorf("Error closing conn for Scheduler address %s: %v", client.Address, nerr)
+				}
+				return err
 			}
 		}
 	}
@@ -345,9 +380,13 @@ func (m *Manager) watchJobs(ctx context.Context, client *client.Client) error {
 	}
 
 	streamReq := &schedulerv1pb.WatchJobsRequest{
-		AppId:      m.appID,
-		Namespace:  m.namespace,
-		ActorTypes: entities,
+		WatchJobRequestType: &schedulerv1pb.WatchJobsRequest_Initial{
+			Initial: &schedulerv1pb.WatchJobsRequestInitial{
+				AppId:      m.appID,
+				Namespace:  m.namespace,
+				ActorTypes: entities,
+			},
+		},
 	}
 	return m.establishSchedulerConn(ctx, client, streamReq)
 }
