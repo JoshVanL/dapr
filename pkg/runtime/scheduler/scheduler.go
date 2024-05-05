@@ -44,21 +44,21 @@ type Manager struct {
 	actors    actors.ActorRuntime
 	channels  *channels.Channels
 
-	startCh chan struct{}
-	started atomic.Bool
-	wg      sync.WaitGroup
-	closeCh chan struct{}
-	running atomic.Bool
+	stopStartCh chan struct{}
+	lock        sync.Mutex
+	started     bool
+	stopped     bool
+	running     atomic.Bool
+	wg          sync.WaitGroup
 }
 
 func New(opts Options) (*Manager, error) {
 	return &Manager{
-		namespace: opts.Namespace,
-		appID:     opts.AppID,
-		clients:   opts.Clients,
-		channels:  opts.Channels,
-		startCh:   make(chan struct{}),
-		closeCh:   make(chan struct{}),
+		namespace:   opts.Namespace,
+		appID:       opts.AppID,
+		clients:     opts.Clients,
+		channels:    opts.Channels,
+		stopStartCh: make(chan struct{}, 1),
 	}, nil
 }
 
@@ -68,11 +68,20 @@ func (m *Manager) Run(ctx context.Context) error {
 		return errors.New("scheduler manager is already running")
 	}
 
+	for {
+		if err := m.watchJobs(ctx); err != nil {
+			return err
+		}
+	}
+}
+
+func (m *Manager) watchJobs(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-m.startCh:
+	case <-m.stopStartCh:
 	}
+	defer m.wg.Done()
 
 	var entities []string
 	if m.actors != nil {
@@ -90,7 +99,7 @@ func (m *Manager) Run(ctx context.Context) error {
 	}
 
 	clients := m.clients.All()
-	runners := make([]concurrency.Runner, len(clients))
+	runners := make([]concurrency.Runner, len(clients)+1)
 
 	for i := 0; i < len(clients); i++ {
 		runners[i] = (&connector{
@@ -101,12 +110,38 @@ func (m *Manager) Run(ctx context.Context) error {
 		}).run
 	}
 
+	runners[len(clients)] = func(ctx context.Context) error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-m.stopStartCh:
+			return nil
+		}
+	}
+
 	return concurrency.NewRunnerManager(runners...).Run(ctx)
 }
 
 func (m *Manager) Start(actors actors.ActorRuntime) {
-	if m.started.CompareAndSwap(false, true) {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	if !m.started {
+		m.wg.Add(1)
+		m.started = true
+		m.stopped = false
 		m.actors = actors
-		close(m.startCh)
+		close(m.stopStartCh)
+		m.stopStartCh = make(chan struct{}, 1)
+	}
+}
+
+func (m *Manager) Stop() {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	if m.started && !m.stopped {
+		m.stopped = true
+		m.started = false
+		m.stopStartCh <- struct{}{}
+		m.wg.Wait()
 	}
 }

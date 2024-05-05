@@ -189,7 +189,6 @@ func (s *Server) runEtcdCron(ctx context.Context) error {
 
 	return concurrency.NewRunnerManager(
 		func(ctx context.Context) error {
-			// TODO: @joshvanl: remove once trigger responses have been implemented
 			if err := s.cron.Run(ctx); !errors.Is(err, context.DeadlineExceeded) {
 				return err
 			}
