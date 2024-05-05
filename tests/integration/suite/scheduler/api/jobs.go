@@ -75,7 +75,7 @@ func (j *jobs) Setup(t *testing.T) []framework.Option {
 
 	fp.Free(t)
 	return []framework.Option{
-		framework.WithProcesses(fp, j.daprd, j.scheduler),
+		framework.WithProcesses(fp, j.scheduler, j.daprd),
 	}
 }
 
