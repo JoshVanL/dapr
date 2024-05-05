@@ -23,6 +23,7 @@ import (
 
 	schedulerv1pb "github.com/dapr/dapr/pkg/proto/scheduler/v1"
 	"github.com/dapr/kit/logger"
+	"google.golang.org/protobuf/types/known/anypb"
 )
 
 var log = logger.NewLogger("dapr.runtime.scheduler")
@@ -42,6 +43,13 @@ type namespacedPool struct {
 	appID     map[string][]uint64
 	actorType map[string][]uint64
 	conns     map[uint64]*conn
+}
+
+// JobEvent is a triggered job event.
+type JobEvent struct {
+	Name     string
+	Data     *anypb.Any
+	Metadata *schedulerv1pb.ScheduleJobMetadata
 }
 
 func NewPool() *Pool {
@@ -99,8 +107,8 @@ func (p *Pool) Add(req *schedulerv1pb.WatchJobsRequestInitial, stream schedulerv
 
 // Send is a blocking function that sends a job trigger to a correct job
 // recipient.
-func (p *Pool) Send(ctx context.Context, job *schedulerv1pb.WatchJobsResponse) error {
-	conn, err := p.getConn(job.GetMetadata())
+func (p *Pool) Send(ctx context.Context, job *JobEvent) error {
+	conn, err := p.getConn(job.Metadata)
 	if err != nil {
 		return err
 	}

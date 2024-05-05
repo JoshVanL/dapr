@@ -40,6 +40,10 @@ type Clients struct {
 }
 
 func New(ctx context.Context, opts Options) (*Clients, error) {
+	if len(opts.Addresses) == 0 {
+		return nil, fmt.Errorf("no addresses provided")
+	}
+
 	clients := make([]schedulerv1pb.SchedulerClient, len(opts.Addresses))
 	for i, address := range opts.Addresses {
 		log.Debugf("Attempting to connect to Scheduler at address: %s", address)
@@ -58,7 +62,6 @@ func New(ctx context.Context, opts Options) (*Clients, error) {
 
 // Next returns the next client in a round-robin manner.
 func (c *Clients) Next() schedulerv1pb.SchedulerClient {
-	// Check if there is only one client available
 	if len(c.clients) == 1 {
 		return c.clients[0]
 	}
@@ -66,6 +69,7 @@ func (c *Clients) Next() schedulerv1pb.SchedulerClient {
 	return c.clients[int(c.lastUsedIdx.Add(1))%len(c.clients)]
 }
 
+// All returns all scheduler clients.
 func (c *Clients) All() []schedulerv1pb.SchedulerClient {
 	return c.clients
 }

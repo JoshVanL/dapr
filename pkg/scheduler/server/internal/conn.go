@@ -22,21 +22,36 @@ import (
 	schedulerv1pb "github.com/dapr/dapr/pkg/proto/scheduler/v1"
 )
 
+// conn represents a single connection bidirectional stream between the
+// scheduler and the client. conn manages sending triggered jobs to the client,
+// and receiving job process results from the client. Jobs are sent serially
+// via a channel as gRPC does not support concurrent sends.
+// conn tracks the inflight jobs and acks them when the client sends back the
+// result, releasing the job triggering.
 type conn struct {
 	pool  *Pool
 	jobCh chan *schedulerv1pb.WatchJobsResponse
 
-	inflight map[uint32]chan struct{}
+	// idx is the uuid of a triggered job. We can use a simple counter as there
+	// are no privacy/time attack concerns as this counter is scoped to a single
+	// client.
+	idx uint64
+
+	// inflight tracks the jobs that have been sent to the client but have not
+	// been acked yet.
+	inflight map[uint64]chan struct{}
 
 	lock    sync.RWMutex
 	closeCh chan struct{}
 }
 
+// newConn creates a new connection and starts the goroutines to handle sending
+// jobs to the client and receiving job process results from the client.
 func (p *Pool) newConn(req *schedulerv1pb.WatchJobsRequestInitial, stream schedulerv1pb.Scheduler_WatchJobsServer, uuid uint64) *conn {
 	conn := &conn{
 		pool:     p,
 		closeCh:  make(chan struct{}),
-		inflight: make(map[uint32]chan struct{}),
+		inflight: make(map[uint64]chan struct{}),
 		jobCh:    make(chan *schedulerv1pb.WatchJobsResponse, 10),
 	}
 
@@ -45,6 +60,7 @@ func (p *Pool) newConn(req *schedulerv1pb.WatchJobsRequestInitial, stream schedu
 	go func() {
 		defer p.wg.Done()
 		defer p.remove(req, uuid)
+		defer close(conn.closeCh)
 		for {
 			select {
 			case job := <-conn.jobCh:
@@ -52,12 +68,8 @@ func (p *Pool) newConn(req *schedulerv1pb.WatchJobsRequestInitial, stream schedu
 					log.Warnf("Error sending job to connection: %v", err)
 				}
 			case <-p.closeCh:
-				close(conn.closeCh)
 				return
 			case <-stream.Context().Done():
-				close(conn.closeCh)
-				return
-			case <-conn.closeCh:
 				return
 			}
 		}
@@ -83,10 +95,20 @@ func (p *Pool) newConn(req *schedulerv1pb.WatchJobsRequestInitial, stream schedu
 	return conn
 }
 
-func (c *conn) sendWaitForResponse(ctx context.Context, job *schedulerv1pb.WatchJobsResponse) {
-	ackCh := make(chan struct{})
+// sendWaitForResponse sends a job to the client and waits for the client to
+// send back the result. The job is acked when the client sends back the result
+// with a UUID corresponding to the job.
+func (c *conn) sendWaitForResponse(ctx context.Context, jobEvt *JobEvent) {
 	c.lock.Lock()
-	c.inflight[job.GetUuid()] = ackCh
+	c.idx++
+	ackCh := make(chan struct{}, 1)
+	c.inflight[c.idx] = ackCh
+	job := &schedulerv1pb.WatchJobsResponse{
+		Name:     jobEvt.Name,
+		Uuid:     c.idx,
+		Data:     jobEvt.Data,
+		Metadata: jobEvt.Metadata,
+	}
 	c.lock.Unlock()
 
 	defer func() {
@@ -110,7 +132,9 @@ func (c *conn) sendWaitForResponse(ctx context.Context, job *schedulerv1pb.Watch
 	}
 }
 
-func (c *conn) handleJobProcessed(id uint32) {
+// handleJobProcessed acks the job with the given UUID. This is called when the
+// client sends back the result of the job to be acked.
+func (c *conn) handleJobProcessed(id uint64) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 

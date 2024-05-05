@@ -17,7 +17,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math/rand"
 	"strings"
 	"time"
 
@@ -25,6 +24,7 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 
 	schedulerv1pb "github.com/dapr/dapr/pkg/proto/scheduler/v1"
+	"github.com/dapr/dapr/pkg/scheduler/server/internal"
 )
 
 func (s *Server) ScheduleJob(ctx context.Context, req *schedulerv1pb.ScheduleJobRequest) (*schedulerv1pb.ScheduleJobResponse, error) {
@@ -75,12 +75,16 @@ func (s *Server) triggerJob(ctx context.Context, req *api.TriggerRequest) bool {
 		return true
 	}
 
-	if err := s.connectionPool.Send(ctx, &schedulerv1pb.WatchJobsResponse{
-		// TODO: @joshvanl fix possible panic
-		Name:     req.GetName()[strings.LastIndex(req.GetName(), "||")+2:],
+	idx := strings.LastIndex(req.GetName(), "||")
+	if idx == -1 || len(req.GetName()) <= idx+2 {
+		log.Errorf("Job name is malformed: %s", req.GetName())
+		return true
+	}
+
+	if err := s.connectionPool.Send(ctx, &internal.JobEvent{
+		Name:     req.GetName()[idx+2:],
 		Data:     req.GetPayload(),
 		Metadata: &meta,
-		Uuid:     rand.Uint32(), //nolint:gosec
 	}); err != nil {
 		// TODO: add job to a queue or something to try later this should be
 		// another long running go routine that accepts this job on a channel
