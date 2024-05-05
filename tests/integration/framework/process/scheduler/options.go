@@ -15,6 +15,7 @@ package scheduler
 
 import (
 	"github.com/dapr/dapr/tests/integration/framework/process/exec"
+	"github.com/dapr/dapr/tests/integration/framework/process/sentry"
 )
 
 type Option func(*options)
@@ -27,6 +28,7 @@ type options struct {
 	initialCluster      string
 	initialClusterPorts []int
 	etcdClientPorts     []string
+	namespace           string
 
 	logLevel         string
 	port             int
@@ -36,6 +38,7 @@ type options struct {
 	sentryAddress    *string
 	trustAnchorsFile *string
 	listenAddress    *string
+	sentry           *sentry.Sentry
 }
 
 func WithExecOptions(execOptions ...exec.Option) Option {
@@ -99,26 +102,20 @@ func WithMetricsPort(port int) Option {
 	}
 }
 
-func WithEnableTLS(enable bool) Option {
-	return func(o *options) {
-		o.tlsEnabled = enable
-	}
-}
-
-func WithSentryAddress(sentryAddress string) Option {
-	return func(o *options) {
-		o.sentryAddress = &sentryAddress
-	}
-}
-
-func WithTrustAnchorsFile(file string) Option {
-	return func(o *options) {
-		o.trustAnchorsFile = &file
-	}
-}
-
 func WithListenAddress(address string) Option {
 	return func(o *options) {
 		o.listenAddress = &address
+	}
+}
+
+func WithSentry(sentry *sentry.Sentry) Option {
+	return func(o *options) {
+		o.sentry = sentry
+	}
+}
+
+func WithNamespace(namespace string) Option {
+	return func(o *options) {
+		o.namespace = namespace
 	}
 }

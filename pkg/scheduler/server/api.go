@@ -28,11 +28,14 @@ import (
 )
 
 func (s *Server) ScheduleJob(ctx context.Context, req *schedulerv1pb.ScheduleJobRequest) (*schedulerv1pb.ScheduleJobResponse, error) {
-	// TODO: @joshvanl do mTLS and request validation <<
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-s.readyCh:
+	}
+
+	if err := s.authz.Metadata(ctx, req.GetMetadata()); err != nil {
+		return nil, err
 	}
 
 	jobName, err := buildJobName(req.GetName(), req.GetMetadata())
@@ -61,6 +64,94 @@ func (s *Server) ScheduleJob(ctx context.Context, req *schedulerv1pb.ScheduleJob
 	}
 
 	return &schedulerv1pb.ScheduleJobResponse{}, nil
+}
+
+func (s *Server) DeleteJob(ctx context.Context, req *schedulerv1pb.DeleteJobRequest) (*schedulerv1pb.DeleteJobResponse, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-s.readyCh:
+	}
+
+	if err := s.authz.Metadata(ctx, req.GetMetadata()); err != nil {
+		return nil, err
+	}
+
+	jobName, err := buildJobName(req.GetName(), req.GetMetadata())
+	if err != nil {
+		return nil, err
+	}
+
+	err = s.cron.Delete(ctx, jobName)
+	if err != nil {
+		log.Errorf("error deleting job %s: %s", jobName, err)
+		return nil, err
+	}
+
+	return &schedulerv1pb.DeleteJobResponse{}, nil
+}
+
+func (s *Server) GetJob(ctx context.Context, req *schedulerv1pb.GetJobRequest) (*schedulerv1pb.GetJobResponse, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-s.readyCh:
+	}
+
+	if err := s.authz.Metadata(ctx, req.GetMetadata()); err != nil {
+		return nil, err
+	}
+
+	jobName, err := buildJobName(req.GetName(), req.GetMetadata())
+	if err != nil {
+		return nil, err
+	}
+
+	job, err := s.cron.Get(ctx, jobName)
+	if err != nil {
+		log.Errorf("error getting job %s: %s", jobName, err)
+		return nil, err
+	}
+
+	if job == nil {
+		return nil, fmt.Errorf("job not found: %s", jobName)
+	}
+
+	return &schedulerv1pb.GetJobResponse{
+		//nolint:protogetter
+		Job: &schedulerv1pb.Job{
+			Schedule: job.Schedule,
+			DueTime:  job.DueTime,
+			Ttl:      job.Ttl,
+			Repeats:  job.Repeats,
+			Data:     job.GetPayload(),
+		},
+	}, nil
+}
+
+// WatchJobs sends jobs to Dapr sidecars upon component changes.
+func (s *Server) WatchJobs(stream schedulerv1pb.Scheduler_WatchJobsServer) error {
+	req, err := stream.Recv()
+	if err != nil {
+		return err
+	}
+
+	if req.GetInitial() == nil {
+		return errors.New("initial request is required on stream connection")
+	}
+
+	if err := s.authz.Initial(stream.Context(), req.GetInitial()); err != nil {
+		return err
+	}
+
+	s.connectionPool.Add(req.GetInitial(), stream)
+
+	select {
+	case <-s.closeCh:
+		return errors.New("server is closing")
+	case <-stream.Context().Done():
+		return stream.Context().Err()
+	}
 }
 
 func (s *Server) triggerJob(ctx context.Context, req *api.TriggerRequest) bool {
@@ -92,85 +183,6 @@ func (s *Server) triggerJob(ctx context.Context, req *api.TriggerRequest) bool {
 	}
 
 	return true
-}
-
-func (s *Server) DeleteJob(ctx context.Context, req *schedulerv1pb.DeleteJobRequest) (*schedulerv1pb.DeleteJobResponse, error) {
-	// TODO(artursouza): Add authorization check between caller and request.
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-s.readyCh:
-	}
-
-	jobName, err := buildJobName(req.GetName(), req.GetMetadata())
-	if err != nil {
-		return nil, err
-	}
-
-	err = s.cron.Delete(ctx, jobName)
-	if err != nil {
-		log.Errorf("error deleting job %s: %s", jobName, err)
-		return nil, err
-	}
-
-	return &schedulerv1pb.DeleteJobResponse{}, nil
-}
-
-func (s *Server) GetJob(ctx context.Context, req *schedulerv1pb.GetJobRequest) (*schedulerv1pb.GetJobResponse, error) {
-	// TODO(artursouza): Add authorization check between caller and request.
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-s.readyCh:
-	}
-
-	jobName, err := buildJobName(req.GetName(), req.GetMetadata())
-	if err != nil {
-		return nil, err
-	}
-
-	job, err := s.cron.Get(ctx, jobName)
-	if err != nil {
-		log.Errorf("error getting job %s: %s", jobName, err)
-		return nil, err
-	}
-
-	if job == nil {
-		return nil, fmt.Errorf("job not found: %s", jobName)
-	}
-
-	return &schedulerv1pb.GetJobResponse{
-		Job: &schedulerv1pb.Job{
-			Schedule: job.Schedule, //nolint:protogetter
-			DueTime:  job.DueTime,  //nolint:protogetter
-			Ttl:      job.Ttl,      //nolint:protogetter
-			Repeats:  job.Repeats,  //nolint:protogetter
-			Data:     job.GetPayload(),
-		},
-	}, nil
-}
-
-// WatchJobs sends jobs to Dapr sidecars upon component changes.
-func (s *Server) WatchJobs(stream schedulerv1pb.Scheduler_WatchJobsServer) error {
-	// TODO: @joshvanl mTLS authz request
-
-	req, err := stream.Recv()
-	if err != nil {
-		return err
-	}
-
-	if req.GetInitial() == nil {
-		return errors.New("initial request is required on stream connection")
-	}
-
-	s.connectionPool.Add(req.GetInitial(), stream)
-
-	select {
-	case <-s.closeCh:
-		return errors.New("server is closing")
-	case <-stream.Context().Done():
-		return stream.Context().Err()
-	}
 }
 
 func buildJobName(name string, meta *schedulerv1pb.ScheduleJobMetadata) (string, error) {
