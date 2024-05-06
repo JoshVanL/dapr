@@ -30,15 +30,12 @@ type options struct {
 	etcdClientPorts     []string
 	namespace           string
 
-	logLevel         string
-	port             int
-	healthzPort      int
-	metricsPort      int
-	tlsEnabled       bool
-	sentryAddress    *string
-	trustAnchorsFile *string
-	listenAddress    *string
-	sentry           *sentry.Sentry
+	logLevel      string
+	port          int
+	healthzPort   int
+	metricsPort   int
+	listenAddress *string
+	sentry        *sentry.Sentry
 }
 
 func WithExecOptions(execOptions ...exec.Option) Option {

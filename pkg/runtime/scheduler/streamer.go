@@ -21,14 +21,15 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/golang/protobuf/ptypes/wrappers"
+	"google.golang.org/grpc/codes"
+
 	"github.com/dapr/dapr/pkg/actors"
 	invokev1 "github.com/dapr/dapr/pkg/messaging/v1"
 	internalv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 	schedulerv1pb "github.com/dapr/dapr/pkg/proto/scheduler/v1"
 	"github.com/dapr/dapr/pkg/runtime/channels"
 	"github.com/dapr/kit/concurrency"
-	"github.com/golang/protobuf/ptypes/wrappers"
-	"google.golang.org/grpc/codes"
 )
 
 type streamer struct {

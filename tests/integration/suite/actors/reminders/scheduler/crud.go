@@ -30,7 +30,6 @@ import (
 	prochttp "github.com/dapr/dapr/tests/integration/framework/process/http"
 	"github.com/dapr/dapr/tests/integration/framework/process/placement"
 	"github.com/dapr/dapr/tests/integration/framework/process/scheduler"
-	procscheduler "github.com/dapr/dapr/tests/integration/framework/process/scheduler"
 	"github.com/dapr/dapr/tests/integration/framework/util"
 	"github.com/dapr/dapr/tests/integration/suite"
 )
@@ -60,7 +59,7 @@ func (c *crud) Setup(t *testing.T) []framework.Option {
 	})
 	handler.HandleFunc("/actors/myactortype/myactorid/method/foo", func(http.ResponseWriter, *http.Request) {})
 
-	c.scheduler = procscheduler.New(t)
+	c.scheduler = scheduler.New(t)
 	srv := prochttp.New(t, prochttp.WithHandler(handler))
 	c.place = placement.New(t)
 	c.daprd = daprd.New(t,
@@ -143,12 +142,10 @@ func (c *crud) Run(t *testing.T, ctx context.Context) {
 
 	last := c.methodcalled.Load()
 	assert.Eventually(t, func() bool {
-		if c.methodcalled.Load() == last {
-			return true
-		}
-		last = c.methodcalled.Load()
-		return false
-	}, time.Second*15, time.Second*2)
+		called := c.methodcalled.Load()
+		defer func() { last = called }()
+		return called == last
+	}, time.Second*15, time.Second)
 
 	time.Sleep(time.Second)
 	assert.Equal(t, last, c.methodcalled.Load())

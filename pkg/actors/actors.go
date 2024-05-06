@@ -1201,7 +1201,6 @@ func (a *actorsRuntime) CreateReminder(ctx context.Context, req *CreateReminderR
 
 		var dataAny *anypb.Any
 		if len(req.Data) > 0 {
-			var err error
 			dataAny, err = anypb.New(wrapperspb.Bytes(req.Data))
 			if err != nil {
 				return err

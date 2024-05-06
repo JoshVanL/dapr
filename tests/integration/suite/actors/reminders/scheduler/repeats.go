@@ -30,7 +30,6 @@ import (
 	prochttp "github.com/dapr/dapr/tests/integration/framework/process/http"
 	"github.com/dapr/dapr/tests/integration/framework/process/placement"
 	"github.com/dapr/dapr/tests/integration/framework/process/scheduler"
-	procscheduler "github.com/dapr/dapr/tests/integration/framework/process/scheduler"
 	"github.com/dapr/dapr/tests/integration/framework/util"
 	"github.com/dapr/dapr/tests/integration/suite"
 )
@@ -68,7 +67,7 @@ func (r *repeats) Setup(t *testing.T) []framework.Option {
 	})
 	handler.HandleFunc("/actors/myactortype/myactorid/method/foo", func(http.ResponseWriter, *http.Request) {})
 
-	r.scheduler = procscheduler.New(t)
+	r.scheduler = scheduler.New(t)
 	srv := prochttp.New(t, prochttp.WithHandler(handler))
 	r.place = placement.New(t)
 	r.daprd = daprd.New(t,

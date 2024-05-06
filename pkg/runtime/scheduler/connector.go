@@ -36,7 +36,7 @@ func (c *connector) run(ctx context.Context) error {
 			return fmt.Errorf("failed to watch scheduler jobs: %s", err)
 		}
 
-		if err := stream.Send(c.req); err != nil {
+		if err = stream.Send(c.req); err != nil {
 			return err
 		}
 

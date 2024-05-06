@@ -21,9 +21,10 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"google.golang.org/protobuf/types/known/anypb"
+
 	schedulerv1pb "github.com/dapr/dapr/pkg/proto/scheduler/v1"
 	"github.com/dapr/kit/logger"
-	"google.golang.org/protobuf/types/known/anypb"
 )
 
 var log = logger.NewLogger("dapr.runtime.scheduler")

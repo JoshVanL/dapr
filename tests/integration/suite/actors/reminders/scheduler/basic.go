@@ -16,7 +16,6 @@ package scheduler
 import (
 	"context"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -82,7 +81,7 @@ func (b *basic) Run(t *testing.T, ctx context.Context) {
 
 	client := util.HTTPClient(t)
 
-	daprdURL := "http://localhost:" + strconv.Itoa(b.daprd.HTTPPort()) + "/v1.0/actors/myactortype/myactorid"
+	daprdURL := "http://" + b.daprd.HTTPAddress() + "/v1.0/actors/myactortype/myactorid"
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, daprdURL+"/method/foo", nil)
 	require.NoError(t, err)

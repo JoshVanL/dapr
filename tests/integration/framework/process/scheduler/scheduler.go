@@ -258,7 +258,7 @@ func (s *Scheduler) ClientMTLS(t *testing.T, ctx context.Context, appID string) 
 	id, err := spiffeid.FromSegments(sech.ControlPlaneTrustDomain(), "ns", s.namespace, "dapr-scheduler")
 	require.NoError(t, err)
 
-	conn, err := grpc.DialContext(ctx, s.Address(), sech.GRPCDialOptionMTLS(id))
+	conn, err := grpc.DialContext(ctx, s.Address(), sech.GRPCDialOptionMTLS(id), grpc.WithBlock())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, conn.Close()) })
 

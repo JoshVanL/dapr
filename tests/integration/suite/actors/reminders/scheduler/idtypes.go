@@ -117,10 +117,10 @@ func (i *idtype) Setup(t *testing.T) []framework.Option {
 		app := app.New(t, append(appOpts,
 			app.WithHandlerFunc("/dapr/config",
 				func(w http.ResponseWriter, r *http.Request) {
-					w.Write([]byte(fmt.Sprintf(`{"entities": ["%s", "%s"]}`,
+					fmt.Fprintf(w, `{"entities": ["%s", "%s"]}`,
 						i.actorDaprds[x].actorTypes[0].typename,
 						i.actorDaprds[x].actorTypes[1].typename,
-					)))
+					)
 				}),
 		)...)
 
