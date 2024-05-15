@@ -21,22 +21,24 @@ import (
 // subscribe to topics. If gRPC API server closes, returns func early with nil
 // to close stream.
 func (a *api) SubscribeTopicEvents(stream runtimev1pb.Dapr_SubscribeTopicEventsServer) error {
-	errCh := make(chan error, 2)
-	subDone := make(chan struct{})
-	a.wg.Add(2)
-	go func() {
-		errCh <- a.processor.PubSub().Streamer().Subscribe(stream)
-		close(subDone)
-		a.wg.Done()
-	}()
-	go func() {
-		select {
-		case <-a.closeCh:
-		case <-subDone:
-		}
-		errCh <- nil
-		a.wg.Done()
-	}()
+	//errCh := make(chan error, 2)
+	//subDone := make(chan struct{})
+	//a.wg.Add(2)
+	//go func() {
+	//	errCh <- a.processor.PubSub().Streamer().Subscribe(stream)
+	//	close(subDone)
+	//	a.wg.Done()
+	//}()
+	//go func() {
+	//	select {
+	//	case <-a.closeCh:
+	//	case <-subDone:
+	//	}
+	//	errCh <- nil
+	//	a.wg.Done()
+	//}()
 
-	return <-errCh
+	//return <-errCh
+
+	return nil
 }

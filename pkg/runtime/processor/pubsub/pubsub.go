@@ -19,77 +19,51 @@ import (
 	"sync"
 
 	contribpubsub "github.com/dapr/components-contrib/pubsub"
-	"github.com/dapr/dapr/pkg/api/grpc/manager"
 	compapi "github.com/dapr/dapr/pkg/apis/components/v1alpha1"
 	comppubsub "github.com/dapr/dapr/pkg/components/pubsub"
-	"github.com/dapr/dapr/pkg/config"
 	diag "github.com/dapr/dapr/pkg/diagnostics"
-	"github.com/dapr/dapr/pkg/resiliency"
-	"github.com/dapr/dapr/pkg/runtime/channels"
 	"github.com/dapr/dapr/pkg/runtime/compstore"
 	rterrors "github.com/dapr/dapr/pkg/runtime/errors"
 	"github.com/dapr/dapr/pkg/runtime/meta"
-	"github.com/dapr/dapr/pkg/runtime/processor/pubsub/subscription"
+	"github.com/dapr/dapr/pkg/runtime/processor/subscriber"
+	rtpubsub "github.com/dapr/dapr/pkg/runtime/pubsub"
 	"github.com/dapr/dapr/pkg/scopes"
 	"github.com/dapr/kit/logger"
 )
 
 type Options struct {
 	AppID          string
-	Namespace      string
-	Resiliency     resiliency.Provider
-	TraceSpec      *config.TracingSpec
-	Channels       *channels.Channels
-	GRPC           *manager.Manager
 	Registry       *comppubsub.Registry
 	Meta           *meta.Meta
 	ComponentStore *compstore.ComponentStore
+	Subscriber     *subscriber.Subscriber
 }
 
 type pubsub struct {
-	appID       string
-	namespace   string
-	resiliency  resiliency.Provider
-	tracingSpec *config.TracingSpec
-	channels    *channels.Channels
-	grpc        *manager.Manager
-	registry    *comppubsub.Registry
-	meta        *meta.Meta
-	compStore   *compstore.ComponentStore
+	appID      string
+	registry   *comppubsub.Registry
+	meta       *meta.Meta
+	compStore  *compstore.ComponentStore
+	subscriber *subscriber.Subscriber
 
-	appSubs      map[string][]*subscription.Subscription
-	streamSubs   map[string][]*subscription.Subscription
-	appSubActive bool
-	lock         sync.RWMutex
+	lock sync.RWMutex
 }
 
 var log = logger.NewLogger("dapr.runtime.processor.pubsub")
 
 func New(opts Options) *pubsub {
 	return &pubsub{
-		appID:       opts.AppID,
-		namespace:   opts.Namespace,
-		resiliency:  opts.Resiliency,
-		tracingSpec: opts.TraceSpec,
-		channels:    opts.Channels,
-		grpc:        opts.GRPC,
-		registry:    opts.Registry,
-		meta:        opts.Meta,
-		compStore:   opts.ComponentStore,
-
-		appSubs:    make(map[string][]*subscription.Subscription),
-		streamSubs: make(map[string][]*subscription.Subscription),
+		appID:      opts.AppID,
+		registry:   opts.Registry,
+		meta:       opts.Meta,
+		compStore:  opts.ComponentStore,
+		subscriber: opts.Subscriber,
 	}
 }
 
 func (p *pubsub) Init(ctx context.Context, comp compapi.Component) error {
 	p.lock.Lock()
 	defer p.lock.Unlock()
-
-	for _, sub := range p.appSubs[comp.Name] {
-		sub.Stop()
-	}
-	p.appSubs[comp.Name] = nil
 
 	fName := comp.LogName()
 	pubSub, err := p.registry.Create(comp.Spec.Type, comp.Spec.Version, fName)
@@ -118,21 +92,23 @@ func (p *pubsub) Init(ctx context.Context, comp compapi.Component) error {
 	}
 
 	pubsubName := comp.ObjectMeta.Name
-
-	p.compStore.AddPubSub(pubsubName, compstore.PubsubItem{
+	pubsubItem := rtpubsub.PubsubItem{
 		Component:           pubSub,
 		ScopedSubscriptions: scopes.GetScopedTopics(scopes.SubscriptionScopes, p.appID, properties),
 		ScopedPublishings:   scopes.GetScopedTopics(scopes.PublishingScopes, p.appID, properties),
 		AllowedTopics:       scopes.GetAllowedTopics(properties),
 		ProtectedTopics:     scopes.GetProtectedTopics(properties),
 		NamespaceScoped:     meta.ContainsNamespace(comp.Spec.Metadata),
-	})
-	diag.DefaultMonitoring.ComponentInitialized(comp.Spec.Type)
+	}
 
-	// TODO: @joshvanl
-	//if p.subscribing {
-	//	return p.beginPubSub(ctx, pubsubName)
-	//}
+	p.compStore.AddPubSub(pubsubName, pubsubItem)
+	if err := p.subscriber.ReloadPubSub(pubsubName); err != nil {
+		p.compStore.DeletePubSub(pubsubName)
+		diag.DefaultMonitoring.ComponentInitFailed(comp.Spec.Type, "init", comp.ObjectMeta.Name)
+		return rterrors.NewInit(rterrors.InitComponentFailure, fName, err)
+	}
+
+	diag.DefaultMonitoring.ComponentInitialized(comp.Spec.Type)
 
 	return nil
 }
@@ -141,6 +117,8 @@ func (p *pubsub) Close(comp compapi.Component) error {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
+	p.subscriber.StopPubSub(comp.Name)
+
 	ps, ok := p.compStore.GetPubSub(comp.Name)
 	if !ok {
 		return nil
@@ -148,40 +126,9 @@ func (p *pubsub) Close(comp compapi.Component) error {
 
 	defer p.compStore.DeletePubSub(comp.Name)
 
-	// TODO: @joshvanl
-	//for topic := range p.compStore.GetTopicRoutes()[comp.Name] {
-	//	subKey := topicKey(comp.Name, topic)
-	//	p.unsubscribeTopic(subKey)
-	//	p.compStore.DeleteTopicRoute(subKey)
-	//}
-
 	if err := ps.Component.Close(); err != nil {
 		return err
 	}
 
 	return nil
-}
-
-func (p *pubsub) StartSubscriptions() {
-	p.lock.Lock()
-	defer p.lock.Unlock()
-
-	if p.appSubActive {
-		return
-	}
-
-	p.appSubActive = true
-}
-
-func (p *pubsub) StopSubscriptions() {
-	p.lock.Lock()
-	defer p.lock.Unlock()
-
-	p.appSubActive = false
-
-	for _, subs := range p.appSubs {
-		for _, sub := range subs {
-			sub.Stop()
-		}
-	}
 }

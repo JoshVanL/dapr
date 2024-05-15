@@ -40,6 +40,7 @@ import (
 	"github.com/dapr/dapr/pkg/runtime/processor/pubsub"
 	"github.com/dapr/dapr/pkg/runtime/processor/secret"
 	"github.com/dapr/dapr/pkg/runtime/processor/state"
+	"github.com/dapr/dapr/pkg/runtime/processor/subscriber"
 	"github.com/dapr/dapr/pkg/runtime/processor/wfbackend"
 	"github.com/dapr/dapr/pkg/runtime/registry"
 	"github.com/dapr/dapr/pkg/security"
@@ -105,10 +106,10 @@ type Processor struct {
 	managers        map[components.Category]manager
 	state           StateManager
 	secret          SecretManager
-	pubsub          PubsubManager
 	binding         BindingManager
 	workflowBackend WorkflowBackendManager
 	security        security.Handler
+	subscriber      *subscriber.Subscriber
 
 	pendingHTTPEndpoints       chan httpendpointsapi.HTTPEndpoint
 	pendingComponents          chan componentsapi.Component
@@ -124,20 +125,23 @@ type Processor struct {
 }
 
 func New(opts Options) *Processor {
+	subscriber := subscriber.New(subscriber.Options{
+		AppID:       opts.ID,
+		Namespace:   opts.Namespace,
+		Resiliency:  opts.Resiliency,
+		TracingSpec: opts.GlobalConfig.Spec.TracingSpec,
+		IsHTTP:      opts.IsHTTP,
+		Channels:    opts.Channels,
+		GRPC:        opts.GRPC,
+		CompStore:   opts.ComponentStore,
+	})
+
 	ps := pubsub.New(pubsub.Options{
-		ID:             opts.ID,
-		Namespace:      opts.Namespace,
-		Mode:           opts.Mode,
-		PodName:        opts.PodName,
-		IsHTTP:         opts.IsHTTP,
+		AppID:          opts.ID,
 		Registry:       opts.Registry.PubSubs(),
-		ComponentStore: opts.ComponentStore,
 		Meta:           opts.Meta,
-		Resiliency:     opts.Resiliency,
-		TracingSpec:    opts.GlobalConfig.Spec.TracingSpec,
-		GRPC:           opts.GRPC,
-		Channels:       opts.Channels,
-		OperatorClient: opts.OperatorClient,
+		ComponentStore: opts.ComponentStore,
+		Subscriber:     subscriber,
 	})
 
 	state := state.New(state.Options{
@@ -145,7 +149,8 @@ func New(opts Options) *Processor {
 		Registry:       opts.Registry.StateStores(),
 		ComponentStore: opts.ComponentStore,
 		Meta:           opts.Meta,
-		Outbox:         ps.Outbox(),
+		// TODO: @joshvanl
+		//Outbox:         ps.Outbox(),
 	})
 
 	secret := secret.New(secret.Options{
@@ -182,11 +187,11 @@ func New(opts Options) *Processor {
 		closedCh:                   make(chan struct{}),
 		compStore:                  opts.ComponentStore,
 		state:                      state,
-		pubsub:                     ps,
 		binding:                    binding,
 		secret:                     secret,
 		workflowBackend:            wfbe,
 		security:                   opts.Security,
+		subscriber:                 subscriber,
 		managers: map[components.Category]manager{
 			components.CategoryBindings: binding,
 			components.CategoryConfiguration: configuration.New(configuration.Options{
@@ -226,6 +231,7 @@ func (p *Processor) Process(ctx context.Context) error {
 		p.processComponents,
 		p.processHTTPEndpoints,
 		p.processSubscriptions,
+		p.subscriber.Run,
 		func(ctx context.Context) error {
 			<-ctx.Done()
 			close(p.closedCh)

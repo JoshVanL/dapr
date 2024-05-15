@@ -27,7 +27,6 @@ import (
 	diag "github.com/dapr/dapr/pkg/diagnostics"
 	"github.com/dapr/dapr/pkg/resiliency"
 	"github.com/dapr/dapr/pkg/runtime/channels"
-	"github.com/dapr/dapr/pkg/runtime/compstore"
 	rterrors "github.com/dapr/dapr/pkg/runtime/errors"
 	rtpubsub "github.com/dapr/dapr/pkg/runtime/pubsub"
 	"github.com/dapr/kit/logger"
@@ -39,10 +38,10 @@ type Options struct {
 	PubSubName string
 	Topic      string
 	IsHTTP     bool
-	PubSub     *compstore.PubsubItem
+	PubSub     *rtpubsub.PubsubItem
 	Resiliency resiliency.Provider
 	TraceSpec  *config.TracingSpec
-	Route      compstore.TopicRouteElem
+	Route      rtpubsub.Subscription
 	Channels   *channels.Channels
 	GRPC       *manager.Manager
 }
@@ -53,9 +52,9 @@ type Subscription struct {
 	pubsubName  string
 	topic       string
 	isHTTP      bool
-	pubsub      *compstore.PubsubItem
+	pubsub      *rtpubsub.PubsubItem
 	resiliency  resiliency.Provider
-	route       compstore.TopicRouteElem
+	route       rtpubsub.Subscription
 	tracingSpec *config.TracingSpec
 	channels    *channels.Channels
 	grpc        *manager.Manager

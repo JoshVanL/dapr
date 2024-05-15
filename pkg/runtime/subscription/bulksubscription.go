@@ -35,7 +35,6 @@ import (
 	invokev1 "github.com/dapr/dapr/pkg/messaging/v1"
 	runtimev1pb "github.com/dapr/dapr/pkg/proto/runtime/v1"
 	"github.com/dapr/dapr/pkg/resiliency"
-	"github.com/dapr/dapr/pkg/runtime/compstore"
 	rtpubsub "github.com/dapr/dapr/pkg/runtime/pubsub"
 )
 
@@ -246,7 +245,7 @@ func (s *Subscription) bulkSubscribeTopic(ctx context.Context, policyDef *resili
 
 // sendBulkToDLQIfConfigured sends the message to the dead letter queue if configured.
 func (s *Subscription) sendBulkToDLQIfConfigured(ctx context.Context, bulkSubCallData *bulkSubscribeCallData, msg *contribpubsub.BulkMessage,
-	sendAllEntries bool, route compstore.TopicRouteElem,
+	sendAllEntries bool, route rtpubsub.Subscription,
 ) error {
 	bscData := *bulkSubCallData
 	if route.DeadLetterTopic != "" {
@@ -262,7 +261,7 @@ func (s *Subscription) sendBulkToDLQIfConfigured(ctx context.Context, bulkSubCal
 }
 
 // getRouteIfProcessable returns the route path if the message is processable.
-func (s *Subscription) getRouteIfProcessable(ctx context.Context, bulkSubCallData *bulkSubscribeCallData, route compstore.TopicRouteElem, message *contribpubsub.BulkMessageEntry,
+func (s *Subscription) getRouteIfProcessable(ctx context.Context, bulkSubCallData *bulkSubscribeCallData, route rtpubsub.Subscription, message *contribpubsub.BulkMessageEntry,
 	i int, matchElem interface{},
 ) (string, error) {
 	bscData := *bulkSubCallData
@@ -292,7 +291,7 @@ func (s *Subscription) getRouteIfProcessable(ctx context.Context, bulkSubCallDat
 
 // createEnvelopeAndInvokeSubscriber creates the envelope and invokes the subscriber.
 func (s *Subscription) createEnvelopeAndInvokeSubscriber(ctx context.Context, bulkSubCallData *bulkSubscribeCallData, psm bulkSubscribedMessage,
-	msg *contribpubsub.BulkMessage, route compstore.TopicRouteElem, path string, policyDef *resiliency.PolicyDefinition,
+	msg *contribpubsub.BulkMessage, route rtpubsub.Subscription, path string, policyDef *resiliency.PolicyDefinition,
 	rawPayload bool,
 ) error {
 	bscData := *bulkSubCallData

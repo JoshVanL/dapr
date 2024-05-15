@@ -75,6 +75,8 @@ import (
 	"github.com/dapr/dapr/pkg/runtime/processor"
 	"github.com/dapr/dapr/pkg/runtime/processor/wfbackend"
 	"github.com/dapr/dapr/pkg/runtime/processor/workflow"
+	"github.com/dapr/dapr/pkg/runtime/pubsub"
+	"github.com/dapr/dapr/pkg/runtime/pubsub/publisher"
 	"github.com/dapr/dapr/pkg/runtime/registry"
 	"github.com/dapr/dapr/pkg/runtime/wfengine"
 	"github.com/dapr/dapr/pkg/security"
@@ -111,6 +113,7 @@ type DaprRuntime struct {
 	appHealthLock       sync.Mutex
 	httpMiddleware      *middlewarehttp.HTTP
 	compStore           *compstore.ComponentStore
+	pubsubAdapter       pubsub.Adapter
 	meta                *meta.Meta
 	processor           *processor.Processor
 	authz               *authorizer.Authorizer
@@ -237,19 +240,25 @@ func newDaprRuntime(ctx context.Context,
 		resiliency:        resiliencyProvider,
 		appHealthReady:    nil,
 		compStore:         compStore,
-		meta:              meta,
-		operatorClient:    operatorClient,
-		channels:          channels,
-		sec:               sec,
-		processor:         processor,
-		authz:             authz,
-		reloader:          reloader,
-		namespace:         namespace,
-		podName:           podName,
-		initComplete:      make(chan struct{}),
-		isAppHealthy:      make(chan struct{}),
-		clock:             new(clock.RealClock),
-		httpMiddleware:    httpMiddleware,
+		pubsubAdapter: publisher.New(publisher.Options{
+			AppID:       runtimeConfig.id,
+			Namespace:   namespace,
+			Resiliency:  resiliencyProvider,
+			GetPubSubFn: compStore.GetPubSub,
+		}),
+		meta:           meta,
+		operatorClient: operatorClient,
+		channels:       channels,
+		sec:            sec,
+		processor:      processor,
+		authz:          authz,
+		reloader:       reloader,
+		namespace:      namespace,
+		podName:        podName,
+		initComplete:   make(chan struct{}),
+		isAppHealthy:   make(chan struct{}),
+		clock:          new(clock.RealClock),
+		httpMiddleware: httpMiddleware,
 	}
 	close(rt.isAppHealthy)
 
@@ -339,7 +348,7 @@ func (a *DaprRuntime) Run(parentCtx context.Context) error {
 			// Stop reading from subscriptions and input bindings forever while
 			// blocking graceful shutdown. This will prevent incoming messages from
 			// being processed, but allow outgoing APIs to be processed.
-			a.processor.PubSub().StopSubscriptions(true)
+			a.processor.Subscriber().StopAllSubscriptionsForever()
 			a.processor.Binding().StopReadingFromBindings(true)
 
 			select {
@@ -521,7 +530,7 @@ func (a *DaprRuntime) initRuntime(ctx context.Context) error {
 		Universal:             a.daprUniversal,
 		Logger:                logger.NewLogger("dapr.grpc.api"),
 		Channels:              a.channels,
-		PubsubAdapter:         a.processor.PubSub(),
+		PubsubAdapter:         a.pubsubAdapter,
 		DirectMessaging:       a.directMessaging,
 		SendToOutputBindingFn: a.processor.Binding().SendToOutputBinding,
 		TracingSpec:           a.globalConfig.GetTracingSpec(),
@@ -710,7 +719,7 @@ func (a *DaprRuntime) appHealthChanged(ctx context.Context, status uint8) {
 		}
 
 		// Start subscribing to topics and reading from input bindings
-		if err := a.processor.PubSub().StartSubscriptions(ctx); err != nil {
+		if err := a.processor.Subscriber().StartAppSubscriptions(); err != nil {
 			log.Warnf("failed to subscribe to topics: %s ", err)
 		}
 		err := a.processor.Binding().StartReadingFromBindings(ctx)
@@ -719,7 +728,7 @@ func (a *DaprRuntime) appHealthChanged(ctx context.Context, status uint8) {
 		}
 
 		// Start subscribing to outbox topics
-		if err := a.processor.PubSub().Outbox().SubscribeToInternalTopics(ctx, a.runtimeConfig.id); err != nil {
+		if err := a.pubsubAdapter.Outbox().SubscribeToInternalTopics(ctx, a.runtimeConfig.id); err != nil {
 			log.Warnf("failed to subscribe to outbox topics: %s", err)
 		}
 	case apphealth.AppStatusUnhealthy:
@@ -730,7 +739,7 @@ func (a *DaprRuntime) appHealthChanged(ctx context.Context, status uint8) {
 		}
 
 		// Stop topic subscriptions and input bindings
-		a.processor.PubSub().StopSubscriptions(false)
+		a.processor.Subscriber().StopAppSubscriptions()
 		a.processor.Binding().StopReadingFromBindings(false)
 	}
 }
@@ -780,7 +789,7 @@ func (a *DaprRuntime) startHTTPServer(port int, publicPort *int, profilePort int
 		Universal:             a.daprUniversal,
 		Channels:              a.channels,
 		DirectMessaging:       a.directMessaging,
-		PubsubAdapter:         a.processor.PubSub(),
+		PubsubAdapter:         a.pubsubAdapter,
 		SendToOutputBindingFn: a.processor.Binding().SendToOutputBinding,
 		TracingSpec:           a.globalConfig.GetTracingSpec(),
 		MaxRequestBodySize:    int64(a.runtimeConfig.maxRequestBodySize),
@@ -819,7 +828,7 @@ func (a *DaprRuntime) startHTTPServer(port int, publicPort *int, profilePort int
 	}
 
 	if err := a.runnerCloser.AddCloser(func() {
-		a.processor.PubSub().StopSubscriptions(true)
+		a.processor.Subscriber().StopAllSubscriptionsForever()
 	}); err != nil {
 		return err
 	}

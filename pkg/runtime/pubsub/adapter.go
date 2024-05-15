@@ -20,6 +20,17 @@ import (
 	"github.com/dapr/dapr/pkg/outbox"
 )
 
+// PubsubItem is a pubsub component with its scoped subscriptions and
+// publishings.
+type PubsubItem struct {
+	Component           contribPubsub.PubSub
+	ScopedSubscriptions []string
+	ScopedPublishings   []string
+	AllowedTopics       []string
+	ProtectedTopics     []string
+	NamespaceScoped     bool
+}
+
 // Adapter is the interface for message buses.
 type Adapter interface {
 	Publish(context.Context, *contribPubsub.PublishRequest) error
