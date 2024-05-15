@@ -17,7 +17,6 @@ import (
 	"context"
 
 	contribpubsub "github.com/dapr/components-contrib/pubsub"
-	"github.com/dapr/dapr/pkg/outbox"
 	"github.com/dapr/dapr/pkg/resiliency"
 	rtpubsub "github.com/dapr/dapr/pkg/runtime/pubsub"
 	"github.com/dapr/kit/logger"
@@ -37,9 +36,6 @@ type publisher struct {
 	namespace   string
 	resiliency  resiliency.Provider
 	getpubsubFn GetPubSubFn
-	// TODO: @joshvanl
-	//ps.outbox = rtpubsub.NewOutbox(opts.Publisher.Publish, opts.ComponentStore.GetPubSubComponent, opts.ComponentStore.GetStateStore, rtpubsub.ExtractCloudEventProperty, opts.Namespace)
-	outbox outbox.Outbox
 }
 
 var log = logger.NewLogger("dapr.runtime.pubsub.publisher")
@@ -99,10 +95,6 @@ func (p *publisher) BulkPublish(ctx context.Context, req *contribpubsub.BulkPubl
 	defaultBulkPublisher := rtpubsub.NewDefaultBulkPublisher(pubsub.Component)
 
 	return rtpubsub.ApplyBulkPublishResiliency(ctx, req, policyDef, defaultBulkPublisher)
-}
-
-func (p *publisher) Outbox() outbox.Outbox {
-	return p.outbox
 }
 
 func (p *publisher) isOperationAllowed(topic string, pubsub rtpubsub.PubsubItem) bool {

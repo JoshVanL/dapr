@@ -43,6 +43,7 @@ type SecretManager interface {
 type SubscribeManager interface {
 	ReloadPubSub(string) error
 	StopPubSub(string)
+	InitProgramaticSubscriptions(context.Context) error
 	StartAppSubscriptions() error
 	StopAppSubscriptions()
 	StopAllSubscriptionsForever()

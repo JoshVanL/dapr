@@ -56,9 +56,10 @@ type DeclarativeSubscription struct {
 }
 
 type subscriptions struct {
-	programatics []rtpubsub.Subscription
-	declaratives map[string]*DeclarativeSubscription
-	streams      map[string]*DeclarativeSubscription
+	programatics     []rtpubsub.Subscription
+	declaratives     map[string]*DeclarativeSubscription
+	declarativesList []string
+	streams          map[string]*DeclarativeSubscription
 }
 
 func (c *ComponentStore) SetProgramaticSubscriptions(subs ...rtpubsub.Subscription) {
@@ -70,10 +71,18 @@ func (c *ComponentStore) SetProgramaticSubscriptions(subs ...rtpubsub.Subscripti
 func (c *ComponentStore) AddDeclarativeSubscription(comp *subapi.Subscription, sub rtpubsub.Subscription) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
+	for i, existing := range c.subscriptions.declarativesList {
+		if existing == comp.Name {
+			c.subscriptions.declarativesList = append(c.subscriptions.declarativesList[:i], c.subscriptions.declarativesList[i+1:]...)
+			break
+		}
+	}
+
 	c.subscriptions.declaratives[comp.Name] = &DeclarativeSubscription{
 		Comp:         comp,
 		Subscription: sub,
 	}
+	c.subscriptions.declarativesList = append(c.subscriptions.declarativesList, comp.Name)
 }
 
 func (c *ComponentStore) AddStreamSubscription(comp *subapi.Subscription, sub rtpubsub.Subscription) {
@@ -90,6 +99,12 @@ func (c *ComponentStore) DeleteDeclarativeSubscription(names ...string) {
 	defer c.lock.Unlock()
 	for _, name := range names {
 		delete(c.subscriptions.declaratives, name)
+		for i, existing := range c.subscriptions.declarativesList {
+			if existing == name {
+				c.subscriptions.declarativesList = append(c.subscriptions.declarativesList[:i], c.subscriptions.declarativesList[i+1:]...)
+				break
+			}
+		}
 	}
 }
 
@@ -97,15 +112,39 @@ func (c *ComponentStore) ListSubscriptions() []rtpubsub.Subscription {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 
-	subs := make([]rtpubsub.Subscription, 0, len(c.subscriptions.programatics)+len(c.subscriptions.declaratives)+len(c.subscriptions.streams))
-	for i := range c.subscriptions.programatics {
-		subs = append(subs, c.subscriptions.programatics[i])
+	var subs []rtpubsub.Subscription
+	taken := make(map[string]int)
+
+	for _, name := range c.subscriptions.declarativesList {
+		sub := c.subscriptions.declaratives[name].Subscription
+		key := sub.PubsubName + "||" + sub.Topic
+		if _, ok := taken[key]; !ok {
+			// TODO: @joshvanl
+			//		subs[j] = sub
+			//	} else {
+			taken[key] = len(subs)
+			subs = append(subs, sub)
+		}
 	}
-	for i := range c.subscriptions.declaratives {
-		subs = append(subs, c.subscriptions.declaratives[i].Subscription)
+	for i := range c.subscriptions.programatics {
+		sub := c.subscriptions.programatics[i]
+		key := sub.PubsubName + "||" + sub.Topic
+		if j, ok := taken[key]; ok {
+			subs[j] = sub
+		} else {
+			taken[key] = len(subs)
+			subs = append(subs, sub)
+		}
 	}
 	for i := range c.subscriptions.streams {
-		subs = append(subs, c.subscriptions.streams[i].Subscription)
+		sub := c.subscriptions.streams[i].Subscription
+		key := sub.PubsubName + "||" + sub.Topic
+		if j, ok := taken[key]; ok {
+			subs[j] = sub
+		} else {
+			taken[key] = len(subs)
+			subs = append(subs, sub)
+		}
 	}
 
 	return subs
@@ -115,12 +154,30 @@ func (c *ComponentStore) ListSubscriptionsApp() []rtpubsub.Subscription {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 
-	subs := make([]rtpubsub.Subscription, 0, len(c.subscriptions.programatics)+len(c.subscriptions.declaratives))
-	for _, sub := range c.subscriptions.programatics {
-		subs = append(subs, sub)
+	var subs []rtpubsub.Subscription
+	taken := make(map[string]int)
+
+	for _, name := range c.subscriptions.declarativesList {
+		sub := c.subscriptions.declaratives[name].Subscription
+		key := sub.PubsubName + "||" + sub.Topic
+		if _, ok := taken[key]; !ok {
+			// TODO: @joshvanl
+			//	subs[j] = sub
+			//} else {
+			taken[key] = len(subs)
+			subs = append(subs, sub)
+		}
 	}
-	for _, sub := range c.subscriptions.declaratives {
-		subs = append(subs, sub.Subscription)
+
+	for i := range c.subscriptions.programatics {
+		sub := c.subscriptions.programatics[i]
+		key := sub.PubsubName + "||" + sub.Topic
+		if j, ok := taken[key]; ok {
+			subs[j] = sub
+		} else {
+			taken[key] = len(subs)
+			subs = append(subs, sub)
+		}
 	}
 
 	return subs
@@ -174,8 +231,8 @@ func (c *ComponentStore) ListDeclarativeSubscriptions() []subapi.Subscription {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 	subs := make([]subapi.Subscription, 0, len(c.subscriptions.declaratives))
-	for i := range c.subscriptions.declaratives {
-		subs = append(subs, *c.subscriptions.declaratives[i].Comp)
+	for i := range c.subscriptions.declarativesList {
+		subs = append(subs, *c.subscriptions.declaratives[c.subscriptions.declarativesList[i]].Comp)
 	}
 	return subs
 }

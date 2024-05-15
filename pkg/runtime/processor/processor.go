@@ -27,6 +27,7 @@ import (
 	"github.com/dapr/dapr/pkg/config"
 	"github.com/dapr/dapr/pkg/middleware/http"
 	"github.com/dapr/dapr/pkg/modes"
+	"github.com/dapr/dapr/pkg/outbox"
 	operatorv1 "github.com/dapr/dapr/pkg/proto/operator/v1"
 	"github.com/dapr/dapr/pkg/resiliency"
 	"github.com/dapr/dapr/pkg/runtime/channels"
@@ -97,6 +98,8 @@ type Options struct {
 	MiddlewareHTTP *http.HTTP
 
 	Security security.Handler
+
+	Outbox outbox.Outbox
 }
 
 // Processor manages the lifecycle of all components categories.
@@ -136,21 +139,12 @@ func New(opts Options) *Processor {
 		CompStore:   opts.ComponentStore,
 	})
 
-	ps := pubsub.New(pubsub.Options{
-		AppID:          opts.ID,
-		Registry:       opts.Registry.PubSubs(),
-		Meta:           opts.Meta,
-		ComponentStore: opts.ComponentStore,
-		Subscriber:     subscriber,
-	})
-
 	state := state.New(state.Options{
 		ActorsEnabled:  opts.ActorsEnabled,
 		Registry:       opts.Registry.StateStores(),
 		ComponentStore: opts.ComponentStore,
 		Meta:           opts.Meta,
-		// TODO: @joshvanl
-		//Outbox:         ps.Outbox(),
+		Outbox:         opts.Outbox,
 	})
 
 	secret := secret.New(secret.Options{
@@ -209,7 +203,13 @@ func New(opts Options) *Processor {
 				ComponentStore: opts.ComponentStore,
 				Meta:           opts.Meta,
 			}),
-			components.CategoryPubSub:          ps,
+			components.CategoryPubSub: pubsub.New(pubsub.Options{
+				AppID:          opts.ID,
+				Registry:       opts.Registry.PubSubs(),
+				Meta:           opts.Meta,
+				ComponentStore: opts.ComponentStore,
+				Subscriber:     subscriber,
+			}),
 			components.CategorySecretStore:     secret,
 			components.CategoryStateStore:      state,
 			components.CategoryWorkflowBackend: wfbe,

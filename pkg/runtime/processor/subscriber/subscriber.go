@@ -16,15 +16,21 @@ package subscriber
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 
+	"google.golang.org/grpc"
+
 	"github.com/dapr/dapr/pkg/api/grpc/manager"
 	"github.com/dapr/dapr/pkg/config"
+	runtimev1pb "github.com/dapr/dapr/pkg/proto/runtime/v1"
 	"github.com/dapr/dapr/pkg/resiliency"
 	"github.com/dapr/dapr/pkg/runtime/channels"
 	"github.com/dapr/dapr/pkg/runtime/compstore"
+	rtpubsub "github.com/dapr/dapr/pkg/runtime/pubsub"
 	"github.com/dapr/dapr/pkg/runtime/subscription"
+	"github.com/dapr/kit/logger"
 )
 
 type Options struct {
@@ -51,10 +57,13 @@ type Subscriber struct {
 	appSubs      map[string][]*subscription.Subscription
 	streamSubs   map[string][]*subscription.Subscription
 	appSubActive bool
+	hasInitProg  bool
 	lock         sync.RWMutex
 	running      atomic.Bool
 	closed       bool
 }
+
+var log = logger.NewLogger("dapr.runtime.processor.subscription")
 
 func New(opts Options) *Subscriber {
 	return &Subscriber{
@@ -97,6 +106,13 @@ func (s *Subscriber) ReloadPubSub(name string) error {
 	}
 	for _, sub := range s.streamSubs[name] {
 		sub.Stop()
+	}
+
+	s.appSubs = make(map[string][]*subscription.Subscription)
+	s.streamSubs = make(map[string][]*subscription.Subscription)
+
+	if err := s.initProgramaticSubscriptions(context.TODO()); err != nil {
+		return err
 	}
 
 	if s.closed {
@@ -158,12 +174,17 @@ func (s *Subscriber) StopPubSub(name string) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
+	if s.appSubs == nil && s.streamSubs == nil {
+		return
+	}
+
 	for _, sub := range s.appSubs[name] {
 		sub.Stop()
 	}
 	for _, sub := range s.streamSubs[name] {
 		sub.Stop()
 	}
+
 	s.appSubs[name] = nil
 	s.streamSubs[name] = nil
 }
@@ -174,6 +195,10 @@ func (s *Subscriber) StartAppSubscriptions() error {
 
 	if s.appSubActive || s.closed {
 		return nil
+	}
+
+	if err := s.initProgramaticSubscriptions(context.TODO()); err != nil {
+		return err
 	}
 
 	s.appSubActive = true
@@ -246,4 +271,53 @@ func (s *Subscriber) StopAllSubscriptionsForever() {
 
 	s.appSubs = nil
 	s.streamSubs = nil
+}
+
+func (s *Subscriber) InitProgramaticSubscriptions(ctx context.Context) error {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	return s.initProgramaticSubscriptions(ctx)
+}
+
+func (s *Subscriber) initProgramaticSubscriptions(ctx context.Context) error {
+	if s.hasInitProg {
+		return nil
+	}
+
+	if len(s.compStore.ListPubSubs()) == 0 {
+		return nil
+	}
+
+	appChannel := s.channels.AppChannel()
+	if appChannel == nil {
+		log.Warn("app channel not initialized, make sure -app-port is specified if pubsub subscription is required")
+		return nil
+	}
+
+	s.hasInitProg = true
+
+	var (
+		subscriptions []rtpubsub.Subscription
+		err           error
+	)
+
+	// handle app subscriptions
+	if s.isHTTP {
+		subscriptions, err = rtpubsub.GetSubscriptionsHTTP(ctx, appChannel, log, s.resiliency)
+	} else {
+		var conn grpc.ClientConnInterface
+		conn, err = s.grpc.GetAppClient()
+		if err != nil {
+			return fmt.Errorf("error while getting app client: %w", err)
+		}
+		client := runtimev1pb.NewAppCallbackClient(conn)
+		subscriptions, err = rtpubsub.GetSubscriptionsGRPC(ctx, client, log, s.resiliency)
+	}
+	if err != nil {
+		return err
+	}
+
+	s.compStore.SetProgramaticSubscriptions(subscriptions...)
+
+	return nil
 }

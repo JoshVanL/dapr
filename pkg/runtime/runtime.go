@@ -64,6 +64,7 @@ import (
 	middlewarehttp "github.com/dapr/dapr/pkg/middleware/http"
 	"github.com/dapr/dapr/pkg/modes"
 	"github.com/dapr/dapr/pkg/operator/client"
+	"github.com/dapr/dapr/pkg/outbox"
 	operatorv1pb "github.com/dapr/dapr/pkg/proto/operator/v1"
 	"github.com/dapr/dapr/pkg/resiliency"
 	"github.com/dapr/dapr/pkg/runtime/authorizer"
@@ -114,6 +115,7 @@ type DaprRuntime struct {
 	httpMiddleware      *middlewarehttp.HTTP
 	compStore           *compstore.ComponentStore
 	pubsubAdapter       pubsub.Adapter
+	outbox              outbox.Outbox
 	meta                *meta.Meta
 	processor           *processor.Processor
 	authz               *authorizer.Authorizer
@@ -184,6 +186,20 @@ func newDaprRuntime(ctx context.Context,
 		AppMiddleware:       httpMiddlewareApp,
 	})
 
+	pubsubAdapter := publisher.New(publisher.Options{
+		AppID:       runtimeConfig.id,
+		Namespace:   namespace,
+		Resiliency:  resiliencyProvider,
+		GetPubSubFn: compStore.GetPubSub,
+	})
+	outbox := pubsub.NewOutbox(pubsub.OptionsOutbox{
+		Publisher:             pubsubAdapter,
+		GetPubsubFn:           compStore.GetPubSubComponent,
+		GetStateFn:            compStore.GetStateStore,
+		CloudEventExtractorFn: pubsub.ExtractCloudEventProperty,
+		Namespace:             namespace,
+	})
+
 	processor := processor.New(processor.Options{
 		ID:             runtimeConfig.id,
 		Namespace:      namespace,
@@ -201,6 +217,7 @@ func newDaprRuntime(ctx context.Context,
 		Channels:       channels,
 		MiddlewareHTTP: httpMiddleware,
 		Security:       sec,
+		Outbox:         outbox,
 	})
 
 	var reloader *hotreload.Reloader
@@ -240,25 +257,21 @@ func newDaprRuntime(ctx context.Context,
 		resiliency:        resiliencyProvider,
 		appHealthReady:    nil,
 		compStore:         compStore,
-		pubsubAdapter: publisher.New(publisher.Options{
-			AppID:       runtimeConfig.id,
-			Namespace:   namespace,
-			Resiliency:  resiliencyProvider,
-			GetPubSubFn: compStore.GetPubSub,
-		}),
-		meta:           meta,
-		operatorClient: operatorClient,
-		channels:       channels,
-		sec:            sec,
-		processor:      processor,
-		authz:          authz,
-		reloader:       reloader,
-		namespace:      namespace,
-		podName:        podName,
-		initComplete:   make(chan struct{}),
-		isAppHealthy:   make(chan struct{}),
-		clock:          new(clock.RealClock),
-		httpMiddleware: httpMiddleware,
+		pubsubAdapter:     pubsubAdapter,
+		outbox:            outbox,
+		meta:              meta,
+		operatorClient:    operatorClient,
+		channels:          channels,
+		sec:               sec,
+		processor:         processor,
+		authz:             authz,
+		reloader:          reloader,
+		namespace:         namespace,
+		podName:           podName,
+		initComplete:      make(chan struct{}),
+		isAppHealthy:      make(chan struct{}),
+		clock:             new(clock.RealClock),
+		httpMiddleware:    httpMiddleware,
 	}
 	close(rt.isAppHealthy)
 
@@ -530,7 +543,8 @@ func (a *DaprRuntime) initRuntime(ctx context.Context) error {
 		Universal:             a.daprUniversal,
 		Logger:                logger.NewLogger("dapr.grpc.api"),
 		Channels:              a.channels,
-		PubsubAdapter:         a.pubsubAdapter,
+		PubSubAdapter:         a.pubsubAdapter,
+		Outbox:                a.outbox,
 		DirectMessaging:       a.directMessaging,
 		SendToOutputBindingFn: a.processor.Binding().SendToOutputBinding,
 		TracingSpec:           a.globalConfig.GetTracingSpec(),
@@ -578,6 +592,10 @@ func (a *DaprRuntime) initRuntime(ctx context.Context) error {
 	}
 	if err := a.blockUntilAppIsReady(ctx); err != nil {
 		return err
+	}
+
+	if err := a.processor.Subscriber().InitProgramaticSubscriptions(ctx); err != nil {
+		return fmt.Errorf("failed to init programmatic subscriptions: %s", err)
 	}
 
 	if a.runtimeConfig.appConnectionConfig.MaxConcurrency > 0 {
@@ -728,7 +746,7 @@ func (a *DaprRuntime) appHealthChanged(ctx context.Context, status uint8) {
 		}
 
 		// Start subscribing to outbox topics
-		if err := a.pubsubAdapter.Outbox().SubscribeToInternalTopics(ctx, a.runtimeConfig.id); err != nil {
+		if err := a.outbox.SubscribeToInternalTopics(ctx, a.runtimeConfig.id); err != nil {
 			log.Warnf("failed to subscribe to outbox topics: %s", err)
 		}
 	case apphealth.AppStatusUnhealthy:
@@ -789,7 +807,8 @@ func (a *DaprRuntime) startHTTPServer(port int, publicPort *int, profilePort int
 		Universal:             a.daprUniversal,
 		Channels:              a.channels,
 		DirectMessaging:       a.directMessaging,
-		PubsubAdapter:         a.pubsubAdapter,
+		PubSubAdapter:         a.pubsubAdapter,
+		Outbox:                a.outbox,
 		SendToOutputBindingFn: a.processor.Binding().SendToOutputBinding,
 		TracingSpec:           a.globalConfig.GetTracingSpec(),
 		MaxRequestBodySize:    int64(a.runtimeConfig.maxRequestBodySize),
