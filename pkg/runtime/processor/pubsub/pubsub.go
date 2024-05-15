@@ -1,5 +1,5 @@
 /*
-Copyright 2023 The Dapr Authors
+Copyright 2024 The Dapr Authors
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
@@ -15,7 +15,6 @@ package pubsub
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"sync"
 
@@ -25,92 +24,72 @@ import (
 	comppubsub "github.com/dapr/dapr/pkg/components/pubsub"
 	"github.com/dapr/dapr/pkg/config"
 	diag "github.com/dapr/dapr/pkg/diagnostics"
-	"github.com/dapr/dapr/pkg/modes"
-	"github.com/dapr/dapr/pkg/outbox"
-	operatorv1 "github.com/dapr/dapr/pkg/proto/operator/v1"
 	"github.com/dapr/dapr/pkg/resiliency"
 	"github.com/dapr/dapr/pkg/runtime/channels"
 	"github.com/dapr/dapr/pkg/runtime/compstore"
 	rterrors "github.com/dapr/dapr/pkg/runtime/errors"
 	"github.com/dapr/dapr/pkg/runtime/meta"
-	rtpubsub "github.com/dapr/dapr/pkg/runtime/pubsub"
+	"github.com/dapr/dapr/pkg/runtime/processor/pubsub/subscription"
 	"github.com/dapr/dapr/pkg/scopes"
 	"github.com/dapr/kit/logger"
 )
 
-var log = logger.NewLogger("dapr.runtime.processor.pubsub")
-
 type Options struct {
-	ID        string
-	Namespace string
-	IsHTTP    bool
-	PodName   string
-	Mode      modes.DaprMode
-
-	Registry       *comppubsub.Registry
-	ComponentStore *compstore.ComponentStore
+	AppID          string
+	Namespace      string
 	Resiliency     resiliency.Provider
-	Meta           *meta.Meta
-	TracingSpec    *config.TracingSpec
-	GRPC           *manager.Manager
+	TraceSpec      *config.TracingSpec
 	Channels       *channels.Channels
-	OperatorClient operatorv1.OperatorClient
+	GRPC           *manager.Manager
+	Registry       *comppubsub.Registry
+	Meta           *meta.Meta
+	ComponentStore *compstore.ComponentStore
 }
 
 type pubsub struct {
-	id          string
+	appID       string
 	namespace   string
-	isHTTP      bool
-	podName     string
-	mode        modes.DaprMode
+	resiliency  resiliency.Provider
 	tracingSpec *config.TracingSpec
+	channels    *channels.Channels
+	grpc        *manager.Manager
+	registry    *comppubsub.Registry
+	meta        *meta.Meta
+	compStore   *compstore.ComponentStore
 
-	registry       *comppubsub.Registry
-	resiliency     resiliency.Provider
-	compStore      *compstore.ComponentStore
-	meta           *meta.Meta
-	grpc           *manager.Manager
-	channels       *channels.Channels
-	operatorClient operatorv1.OperatorClient
-	streamer       *streamer
-
-	lock        sync.RWMutex
-	subscribing bool
-	stopForever bool
-
-	topicCancels map[string]context.CancelFunc
-	outbox       outbox.Outbox
+	appSubs      map[string][]*subscription.Subscription
+	streamSubs   map[string][]*subscription.Subscription
+	appSubActive bool
+	lock         sync.RWMutex
 }
 
-func New(opts Options) *pubsub {
-	ps := &pubsub{
-		id:             opts.ID,
-		namespace:      opts.Namespace,
-		isHTTP:         opts.IsHTTP,
-		podName:        opts.PodName,
-		mode:           opts.Mode,
-		registry:       opts.Registry,
-		resiliency:     opts.Resiliency,
-		compStore:      opts.ComponentStore,
-		meta:           opts.Meta,
-		tracingSpec:    opts.TracingSpec,
-		grpc:           opts.GRPC,
-		channels:       opts.Channels,
-		operatorClient: opts.OperatorClient,
-		topicCancels:   make(map[string]context.CancelFunc),
-	}
+var log = logger.NewLogger("dapr.runtime.processor.pubsub")
 
-	ps.streamer = &streamer{
-		pubsub:      ps,
-		subscribers: make(map[string]*streamconn),
+func New(opts Options) *pubsub {
+	return &pubsub{
+		appID:       opts.AppID,
+		namespace:   opts.Namespace,
+		resiliency:  opts.Resiliency,
+		tracingSpec: opts.TraceSpec,
+		channels:    opts.Channels,
+		grpc:        opts.GRPC,
+		registry:    opts.Registry,
+		meta:        opts.Meta,
+		compStore:   opts.ComponentStore,
+
+		appSubs:    make(map[string][]*subscription.Subscription),
+		streamSubs: make(map[string][]*subscription.Subscription),
 	}
-	ps.outbox = rtpubsub.NewOutbox(ps.Publish, opts.ComponentStore.GetPubSubComponent, opts.ComponentStore.GetStateStore, rtpubsub.ExtractCloudEventProperty, opts.Namespace)
-	return ps
 }
 
 func (p *pubsub) Init(ctx context.Context, comp compapi.Component) error {
 	p.lock.Lock()
 	defer p.lock.Unlock()
+
+	for _, sub := range p.appSubs[comp.Name] {
+		sub.Stop()
+	}
+	p.appSubs[comp.Name] = nil
 
 	fName := comp.LogName()
 	pubSub, err := p.registry.Create(comp.Spec.Type, comp.Spec.Version, fName)
@@ -128,7 +107,7 @@ func (p *pubsub) Init(ctx context.Context, comp compapi.Component) error {
 	properties := baseMetadata.Properties
 	consumerID := strings.TrimSpace(properties["consumerID"])
 	if consumerID == "" {
-		consumerID = p.id
+		consumerID = p.appID
 	}
 	properties["consumerID"] = consumerID
 
@@ -142,17 +121,18 @@ func (p *pubsub) Init(ctx context.Context, comp compapi.Component) error {
 
 	p.compStore.AddPubSub(pubsubName, compstore.PubsubItem{
 		Component:           pubSub,
-		ScopedSubscriptions: scopes.GetScopedTopics(scopes.SubscriptionScopes, p.id, properties),
-		ScopedPublishings:   scopes.GetScopedTopics(scopes.PublishingScopes, p.id, properties),
+		ScopedSubscriptions: scopes.GetScopedTopics(scopes.SubscriptionScopes, p.appID, properties),
+		ScopedPublishings:   scopes.GetScopedTopics(scopes.PublishingScopes, p.appID, properties),
 		AllowedTopics:       scopes.GetAllowedTopics(properties),
 		ProtectedTopics:     scopes.GetProtectedTopics(properties),
 		NamespaceScoped:     meta.ContainsNamespace(comp.Spec.Metadata),
 	})
 	diag.DefaultMonitoring.ComponentInitialized(comp.Spec.Type)
 
-	if p.subscribing {
-		return p.beginPubSub(ctx, pubsubName)
-	}
+	// TODO: @joshvanl
+	//if p.subscribing {
+	//	return p.beginPubSub(ctx, pubsubName)
+	//}
 
 	return nil
 }
@@ -168,11 +148,12 @@ func (p *pubsub) Close(comp compapi.Component) error {
 
 	defer p.compStore.DeletePubSub(comp.Name)
 
-	for topic := range p.compStore.GetTopicRoutes()[comp.Name] {
-		subKey := topicKey(comp.Name, topic)
-		p.unsubscribeTopic(subKey)
-		p.compStore.DeleteTopicRoute(subKey)
-	}
+	// TODO: @joshvanl
+	//for topic := range p.compStore.GetTopicRoutes()[comp.Name] {
+	//	subKey := topicKey(comp.Name, topic)
+	//	p.unsubscribeTopic(subKey)
+	//	p.compStore.DeleteTopicRoute(subKey)
+	//}
 
 	if err := ps.Component.Close(); err != nil {
 		return err
@@ -181,52 +162,26 @@ func (p *pubsub) Close(comp compapi.Component) error {
 	return nil
 }
 
-func (p *pubsub) Outbox() outbox.Outbox {
-	return p.outbox
-}
+func (p *pubsub) StartSubscriptions() {
+	p.lock.Lock()
+	defer p.lock.Unlock()
 
-func (p *pubsub) Streamer() rtpubsub.Streamer {
-	return p.streamer
-}
-
-// findMatchingRoute selects the path based on routing rules. If there are
-// no matching rules, the route-level path is used.
-func findMatchingRoute(rules []*rtpubsub.Rule, cloudEvent interface{}) (path string, shouldProcess bool, err error) {
-	hasRules := len(rules) > 0
-	if hasRules {
-		data := map[string]interface{}{
-			"event": cloudEvent,
-		}
-		rule, err := matchRoutingRule(rules, data)
-		if err != nil {
-			return "", false, err
-		}
-		if rule != nil {
-			return rule.Path, true, nil
-		}
+	if p.appSubActive {
+		return
 	}
 
-	return "", false, nil
+	p.appSubActive = true
 }
 
-func matchRoutingRule(rules []*rtpubsub.Rule, data map[string]interface{}) (*rtpubsub.Rule, error) {
-	for _, rule := range rules {
-		if rule.Match == nil || len(rule.Match.String()) == 0 {
-			return rule, nil
-		}
-		iResult, err := rule.Match.Eval(data)
-		if err != nil {
-			return nil, err
-		}
-		result, ok := iResult.(bool)
-		if !ok {
-			return nil, fmt.Errorf("the result of match expression %s was not a boolean", rule.Match)
-		}
+func (p *pubsub) StopSubscriptions() {
+	p.lock.Lock()
+	defer p.lock.Unlock()
 
-		if result {
-			return rule, nil
+	p.appSubActive = false
+
+	for _, subs := range p.appSubs {
+		for _, sub := range subs {
+			sub.Stop()
 		}
 	}
-
-	return nil, nil
 }
