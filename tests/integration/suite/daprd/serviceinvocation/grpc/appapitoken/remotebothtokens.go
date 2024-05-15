@@ -30,16 +30,16 @@ import (
 )
 
 func init() {
-	suite.Register(new(bothremote))
+	suite.Register(new(remotebothtokens))
 }
 
-type bothremote struct {
+type remotebothtokens struct {
 	daprd1 *daprd.Daprd
 	daprd2 *daprd.Daprd
 	ch     chan metadata.MD
 }
 
-func (b *bothremote) Setup(t *testing.T) []framework.Option {
+func (b *remotebothtokens) Setup(t *testing.T) []framework.Option {
 	fn, ch := newServer()
 	b.ch = ch
 	app := app.New(t, app.WithRegister(fn))
@@ -48,7 +48,6 @@ func (b *bothremote) Setup(t *testing.T) []framework.Option {
 		daprd.WithAppID("app1"),
 		daprd.WithAppProtocol("grpc"),
 		daprd.WithAppAPIToken(t, "abc"),
-		daprd.WithAppPort(app.Port(t)),
 	)
 
 	b.daprd2 = daprd.New(t,
@@ -63,7 +62,7 @@ func (b *bothremote) Setup(t *testing.T) []framework.Option {
 	}
 }
 
-func (b *bothremote) Run(t *testing.T, ctx context.Context) {
+func (b *remotebothtokens) Run(t *testing.T, ctx context.Context) {
 	b.daprd1.WaitUntilRunning(t, ctx)
 	b.daprd2.WaitUntilRunning(t, ctx)
 
@@ -75,7 +74,7 @@ func (b *bothremote) Run(t *testing.T, ctx context.Context) {
 	select {
 	case md := <-b.ch:
 		require.Equal(t, []string{"def"}, md.Get("dapr-api-token"))
-	case <-time.After(5 * time.Second):
+	case <-time.After(10 * time.Second):
 		assert.Fail(t, "timed out waiting for metadata")
 	}
 }

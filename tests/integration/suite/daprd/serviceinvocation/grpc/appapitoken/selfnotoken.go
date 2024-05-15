@@ -30,15 +30,15 @@ import (
 )
 
 func init() {
-	suite.Register(new(noself))
+	suite.Register(new(selfnotoken))
 }
 
-type noself struct {
+type selfnotoken struct {
 	daprd *daprd.Daprd
 	ch    chan metadata.MD
 }
 
-func (n *noself) Setup(t *testing.T) []framework.Option {
+func (n *selfnotoken) Setup(t *testing.T) []framework.Option {
 	fn, ch := newServer()
 	n.ch = ch
 	app := app.New(t, app.WithRegister(fn))
@@ -53,7 +53,7 @@ func (n *noself) Setup(t *testing.T) []framework.Option {
 	}
 }
 
-func (n *noself) Run(t *testing.T, ctx context.Context) {
+func (n *selfnotoken) Run(t *testing.T, ctx context.Context) {
 	n.daprd.WaitUntilRunning(t, ctx)
 
 	client := testpb.NewTestServiceClient(n.daprd.GRPCConn(t, ctx))

@@ -30,40 +30,43 @@ import (
 )
 
 func init() {
-	suite.Register(new(self))
+	suite.Register(new(remotereceiverhastoken))
 }
 
-type self struct {
-	daprd *daprd.Daprd
-	ch    chan metadata.MD
+type remotereceiverhastoken struct {
+	daprd1 *daprd.Daprd
+	daprd2 *daprd.Daprd
+	ch     chan metadata.MD
 }
 
-func (s *self) Setup(t *testing.T) []framework.Option {
+func (r *remotereceiverhastoken) Setup(t *testing.T) []framework.Option {
 	fn, ch := newServer()
-	s.ch = ch
+	r.ch = ch
 	app := app.New(t, app.WithRegister(fn))
 
-	s.daprd = daprd.New(t,
+	r.daprd1 = daprd.New(t)
+	r.daprd2 = daprd.New(t,
 		daprd.WithAppProtocol("grpc"),
 		daprd.WithAppAPIToken(t, "abc"),
 		daprd.WithAppPort(app.Port(t)),
 	)
 
 	return []framework.Option{
-		framework.WithProcesses(app, s.daprd),
+		framework.WithProcesses(app, r.daprd1, r.daprd2),
 	}
 }
 
-func (s *self) Run(t *testing.T, ctx context.Context) {
-	s.daprd.WaitUntilRunning(t, ctx)
+func (r *remotereceiverhastoken) Run(t *testing.T, ctx context.Context) {
+	r.daprd1.WaitUntilRunning(t, ctx)
+	r.daprd2.WaitUntilRunning(t, ctx)
 
-	client := testpb.NewTestServiceClient(s.daprd.GRPCConn(t, ctx))
-	ctx = metadata.AppendToOutgoingContext(ctx, "dapr-app-id", s.daprd.AppID())
+	client := testpb.NewTestServiceClient(r.daprd1.GRPCConn(t, ctx))
+	ctx = metadata.AppendToOutgoingContext(ctx, "dapr-app-id", r.daprd2.AppID())
 	_, err := client.Ping(ctx, new(testpb.PingRequest))
 	require.NoError(t, err)
 
 	select {
-	case md := <-s.ch:
+	case md := <-r.ch:
 		require.Equal(t, []string{"abc"}, md.Get("dapr-api-token"))
 	case <-time.After(5 * time.Second):
 		assert.Fail(t, "timed out waiting for metadata")

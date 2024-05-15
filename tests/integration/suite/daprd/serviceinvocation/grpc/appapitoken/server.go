@@ -16,12 +16,13 @@ package appapitoken
 import (
 	"context"
 
-	testpb "github.com/dapr/dapr/tests/integration/suite/daprd/serviceinvocation/grpc/proto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
+
+	testpb "github.com/dapr/dapr/tests/integration/suite/daprd/serviceinvocation/grpc/proto"
 )
 
-type pingserver struct {
+type pingServer struct {
 	testpb.UnsafeTestServiceServer
 	ch chan metadata.MD
 }
@@ -29,13 +30,13 @@ type pingserver struct {
 func newServer() (func(*grpc.Server), chan metadata.MD) {
 	ch := make(chan metadata.MD, 1)
 	return func(s *grpc.Server) {
-		testpb.RegisterTestServiceServer(s, &pingserver{
+		testpb.RegisterTestServiceServer(s, &pingServer{
 			ch: ch,
 		})
 	}, ch
 }
 
-func (p *pingserver) Ping(ctx context.Context, _ *testpb.PingRequest) (*testpb.PingResponse, error) {
+func (p *pingServer) Ping(ctx context.Context, _ *testpb.PingRequest) (*testpb.PingResponse, error) {
 	md, _ := metadata.FromIncomingContext(ctx)
 	p.ch <- md
 	return new(testpb.PingResponse), nil
