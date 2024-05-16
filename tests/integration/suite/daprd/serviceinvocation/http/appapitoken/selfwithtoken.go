@@ -15,21 +15,20 @@ package appapitoken
 
 import (
 	"context"
+	"net/http"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/anypb"
 
 	commonv1 "github.com/dapr/dapr/pkg/proto/common/v1"
 	runtimev1 "github.com/dapr/dapr/pkg/proto/runtime/v1"
 	"github.com/dapr/dapr/tests/integration/framework"
 	"github.com/dapr/dapr/tests/integration/framework/process/daprd"
-	"github.com/dapr/dapr/tests/integration/framework/process/grpc/app"
+	"github.com/dapr/dapr/tests/integration/framework/process/http/app"
 	"github.com/dapr/dapr/tests/integration/suite"
-	testpb "github.com/dapr/dapr/tests/integration/suite/daprd/serviceinvocation/grpc/proto"
 )
 
 func init() {
@@ -38,26 +37,20 @@ func init() {
 
 type selfwithtoken struct {
 	daprd *daprd.Daprd
-	ch    chan metadata.MD
+	ch    chan http.Header
 }
 
 func (s *selfwithtoken) Setup(t *testing.T) []framework.Option {
-	fn, ch := newServer()
-	s.ch = ch
+	s.ch = make(chan http.Header, 1)
 	app := app.New(t,
-		app.WithRegister(fn),
-		app.WithOnInvokeFn(func(ctx context.Context, _ *commonv1.InvokeRequest) (*commonv1.InvokeResponse, error) {
-			md, ok := metadata.FromIncomingContext(ctx)
-			require.True(t, ok)
-			s.ch <- md
-			return new(commonv1.InvokeResponse), nil
+		app.WithHandlerFunc("/helloworld", func(w http.ResponseWriter, r *http.Request) {
+			s.ch <- r.Header
 		}),
 	)
 
 	s.daprd = daprd.New(t,
-		daprd.WithAppProtocol("grpc"),
 		daprd.WithAppAPIToken(t, "abc"),
-		daprd.WithAppPort(app.Port(t)),
+		daprd.WithAppPort(app.Port()),
 	)
 
 	return []framework.Option{
@@ -68,20 +61,8 @@ func (s *selfwithtoken) Setup(t *testing.T) []framework.Option {
 func (s *selfwithtoken) Run(t *testing.T, ctx context.Context) {
 	s.daprd.WaitUntilRunning(t, ctx)
 
-	client := testpb.NewTestServiceClient(s.daprd.GRPCConn(t, ctx))
-	ctx = metadata.AppendToOutgoingContext(ctx, "dapr-app-id", s.daprd.AppID())
-	_, err := client.Ping(ctx, new(testpb.PingRequest))
-	require.NoError(t, err)
-
-	select {
-	case md := <-s.ch:
-		require.Equal(t, []string{"abc"}, md.Get("dapr-api-token"))
-	case <-time.After(5 * time.Second):
-		assert.Fail(t, "timed out waiting for metadata")
-	}
-
 	dclient := s.daprd.GRPCClient(t, ctx)
-	_, err = dclient.InvokeService(ctx, &runtimev1.InvokeServiceRequest{
+	_, err := dclient.InvokeService(ctx, &runtimev1.InvokeServiceRequest{
 		Id: s.daprd.AppID(),
 		Message: &commonv1.InvokeRequest{
 			Method:        "helloworld",
@@ -92,9 +73,9 @@ func (s *selfwithtoken) Run(t *testing.T, ctx context.Context) {
 	require.NoError(t, err)
 
 	select {
-	case md := <-s.ch:
-		require.Equal(t, []string{"abc"}, md.Get("dapr-api-token"))
+	case header := <-s.ch:
+		require.Equal(t, "abc", header.Get("dapr-api-token"))
 	case <-time.After(5 * time.Second):
-		assert.Fail(t, "timed out waiting for metadata")
+		assert.Fail(t, "timed out waiting for header")
 	}
 }
