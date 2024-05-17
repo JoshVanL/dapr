@@ -855,9 +855,7 @@ func (a *DaprRuntime) startHTTPServer(port int, publicPort *int, profilePort int
 		return err
 	}
 
-	if err := a.runnerCloser.AddCloser(func() {
-		a.processor.Subscriber().StopAllSubscriptionsForever()
-	}); err != nil {
+	if err := a.runnerCloser.AddCloser(a.processor.Subscriber().StopAllSubscriptionsForever); err != nil {
 		return err
 	}
 	if err := a.runnerCloser.AddCloser(func() {

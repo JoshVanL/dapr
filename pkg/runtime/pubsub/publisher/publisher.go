@@ -58,7 +58,7 @@ func (p *publisher) Publish(ctx context.Context, req *contribpubsub.PublishReque
 		return rtpubsub.NotFoundError{PubsubName: req.PubsubName}
 	}
 
-	if allowed := p.isOperationAllowed(req.Topic, pubsub); !allowed {
+	if allowed := isOperationAllowed(req.Topic, pubsub); !allowed {
 		return rtpubsub.NotAllowedError{Topic: req.Topic, ID: p.appID}
 	}
 
@@ -81,7 +81,7 @@ func (p *publisher) BulkPublish(ctx context.Context, req *contribpubsub.BulkPubl
 		return contribpubsub.BulkPublishResponse{}, rtpubsub.NotFoundError{PubsubName: req.PubsubName}
 	}
 
-	if allowed := p.isOperationAllowed(req.Topic, pubsub); !allowed {
+	if allowed := isOperationAllowed(req.Topic, pubsub); !allowed {
 		return contribpubsub.BulkPublishResponse{}, rtpubsub.NotAllowedError{Topic: req.Topic, ID: p.appID}
 	}
 
@@ -97,7 +97,7 @@ func (p *publisher) BulkPublish(ctx context.Context, req *contribpubsub.BulkPubl
 	return rtpubsub.ApplyBulkPublishResiliency(ctx, req, policyDef, defaultBulkPublisher)
 }
 
-func (p *publisher) isOperationAllowed(topic string, pubsub rtpubsub.PubsubItem) bool {
+func isOperationAllowed(topic string, pubsub rtpubsub.PubsubItem) bool {
 	var inAllowedTopics, inProtectedTopics bool
 
 	// first check if allowedTopics contain it

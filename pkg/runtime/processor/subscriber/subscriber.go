@@ -106,22 +106,12 @@ func (s *Subscriber) ReloadPubSub(name string) error {
 		return nil
 	}
 
-	fmt.Printf(">>RELOADING PUBSUB: %s\n", name)
-	fmt.Printf(">>CURRENT APPSUBS:\n")
-	for pubsub, subs := range s.appSubs {
-		for _, sub := range subs {
-			fmt.Printf(">>%s-%#+v\n", pubsub, sub)
-		}
-	}
-
 	ps, ok := s.compStore.GetPubSub(name)
 	if !ok {
-		fmt.Printf(">>NOT FOUND PUBSUB: %s\n", name)
 		return nil
 	}
 
 	for _, sub := range s.appSubs[name] {
-		fmt.Printf(">>STOP-SUBSCRIBING: %s-%+v\n", name, sub)
 		sub.Stop()
 	}
 	for _, sub := range s.streamSubs[name] {
@@ -142,7 +132,6 @@ func (s *Subscriber) ReloadPubSub(name string) error {
 	if s.appSubActive {
 		var subs []*subscription.Subscription
 		for _, sub := range s.compStore.ListSubscriptionsByPubSub(name) {
-			fmt.Printf(">>SUBSCRIBING: %s-%s-%s\n", sub.PubsubName, sub.Topic, sub.Rules[0].Path)
 			ss, err := subscription.New(subscription.Options{
 				AppID:      s.appID,
 				Namespace:  s.namespace,
@@ -155,10 +144,12 @@ func (s *Subscriber) ReloadPubSub(name string) error {
 				Route:      sub,
 				Channels:   s.channels,
 				GRPC:       s.grpc,
+				CompStore:  s.compStore,
 				Adapter:    s.adapter,
 			})
 			if err != nil {
-				return err
+				log.Errorf("Failed to create subscription: %s", err)
+				continue
 			}
 
 			subs = append(subs, ss)
@@ -180,11 +171,13 @@ func (s *Subscriber) ReloadPubSub(name string) error {
 			Route:           sub,
 			Channels:        s.channels,
 			GRPC:            s.grpc,
+			CompStore:       s.compStore,
 			Adapter:         s.adapter,
 			AdapterStreamer: s.adapterStreamer,
 		})
 		if err != nil {
-			return err
+			log.Errorf("Failed to create subscription: %s", err)
+			continue
 		}
 
 		subs = append(subs, ss)
@@ -224,6 +217,7 @@ func (s *Subscriber) StartAppSubscriptions() error {
 	s.appSubActive = true
 
 	s.appSubs = make(map[string][]*subscription.Subscription)
+	var errs []error
 	for _, sub := range s.compStore.ListSubscriptionsApp() {
 		ps, ok := s.compStore.GetPubSub(sub.PubsubName)
 		if !ok {
@@ -245,13 +239,14 @@ func (s *Subscriber) StartAppSubscriptions() error {
 			Adapter:    s.adapter,
 		})
 		if err != nil {
-			return err
+			errs = append(errs, err)
+			continue
 		}
 
 		s.appSubs[sub.PubsubName] = append(s.appSubs[sub.PubsubName], ss)
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *Subscriber) StopAppSubscriptions() {

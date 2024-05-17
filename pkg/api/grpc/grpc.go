@@ -224,7 +224,6 @@ func (a *api) PublishEvent(ctx context.Context, in *runtimev1pb.PublishEventRequ
 	}
 
 	start := time.Now()
-	fmt.Printf("<<PUBLISHING: %s-%s\n", pubsubName, topic)
 	err := a.pubsubAdapter.Publish(ctx, &req)
 	elapsed := diag.ElapsedSince(start)
 

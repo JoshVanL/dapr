@@ -28,6 +28,7 @@ import (
 	diag "github.com/dapr/dapr/pkg/diagnostics"
 	"github.com/dapr/dapr/pkg/resiliency"
 	"github.com/dapr/dapr/pkg/runtime/channels"
+	"github.com/dapr/dapr/pkg/runtime/compstore"
 	rterrors "github.com/dapr/dapr/pkg/runtime/errors"
 	rtpubsub "github.com/dapr/dapr/pkg/runtime/pubsub"
 	"github.com/dapr/kit/logger"
@@ -45,6 +46,7 @@ type Options struct {
 	Route           rtpubsub.Subscription
 	Channels        *channels.Channels
 	GRPC            *manager.Manager
+	CompStore       *compstore.ComponentStore
 	Adapter         rtpubsub.Adapter
 	AdapterStreamer rtpubsub.AdapterStreamer
 }
@@ -71,7 +73,11 @@ type Subscription struct {
 var log = logger.NewLogger("dapr.runtime.processor.pubsub.subscription")
 
 func New(opts Options) (*Subscription, error) {
-	fmt.Printf("<<SUBSCRIBE-NEW: %s-%s-%s\n", opts.PubSubName, opts.Topic, opts.Route.Rules[0].Path)
+	allowed := isOperationAllowed(opts.PubSub, opts.PubSubName, opts.Topic, opts.PubSub.ScopedSubscriptions)
+	if !allowed {
+		return nil, fmt.Errorf("subscription to topic '%s' on pubsub '%s' is not allowed", opts.Topic, opts.PubSubName)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s := &Subscription{
@@ -117,9 +123,6 @@ func New(opts Options) (*Subscription, error) {
 		Topic:    subscribeTopic,
 		Metadata: routeMetadata,
 	}, func(ctx context.Context, msg *contribpubsub.NewMessage) error {
-		s.wg.Add(1)
-		defer s.wg.Done()
-
 		if msg.Metadata == nil {
 			msg.Metadata = make(map[string]string, 1)
 		}
@@ -202,8 +205,6 @@ func New(opts Options) (*Subscription, error) {
 			return err
 		}
 
-		fmt.Printf(">>GOT PUBLISH: %s-%s-%s-%v\n", name, msgTopic, routePath, ctx.Err())
-
 		if !shouldProcess {
 			// The event does not match any route specified so ignore it.
 			log.Debugf("no matching route for event %v in pubsub %s and topic %s; skipping", cloudEvent[contribpubsub.IDField], name, msgTopic)
@@ -273,8 +274,6 @@ func New(opts Options) (*Subscription, error) {
 
 func (s *Subscription) Stop() {
 	s.cancel()
-	s.wg.Wait()
-	fmt.Printf(">>STOPPING %s-%s-%s\n", s.pubsubName, s.topic, s.route.Rules[0].Path)
 }
 
 func (s *Subscription) sendToDeadLetter(ctx context.Context, name string, msg *contribpubsub.NewMessage, deadLetterTopic string) error {
@@ -292,6 +291,49 @@ func (s *Subscription) sendToDeadLetter(ctx context.Context, name string, msg *c
 	}
 
 	return nil
+}
+
+func isOperationAllowed(pubSub *rtpubsub.PubsubItem, name, topic string, scopedTopics []string) bool {
+	var inAllowedTopics, inProtectedTopics bool
+
+	// first check if allowedTopics contain it
+	if len(pubSub.AllowedTopics) > 0 {
+		for _, t := range pubSub.AllowedTopics {
+			if t == topic {
+				inAllowedTopics = true
+				break
+			}
+		}
+		if !inAllowedTopics {
+			return false
+		}
+	}
+
+	// check if topic is protected
+	if len(pubSub.ProtectedTopics) > 0 {
+		for _, t := range pubSub.ProtectedTopics {
+			if t == topic {
+				inProtectedTopics = true
+				break
+			}
+		}
+	}
+
+	// if topic is protected then a scope must be applied
+	if !inProtectedTopics && len(scopedTopics) == 0 {
+		return true
+	}
+
+	// check if a granular scope has been applied
+	allowedScope := false
+	for _, t := range scopedTopics {
+		if t == topic {
+			allowedScope = true
+			break
+		}
+	}
+
+	return allowedScope
 }
 
 // findMatchingRoute selects the path based on routing rules. If there are
