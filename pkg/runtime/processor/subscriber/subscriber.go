@@ -34,25 +34,29 @@ import (
 )
 
 type Options struct {
-	AppID       string
-	Namespace   string
-	Resiliency  resiliency.Provider
-	TracingSpec *config.TracingSpec
-	IsHTTP      bool
-	Channels    *channels.Channels
-	GRPC        *manager.Manager
-	CompStore   *compstore.ComponentStore
+	AppID           string
+	Namespace       string
+	Resiliency      resiliency.Provider
+	TracingSpec     *config.TracingSpec
+	IsHTTP          bool
+	Channels        *channels.Channels
+	GRPC            *manager.Manager
+	CompStore       *compstore.ComponentStore
+	Adapter         rtpubsub.Adapter
+	AdapterStreamer rtpubsub.AdapterStreamer
 }
 
 type Subscriber struct {
-	appID       string
-	namespace   string
-	resiliency  resiliency.Provider
-	tracingSpec *config.TracingSpec
-	isHTTP      bool
-	channels    *channels.Channels
-	grpc        *manager.Manager
-	compStore   *compstore.ComponentStore
+	appID           string
+	namespace       string
+	resiliency      resiliency.Provider
+	tracingSpec     *config.TracingSpec
+	isHTTP          bool
+	channels        *channels.Channels
+	grpc            *manager.Manager
+	compStore       *compstore.ComponentStore
+	adapter         rtpubsub.Adapter
+	adapterStreamer rtpubsub.AdapterStreamer
 
 	appSubs      map[string][]*subscription.Subscription
 	streamSubs   map[string][]*subscription.Subscription
@@ -67,16 +71,18 @@ var log = logger.NewLogger("dapr.runtime.processor.subscription")
 
 func New(opts Options) *Subscriber {
 	return &Subscriber{
-		appID:       opts.AppID,
-		namespace:   opts.Namespace,
-		resiliency:  opts.Resiliency,
-		tracingSpec: opts.TracingSpec,
-		isHTTP:      opts.IsHTTP,
-		channels:    opts.Channels,
-		grpc:        opts.GRPC,
-		compStore:   opts.CompStore,
-		appSubs:     make(map[string][]*subscription.Subscription),
-		streamSubs:  make(map[string][]*subscription.Subscription),
+		appID:           opts.AppID,
+		namespace:       opts.Namespace,
+		resiliency:      opts.Resiliency,
+		tracingSpec:     opts.TracingSpec,
+		isHTTP:          opts.IsHTTP,
+		channels:        opts.Channels,
+		grpc:            opts.GRPC,
+		compStore:       opts.CompStore,
+		adapter:         opts.Adapter,
+		adapterStreamer: opts.AdapterStreamer,
+		appSubs:         make(map[string][]*subscription.Subscription),
+		streamSubs:      make(map[string][]*subscription.Subscription),
 	}
 }
 
@@ -96,20 +102,34 @@ func (s *Subscriber) ReloadPubSub(name string) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
+	if s.closed {
+		return nil
+	}
+
+	fmt.Printf(">>RELOADING PUBSUB: %s\n", name)
+	fmt.Printf(">>CURRENT APPSUBS:\n")
+	for pubsub, subs := range s.appSubs {
+		for _, sub := range subs {
+			fmt.Printf(">>%s-%#+v\n", pubsub, sub)
+		}
+	}
+
 	ps, ok := s.compStore.GetPubSub(name)
 	if !ok {
+		fmt.Printf(">>NOT FOUND PUBSUB: %s\n", name)
 		return nil
 	}
 
 	for _, sub := range s.appSubs[name] {
+		fmt.Printf(">>STOP-SUBSCRIBING: %s-%+v\n", name, sub)
 		sub.Stop()
 	}
 	for _, sub := range s.streamSubs[name] {
 		sub.Stop()
 	}
 
-	s.appSubs = make(map[string][]*subscription.Subscription)
-	s.streamSubs = make(map[string][]*subscription.Subscription)
+	s.appSubs[name] = nil
+	s.streamSubs[name] = nil
 
 	if err := s.initProgramaticSubscriptions(context.TODO()); err != nil {
 		return err
@@ -122,6 +142,7 @@ func (s *Subscriber) ReloadPubSub(name string) error {
 	if s.appSubActive {
 		var subs []*subscription.Subscription
 		for _, sub := range s.compStore.ListSubscriptionsByPubSub(name) {
+			fmt.Printf(">>SUBSCRIBING: %s-%s-%s\n", sub.PubsubName, sub.Topic, sub.Rules[0].Path)
 			ss, err := subscription.New(subscription.Options{
 				AppID:      s.appID,
 				Namespace:  s.namespace,
@@ -134,6 +155,7 @@ func (s *Subscriber) ReloadPubSub(name string) error {
 				Route:      sub,
 				Channels:   s.channels,
 				GRPC:       s.grpc,
+				Adapter:    s.adapter,
 			})
 			if err != nil {
 				return err
@@ -147,17 +169,19 @@ func (s *Subscriber) ReloadPubSub(name string) error {
 	var subs []*subscription.Subscription
 	for _, sub := range s.compStore.ListSubscriptionsStreamByPubSub(name) {
 		ss, err := subscription.New(subscription.Options{
-			AppID:      s.appID,
-			Namespace:  s.namespace,
-			PubSubName: name,
-			Topic:      sub.Topic,
-			IsHTTP:     s.isHTTP,
-			PubSub:     &ps,
-			Resiliency: s.resiliency,
-			TraceSpec:  s.tracingSpec,
-			Route:      sub,
-			Channels:   s.channels,
-			GRPC:       s.grpc,
+			AppID:           s.appID,
+			Namespace:       s.namespace,
+			PubSubName:      name,
+			Topic:           sub.Topic,
+			IsHTTP:          s.isHTTP,
+			PubSub:          &ps,
+			Resiliency:      s.resiliency,
+			TraceSpec:       s.tracingSpec,
+			Route:           sub,
+			Channels:        s.channels,
+			GRPC:            s.grpc,
+			Adapter:         s.adapter,
+			AdapterStreamer: s.adapterStreamer,
 		})
 		if err != nil {
 			return err
@@ -174,10 +198,6 @@ func (s *Subscriber) StopPubSub(name string) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	if s.appSubs == nil && s.streamSubs == nil {
-		return
-	}
-
 	for _, sub := range s.appSubs[name] {
 		sub.Stop()
 	}
@@ -185,8 +205,8 @@ func (s *Subscriber) StopPubSub(name string) {
 		sub.Stop()
 	}
 
-	s.appSubs[name] = nil
-	s.streamSubs[name] = nil
+	s.appSubs = make(map[string][]*subscription.Subscription)
+	s.streamSubs = make(map[string][]*subscription.Subscription)
 }
 
 func (s *Subscriber) StartAppSubscriptions() error {
@@ -222,6 +242,7 @@ func (s *Subscriber) StartAppSubscriptions() error {
 			Route:      sub,
 			Channels:   s.channels,
 			GRPC:       s.grpc,
+			Adapter:    s.adapter,
 		})
 		if err != nil {
 			return err

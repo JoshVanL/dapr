@@ -14,6 +14,8 @@ limitations under the License.
 package compstore
 
 import (
+	"fmt"
+
 	subapi "github.com/dapr/dapr/pkg/apis/subscriptions/v2alpha1"
 	rtpubsub "github.com/dapr/dapr/pkg/runtime/pubsub"
 )
@@ -83,20 +85,47 @@ func (c *ComponentStore) AddDeclarativeSubscription(comp *subapi.Subscription, s
 		Subscription: sub,
 	}
 	c.subscriptions.declarativesList = append(c.subscriptions.declarativesList, comp.Name)
+
+	fmt.Printf(">>ADDED DECLARATIVE SUBSCRIPTION: %v\n", comp.Name)
+
+	for name := range c.subscriptions.declaratives {
+		fmt.Printf(">>NOW NAME: %v\n", name)
+	}
+	fmt.Printf(">>>>>\n")
 }
 
-func (c *ComponentStore) AddStreamSubscription(comp *subapi.Subscription, sub rtpubsub.Subscription) {
+func (c *ComponentStore) AddStreamSubscription(comp *subapi.Subscription) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	c.subscriptions.streams[comp.Name] = &DeclarativeSubscription{
-		Comp:         comp,
-		Subscription: sub,
+		Comp: comp,
+		Subscription: rtpubsub.Subscription{
+			PubsubName:      comp.Spec.Pubsubname,
+			Topic:           comp.Spec.Topic,
+			DeadLetterTopic: comp.Spec.DeadLetterTopic,
+			Metadata:        comp.Spec.Metadata,
+			Rules:           []*rtpubsub.Rule{{Path: "/"}},
+		},
+	}
+}
+
+func (c *ComponentStore) DeleteStreamSubscription(names ...string) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	for _, name := range names {
+		delete(c.subscriptions.streams, name)
 	}
 }
 
 func (c *ComponentStore) DeleteDeclarativeSubscription(names ...string) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
+	fmt.Printf(">>DELETINGDECSUB: %v\n", names)
+	fmt.Printf(">>BEFORE: %v\n", names)
+
+	for i, existing := range c.subscriptions.declarativesList {
+		fmt.Printf(">>%d-%s\n", i, existing)
+	}
 	for _, name := range names {
 		delete(c.subscriptions.declaratives, name)
 		for i, existing := range c.subscriptions.declarativesList {
@@ -106,6 +135,12 @@ func (c *ComponentStore) DeleteDeclarativeSubscription(names ...string) {
 			}
 		}
 	}
+
+	fmt.Printf(">>AFTER: %v\n", names)
+	for i, existing := range c.subscriptions.declarativesList {
+		fmt.Printf(">>%d-%s\n", i, existing)
+	}
+
 }
 
 func (c *ComponentStore) ListSubscriptions() []rtpubsub.Subscription {

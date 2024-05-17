@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/dapr/components-contrib/metadata"
 	contribpubsub "github.com/dapr/components-contrib/pubsub"
@@ -33,53 +34,61 @@ import (
 )
 
 type Options struct {
-	AppID      string
-	Namespace  string
-	PubSubName string
-	Topic      string
-	IsHTTP     bool
-	PubSub     *rtpubsub.PubsubItem
-	Resiliency resiliency.Provider
-	TraceSpec  *config.TracingSpec
-	Route      rtpubsub.Subscription
-	Channels   *channels.Channels
-	GRPC       *manager.Manager
+	AppID           string
+	Namespace       string
+	PubSubName      string
+	Topic           string
+	IsHTTP          bool
+	PubSub          *rtpubsub.PubsubItem
+	Resiliency      resiliency.Provider
+	TraceSpec       *config.TracingSpec
+	Route           rtpubsub.Subscription
+	Channels        *channels.Channels
+	GRPC            *manager.Manager
+	Adapter         rtpubsub.Adapter
+	AdapterStreamer rtpubsub.AdapterStreamer
 }
 
 type Subscription struct {
-	appID       string
-	namespace   string
-	pubsubName  string
-	topic       string
-	isHTTP      bool
-	pubsub      *rtpubsub.PubsubItem
-	resiliency  resiliency.Provider
-	route       rtpubsub.Subscription
-	tracingSpec *config.TracingSpec
-	channels    *channels.Channels
-	grpc        *manager.Manager
+	appID           string
+	namespace       string
+	pubsubName      string
+	topic           string
+	isHTTP          bool
+	pubsub          *rtpubsub.PubsubItem
+	resiliency      resiliency.Provider
+	route           rtpubsub.Subscription
+	tracingSpec     *config.TracingSpec
+	channels        *channels.Channels
+	grpc            *manager.Manager
+	adapter         rtpubsub.Adapter
+	adapterStreamer rtpubsub.AdapterStreamer
 
 	cancel func()
+	wg     sync.WaitGroup
 }
 
 var log = logger.NewLogger("dapr.runtime.processor.pubsub.subscription")
 
 func New(opts Options) (*Subscription, error) {
+	fmt.Printf("<<SUBSCRIBE-NEW: %s-%s-%s\n", opts.PubSubName, opts.Topic, opts.Route.Rules[0].Path)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s := &Subscription{
-		appID:       opts.AppID,
-		namespace:   opts.Namespace,
-		pubsubName:  opts.PubSubName,
-		topic:       opts.Topic,
-		isHTTP:      opts.IsHTTP,
-		pubsub:      opts.PubSub,
-		resiliency:  opts.Resiliency,
-		route:       opts.Route,
-		tracingSpec: opts.TraceSpec,
-		channels:    opts.Channels,
-		grpc:        opts.GRPC,
-		cancel:      cancel,
+		appID:           opts.AppID,
+		namespace:       opts.Namespace,
+		pubsubName:      opts.PubSubName,
+		topic:           opts.Topic,
+		isHTTP:          opts.IsHTTP,
+		pubsub:          opts.PubSub,
+		resiliency:      opts.Resiliency,
+		route:           opts.Route,
+		tracingSpec:     opts.TraceSpec,
+		channels:        opts.Channels,
+		grpc:            opts.GRPC,
+		cancel:          cancel,
+		adapter:         opts.Adapter,
+		adapterStreamer: opts.AdapterStreamer,
 	}
 
 	name := s.pubsubName
@@ -108,6 +117,9 @@ func New(opts Options) (*Subscription, error) {
 		Topic:    subscribeTopic,
 		Metadata: routeMetadata,
 	}, func(ctx context.Context, msg *contribpubsub.NewMessage) error {
+		s.wg.Add(1)
+		defer s.wg.Done()
+
 		if msg.Metadata == nil {
 			msg.Metadata = make(map[string]string, 1)
 		}
@@ -190,6 +202,8 @@ func New(opts Options) (*Subscription, error) {
 			return err
 		}
 
+		fmt.Printf(">>GOT PUBLISH: %s-%s-%s-%v\n", name, msgTopic, routePath, ctx.Err())
+
 		if !shouldProcess {
 			// The event does not match any route specified so ignore it.
 			log.Debugf("no matching route for event %v in pubsub %s and topic %s; skipping", cloudEvent[contribpubsub.IDField], name, msgTopic)
@@ -211,15 +225,15 @@ func New(opts Options) (*Subscription, error) {
 		policyRunner := resiliency.NewRunner[any](context.Background(), policyDef)
 		_, err = policyRunner(func(ctx context.Context) (any, error) {
 			var pErr error
-			// TODO: @joshvanl:
-			//	ok, pErr := s.streamer.Publish(ctx, sm)
-			//	if !ok {
-			if s.isHTTP {
-				pErr = s.publishMessageHTTP(ctx, sm)
+			if s.adapterStreamer != nil {
+				pErr = s.adapterStreamer.Publish(ctx, sm)
 			} else {
-				pErr = s.publishMessageGRPC(ctx, sm)
+				if s.isHTTP {
+					pErr = s.publishMessageHTTP(ctx, sm)
+				} else {
+					pErr = s.publishMessageGRPC(ctx, sm)
+				}
 			}
-			//}
 
 			var rErr *rterrors.RetriableError
 			if errors.As(pErr, &rErr) {
@@ -259,6 +273,8 @@ func New(opts Options) (*Subscription, error) {
 
 func (s *Subscription) Stop() {
 	s.cancel()
+	s.wg.Wait()
+	fmt.Printf(">>STOPPING %s-%s-%s\n", s.pubsubName, s.topic, s.route.Rules[0].Path)
 }
 
 func (s *Subscription) sendToDeadLetter(ctx context.Context, name string, msg *contribpubsub.NewMessage, deadLetterTopic string) error {
@@ -270,94 +286,12 @@ func (s *Subscription) sendToDeadLetter(ctx context.Context, name string, msg *c
 		ContentType: msg.ContentType,
 	}
 
-	if err := s.publish(ctx, req); err != nil {
+	if err := s.adapter.Publish(ctx, req); err != nil {
 		log.Errorf("error sending message to dead letter, origin topic: %s dead letter topic %s err: %w", msg.Topic, deadLetterTopic, err)
 		return err
 	}
 
 	return nil
-}
-
-// TODO: @joshvanl
-// Publish is an adapter method for the runtime to pre-validate publish requests
-// And then forward them to the Pub/Sub component.
-// This method is used by the HTTP and gRPC APIs.
-func (s *Subscription) publish(ctx context.Context, req *contribpubsub.PublishRequest) error {
-	if allowed := s.isOperationAllowed(req.Topic); !allowed {
-		return rtpubsub.NotAllowedError{Topic: req.Topic, ID: s.appID}
-	}
-
-	if s.pubsub.NamespaceScoped {
-		req.Topic = s.namespace + req.Topic
-	}
-
-	policyRunner := resiliency.NewRunner[any](ctx,
-		s.resiliency.ComponentOutboundPolicy(req.PubsubName, resiliency.Pubsub),
-	)
-	_, err := policyRunner(func(ctx context.Context) (any, error) {
-		return nil, s.pubsub.Component.Publish(ctx, req)
-	})
-	return err
-}
-
-func (s *Subscription) BulkPublish(ctx context.Context, req *contribpubsub.BulkPublishRequest) (contribpubsub.BulkPublishResponse, error) {
-	if allowed := s.isOperationAllowed(req.Topic); !allowed {
-		return contribpubsub.BulkPublishResponse{}, rtpubsub.NotAllowedError{Topic: req.Topic, ID: s.appID}
-	}
-
-	policyDef := s.resiliency.ComponentOutboundPolicy(req.PubsubName, resiliency.Pubsub)
-
-	if contribpubsub.FeatureBulkPublish.IsPresent(s.pubsub.Component.Features()) {
-		return rtpubsub.ApplyBulkPublishResiliency(ctx, req, policyDef, s.pubsub.Component.(contribpubsub.BulkPublisher))
-	}
-
-	log.Debugf("pubsub %s does not implement the BulkPublish API; falling back to publishing messages individually", req.PubsubName)
-	defaultBulkPublisher := rtpubsub.NewDefaultBulkPublisher(s.pubsub.Component)
-
-	return rtpubsub.ApplyBulkPublishResiliency(ctx, req, policyDef, defaultBulkPublisher)
-}
-
-func (s *Subscription) isOperationAllowed(topic string) bool {
-	var inAllowedTopics, inProtectedTopics bool
-
-	// first check if allowedTopics contain it
-	if len(s.pubsub.AllowedTopics) > 0 {
-		for _, t := range s.pubsub.AllowedTopics {
-			if t == topic {
-				inAllowedTopics = true
-				break
-			}
-		}
-		if !inAllowedTopics {
-			return false
-		}
-	}
-
-	// check if topic is protected
-	if len(s.pubsub.ProtectedTopics) > 0 {
-		for _, t := range s.pubsub.ProtectedTopics {
-			if t == topic {
-				inProtectedTopics = true
-				break
-			}
-		}
-	}
-
-	// if topic is protected then a scope must be applied
-	if !inProtectedTopics && len(s.pubsub.ScopedPublishings) == 0 {
-		return true
-	}
-
-	// check if a granular scope has been applied
-	allowedScope := false
-	for _, t := range s.pubsub.ScopedPublishings {
-		if t == topic {
-			allowedScope = true
-			break
-		}
-	}
-
-	return allowedScope
 }
 
 // findMatchingRoute selects the path based on routing rules. If there are

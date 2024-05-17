@@ -78,6 +78,7 @@ import (
 	"github.com/dapr/dapr/pkg/runtime/processor/workflow"
 	"github.com/dapr/dapr/pkg/runtime/pubsub"
 	"github.com/dapr/dapr/pkg/runtime/pubsub/publisher"
+	"github.com/dapr/dapr/pkg/runtime/pubsub/streamer"
 	"github.com/dapr/dapr/pkg/runtime/registry"
 	"github.com/dapr/dapr/pkg/runtime/wfengine"
 	"github.com/dapr/dapr/pkg/security"
@@ -99,30 +100,31 @@ type DaprRuntime struct {
 	directMessaging   invokev1.DirectMessaging
 	actor             actors.ActorRuntime
 
-	nameResolver        nr.Resolver
-	hostAddress         string
-	actorStateStoreLock sync.RWMutex
-	namespace           string
-	podName             string
-	daprUniversal       *universal.Universal
-	daprHTTPAPI         http.API
-	daprGRPCAPI         grpc.API
-	operatorClient      operatorv1pb.OperatorClient
-	isAppHealthy        chan struct{}
-	appHealth           *apphealth.AppHealth
-	appHealthReady      func(context.Context) error // Invoked the first time the app health becomes ready
-	appHealthLock       sync.Mutex
-	httpMiddleware      *middlewarehttp.HTTP
-	compStore           *compstore.ComponentStore
-	pubsubAdapter       pubsub.Adapter
-	outbox              outbox.Outbox
-	meta                *meta.Meta
-	processor           *processor.Processor
-	authz               *authorizer.Authorizer
-	sec                 security.Handler
-	runnerCloser        *concurrency.RunnerCloserManager
-	clock               clock.Clock
-	reloader            *hotreload.Reloader
+	nameResolver          nr.Resolver
+	hostAddress           string
+	actorStateStoreLock   sync.RWMutex
+	namespace             string
+	podName               string
+	daprUniversal         *universal.Universal
+	daprHTTPAPI           http.API
+	daprGRPCAPI           grpc.API
+	operatorClient        operatorv1pb.OperatorClient
+	isAppHealthy          chan struct{}
+	appHealth             *apphealth.AppHealth
+	appHealthReady        func(context.Context) error // Invoked the first time the app health becomes ready
+	appHealthLock         sync.Mutex
+	httpMiddleware        *middlewarehttp.HTTP
+	compStore             *compstore.ComponentStore
+	pubsubAdapter         pubsub.Adapter
+	pubsubAdapterStreamer pubsub.AdapterStreamer
+	outbox                outbox.Outbox
+	meta                  *meta.Meta
+	processor             *processor.Processor
+	authz                 *authorizer.Authorizer
+	sec                   security.Handler
+	runnerCloser          *concurrency.RunnerCloserManager
+	clock                 clock.Clock
+	reloader              *hotreload.Reloader
 
 	// Used for testing.
 	initComplete chan struct{}
@@ -192,6 +194,9 @@ func newDaprRuntime(ctx context.Context,
 		Resiliency:  resiliencyProvider,
 		GetPubSubFn: compStore.GetPubSub,
 	})
+	pubsubAdapterStreamer := streamer.New(streamer.Options{
+		TracingSpec: globalConfig.Spec.TracingSpec,
+	})
 	outbox := pubsub.NewOutbox(pubsub.OptionsOutbox{
 		Publisher:             pubsubAdapter,
 		GetPubsubFn:           compStore.GetPubSubComponent,
@@ -201,23 +206,25 @@ func newDaprRuntime(ctx context.Context,
 	})
 
 	processor := processor.New(processor.Options{
-		ID:             runtimeConfig.id,
-		Namespace:      namespace,
-		IsHTTP:         runtimeConfig.appConnectionConfig.Protocol.IsHTTP(),
-		ActorsEnabled:  len(runtimeConfig.actorsService) > 0,
-		Registry:       runtimeConfig.registry,
-		ComponentStore: compStore,
-		Meta:           meta,
-		GlobalConfig:   globalConfig,
-		Resiliency:     resiliencyProvider,
-		Mode:           runtimeConfig.mode,
-		PodName:        podName,
-		OperatorClient: operatorClient,
-		GRPC:           grpc,
-		Channels:       channels,
-		MiddlewareHTTP: httpMiddleware,
-		Security:       sec,
-		Outbox:         outbox,
+		ID:              runtimeConfig.id,
+		Namespace:       namespace,
+		IsHTTP:          runtimeConfig.appConnectionConfig.Protocol.IsHTTP(),
+		ActorsEnabled:   len(runtimeConfig.actorsService) > 0,
+		Registry:        runtimeConfig.registry,
+		ComponentStore:  compStore,
+		Meta:            meta,
+		GlobalConfig:    globalConfig,
+		Resiliency:      resiliencyProvider,
+		Mode:            runtimeConfig.mode,
+		PodName:         podName,
+		OperatorClient:  operatorClient,
+		GRPC:            grpc,
+		Channels:        channels,
+		MiddlewareHTTP:  httpMiddleware,
+		Security:        sec,
+		Outbox:          outbox,
+		Adapter:         pubsubAdapter,
+		AdapterStreamer: pubsubAdapterStreamer,
 	})
 
 	var reloader *hotreload.Reloader
@@ -249,29 +256,30 @@ func newDaprRuntime(ctx context.Context,
 	}
 
 	rt := &DaprRuntime{
-		runtimeConfig:     runtimeConfig,
-		globalConfig:      globalConfig,
-		accessControlList: accessControlList,
-		grpc:              grpc,
-		tracerProvider:    nil,
-		resiliency:        resiliencyProvider,
-		appHealthReady:    nil,
-		compStore:         compStore,
-		pubsubAdapter:     pubsubAdapter,
-		outbox:            outbox,
-		meta:              meta,
-		operatorClient:    operatorClient,
-		channels:          channels,
-		sec:               sec,
-		processor:         processor,
-		authz:             authz,
-		reloader:          reloader,
-		namespace:         namespace,
-		podName:           podName,
-		initComplete:      make(chan struct{}),
-		isAppHealthy:      make(chan struct{}),
-		clock:             new(clock.RealClock),
-		httpMiddleware:    httpMiddleware,
+		runtimeConfig:         runtimeConfig,
+		globalConfig:          globalConfig,
+		accessControlList:     accessControlList,
+		grpc:                  grpc,
+		tracerProvider:        nil,
+		resiliency:            resiliencyProvider,
+		appHealthReady:        nil,
+		compStore:             compStore,
+		pubsubAdapter:         pubsubAdapter,
+		pubsubAdapterStreamer: pubsubAdapterStreamer,
+		outbox:                outbox,
+		meta:                  meta,
+		operatorClient:        operatorClient,
+		channels:              channels,
+		sec:                   sec,
+		processor:             processor,
+		authz:                 authz,
+		reloader:              reloader,
+		namespace:             namespace,
+		podName:               podName,
+		initComplete:          make(chan struct{}),
+		isAppHealthy:          make(chan struct{}),
+		clock:                 new(clock.RealClock),
+		httpMiddleware:        httpMiddleware,
 	}
 	close(rt.isAppHealthy)
 
@@ -544,6 +552,7 @@ func (a *DaprRuntime) initRuntime(ctx context.Context) error {
 		Logger:                logger.NewLogger("dapr.grpc.api"),
 		Channels:              a.channels,
 		PubSubAdapter:         a.pubsubAdapter,
+		PubSubAdapterStreamer: a.pubsubAdapterStreamer,
 		Outbox:                a.outbox,
 		DirectMessaging:       a.directMessaging,
 		SendToOutputBindingFn: a.processor.Binding().SendToOutputBinding,

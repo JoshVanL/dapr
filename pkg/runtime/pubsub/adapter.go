@@ -17,6 +17,7 @@ import (
 	"context"
 
 	contribPubsub "github.com/dapr/components-contrib/pubsub"
+	rtv1pb "github.com/dapr/dapr/pkg/proto/runtime/v1"
 )
 
 // PubsubItem is a pubsub component with its scoped subscriptions and
@@ -34,4 +35,10 @@ type PubsubItem struct {
 type Adapter interface {
 	Publish(context.Context, *contribPubsub.PublishRequest) error
 	BulkPublish(context.Context, *contribPubsub.BulkPublishRequest) (contribPubsub.BulkPublishResponse, error)
+}
+
+type AdapterStreamer interface {
+	Subscribe(rtv1pb.Dapr_SubscribeTopicEventsServer, *rtv1pb.SubscribeTopicEventsInitialRequest) error
+	Publish(context.Context, *SubscribedMessage) error
+	StreamerKey(pubsub, topic string) string
 }

@@ -696,7 +696,7 @@ func (s *Subscription) sendBulkToDeadLetter(ctx context.Context,
 		Metadata:   msg.Metadata,
 	}
 
-	_, err := s.BulkPublish(ctx, req)
+	_, err := s.adapter.BulkPublish(ctx, req)
 	if err != nil {
 		log.Errorf("error sending message to dead letter, origin topic: %s dead letter topic %s err: %w", msg.Topic, deadLetterTopic, err)
 	}

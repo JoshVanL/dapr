@@ -14,6 +14,11 @@ limitations under the License.
 package grpc
 
 import (
+	"errors"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	subapi "github.com/dapr/dapr/pkg/apis/subscriptions/v2alpha1"
 	runtimev1pb "github.com/dapr/dapr/pkg/proto/runtime/v1"
 )
 
@@ -21,24 +26,66 @@ import (
 // subscribe to topics. If gRPC API server closes, returns func early with nil
 // to close stream.
 func (a *api) SubscribeTopicEvents(stream runtimev1pb.Dapr_SubscribeTopicEventsServer) error {
-	//errCh := make(chan error, 2)
-	//subDone := make(chan struct{})
-	//a.wg.Add(2)
-	//go func() {
-	//	errCh <- a.processor.PubSub().Streamer().Subscribe(stream)
-	//	close(subDone)
-	//	a.wg.Done()
-	//}()
-	//go func() {
-	//	select {
-	//	case <-a.closeCh:
-	//	case <-subDone:
-	//	}
-	//	errCh <- nil
-	//	a.wg.Done()
-	//}()
+	ireq, err := stream.Recv()
+	if err != nil {
+		return err
+	}
 
-	//return <-errCh
+	req := ireq.GetInitialRequest()
 
-	return nil
+	if req == nil {
+		return errors.New("initial request is required")
+	}
+
+	if len(req.GetPubsubName()) == 0 {
+		return errors.New("pubsubName name is required")
+	}
+
+	if len(req.GetTopic()) == 0 {
+		return errors.New("topic is required")
+	}
+
+	// TODO: @joshvanl: handle duplicate key names.
+	key := a.pubsubAdapterStreamer.StreamerKey(req.GetPubsubName(), req.GetTopic())
+	a.Universal.CompStore().AddStreamSubscription(&subapi.Subscription{
+		ObjectMeta: metav1.ObjectMeta{Name: key},
+		Spec: subapi.SubscriptionSpec{
+			Pubsubname:      req.GetPubsubName(),
+			Topic:           req.GetTopic(),
+			Metadata:        req.GetMetadata(),
+			DeadLetterTopic: req.GetDeadLetterTopic(),
+			Routes:          subapi.Routes{Default: "/"},
+		},
+	})
+
+	if err := a.processor.Subscriber().ReloadPubSub(req.GetPubsubName()); err != nil {
+		a.Universal.CompStore().DeleteStreamSubscription(key)
+		return err
+	}
+
+	defer func() {
+		a.Universal.CompStore().DeleteStreamSubscription(key)
+		if err := a.processor.Subscriber().ReloadPubSub(req.GetPubsubName()); err != nil {
+			a.logger.Errorf("Error reloading subscriptions after gRPC Subscribe shutdown: %s", err)
+		}
+	}()
+
+	errCh := make(chan error, 2)
+	subDone := make(chan struct{})
+	a.wg.Add(2)
+	go func() {
+		errCh <- a.pubsubAdapterStreamer.Subscribe(stream, req)
+		close(subDone)
+		a.wg.Done()
+	}()
+	go func() {
+		select {
+		case <-a.closeCh:
+		case <-subDone:
+		}
+		errCh <- nil
+		a.wg.Done()
+	}()
+
+	return <-errCh
 }

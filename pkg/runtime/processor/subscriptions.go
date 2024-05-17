@@ -15,6 +15,7 @@ package processor
 
 import (
 	"context"
+	"fmt"
 
 	subapi "github.com/dapr/dapr/pkg/apis/subscriptions/v2alpha1"
 	rtpubsub "github.com/dapr/dapr/pkg/runtime/pubsub"
@@ -100,6 +101,7 @@ func (p *Processor) CloseSubscription(ctx context.Context, sub *subapi.Subscript
 	if _, ok := p.compStore.GetDeclarativeSubscription(sub.Name); !ok {
 		return nil
 	}
+	fmt.Printf("|||CLOSING SUBSCRIPTION--- %s\n", sub.Name)
 	p.compStore.DeleteDeclarativeSubscription(sub.Name)
 	// TODO: @joshvanl: also index by subscription so entire pubsub doesn't need
 	// to be reloaded.

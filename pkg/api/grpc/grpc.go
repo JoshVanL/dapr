@@ -89,6 +89,7 @@ type api struct {
 	directMessaging       invokev1.DirectMessaging
 	channels              *channels.Channels
 	pubsubAdapter         runtimePubsub.Adapter
+	pubsubAdapterStreamer runtimePubsub.AdapterStreamer
 	outbox                outbox.Outbox
 	sendToOutputBindingFn func(ctx context.Context, name string, req *bindings.InvokeRequest) (*bindings.InvokeResponse, error)
 	tracingSpec           config.TracingSpec
@@ -105,6 +106,7 @@ type APIOpts struct {
 	Logger                logger.Logger
 	Channels              *channels.Channels
 	PubSubAdapter         runtimePubsub.Adapter
+	PubSubAdapterStreamer runtimePubsub.AdapterStreamer
 	Outbox                outbox.Outbox
 	DirectMessaging       invokev1.DirectMessaging
 	SendToOutputBindingFn func(ctx context.Context, name string, req *bindings.InvokeRequest) (*bindings.InvokeResponse, error)
@@ -122,6 +124,7 @@ func NewAPI(opts APIOpts) API {
 		directMessaging:       opts.DirectMessaging,
 		channels:              opts.Channels,
 		pubsubAdapter:         opts.PubSubAdapter,
+		pubsubAdapterStreamer: opts.PubSubAdapterStreamer,
 		outbox:                opts.Outbox,
 		sendToOutputBindingFn: opts.SendToOutputBindingFn,
 		tracingSpec:           opts.TracingSpec,
@@ -221,6 +224,7 @@ func (a *api) PublishEvent(ctx context.Context, in *runtimev1pb.PublishEventRequ
 	}
 
 	start := time.Now()
+	fmt.Printf("<<PUBLISHING: %s-%s\n", pubsubName, topic)
 	err := a.pubsubAdapter.Publish(ctx, &req)
 	elapsed := diag.ElapsedSince(start)
 

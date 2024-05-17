@@ -43,6 +43,7 @@ import (
 	"github.com/dapr/dapr/pkg/runtime/processor/state"
 	"github.com/dapr/dapr/pkg/runtime/processor/subscriber"
 	"github.com/dapr/dapr/pkg/runtime/processor/wfbackend"
+	rtpubsub "github.com/dapr/dapr/pkg/runtime/pubsub"
 	"github.com/dapr/dapr/pkg/runtime/registry"
 	"github.com/dapr/dapr/pkg/security"
 	"github.com/dapr/kit/concurrency"
@@ -100,6 +101,9 @@ type Options struct {
 	Security security.Handler
 
 	Outbox outbox.Outbox
+
+	Adapter         rtpubsub.Adapter
+	AdapterStreamer rtpubsub.AdapterStreamer
 }
 
 // Processor manages the lifecycle of all components categories.
@@ -129,14 +133,16 @@ type Processor struct {
 
 func New(opts Options) *Processor {
 	subscriber := subscriber.New(subscriber.Options{
-		AppID:       opts.ID,
-		Namespace:   opts.Namespace,
-		Resiliency:  opts.Resiliency,
-		TracingSpec: opts.GlobalConfig.Spec.TracingSpec,
-		IsHTTP:      opts.IsHTTP,
-		Channels:    opts.Channels,
-		GRPC:        opts.GRPC,
-		CompStore:   opts.ComponentStore,
+		AppID:           opts.ID,
+		Namespace:       opts.Namespace,
+		Resiliency:      opts.Resiliency,
+		TracingSpec:     opts.GlobalConfig.Spec.TracingSpec,
+		IsHTTP:          opts.IsHTTP,
+		Channels:        opts.Channels,
+		GRPC:            opts.GRPC,
+		CompStore:       opts.ComponentStore,
+		Adapter:         opts.Adapter,
+		AdapterStreamer: opts.AdapterStreamer,
 	})
 
 	state := state.New(state.Options{
