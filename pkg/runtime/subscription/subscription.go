@@ -28,7 +28,6 @@ import (
 	diag "github.com/dapr/dapr/pkg/diagnostics"
 	"github.com/dapr/dapr/pkg/resiliency"
 	"github.com/dapr/dapr/pkg/runtime/channels"
-	"github.com/dapr/dapr/pkg/runtime/compstore"
 	rterrors "github.com/dapr/dapr/pkg/runtime/errors"
 	rtpubsub "github.com/dapr/dapr/pkg/runtime/pubsub"
 	"github.com/dapr/kit/logger"
@@ -46,7 +45,6 @@ type Options struct {
 	Route           rtpubsub.Subscription
 	Channels        *channels.Channels
 	GRPC            *manager.Manager
-	CompStore       *compstore.ComponentStore
 	Adapter         rtpubsub.Adapter
 	AdapterStreamer rtpubsub.AdapterStreamer
 }
