@@ -113,7 +113,7 @@ func New(opts Options) (*Subscription, error) {
 		return s, nil
 	}
 
-	// TOOD: @joshvanl: move subsscribedTopic to struct
+	// TODO: @joshvanl: move subsscribedTopic to struct
 	subscribeTopic := s.topic
 	if namespaced {
 		subscribeTopic = s.namespace + s.topic
