@@ -106,85 +106,18 @@ func (s *Subscriber) ReloadPubSub(name string) error {
 		return nil
 	}
 
-	ps, ok := s.compStore.GetPubSub(name)
-	if !ok {
-		return nil
+	ps, _ := s.compStore.GetPubSub(name)
+
+	var errs []error
+	if err := s.reloadPubSubStream(name, ps); err != nil {
+		errs = append(errs, fmt.Errorf("failed to reload pubsub for subscription streams %s: %s", name, err))
 	}
 
-	for _, sub := range s.appSubs[name] {
-		sub.Stop()
-	}
-	for _, sub := range s.streamSubs[name] {
-		sub.Stop()
+	if err := s.reloadPubSubApp(name, ps); err != nil {
+		errs = append(errs, fmt.Errorf("failed to reload pubsub for subscription apps %s: %s", name, err))
 	}
 
-	s.appSubs[name] = nil
-	s.streamSubs[name] = nil
-
-	if err := s.initProgramaticSubscriptions(context.TODO()); err != nil {
-		return err
-	}
-
-	if s.closed {
-		return nil
-	}
-
-	if s.appSubActive {
-		var subs []*subscription.Subscription
-		for _, sub := range s.compStore.ListSubscriptionsByPubSub(name) {
-			ss, err := subscription.New(subscription.Options{
-				AppID:      s.appID,
-				Namespace:  s.namespace,
-				PubSubName: name,
-				Topic:      sub.Topic,
-				IsHTTP:     s.isHTTP,
-				PubSub:     &ps,
-				Resiliency: s.resiliency,
-				TraceSpec:  s.tracingSpec,
-				Route:      sub,
-				Channels:   s.channels,
-				GRPC:       s.grpc,
-				CompStore:  s.compStore,
-				Adapter:    s.adapter,
-			})
-			if err != nil {
-				log.Errorf("Failed to create subscription: %s", err)
-				continue
-			}
-
-			subs = append(subs, ss)
-		}
-		s.appSubs[name] = subs
-	}
-
-	var subs []*subscription.Subscription
-	for _, sub := range s.compStore.ListSubscriptionsStreamByPubSub(name) {
-		ss, err := subscription.New(subscription.Options{
-			AppID:           s.appID,
-			Namespace:       s.namespace,
-			PubSubName:      name,
-			Topic:           sub.Topic,
-			IsHTTP:          s.isHTTP,
-			PubSub:          &ps,
-			Resiliency:      s.resiliency,
-			TraceSpec:       s.tracingSpec,
-			Route:           sub,
-			Channels:        s.channels,
-			GRPC:            s.grpc,
-			CompStore:       s.compStore,
-			Adapter:         s.adapter,
-			AdapterStreamer: s.adapterStreamer,
-		})
-		if err != nil {
-			log.Errorf("Failed to create subscription: %s", err)
-			continue
-		}
-
-		subs = append(subs, ss)
-	}
-	s.streamSubs[name] = subs
-
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *Subscriber) StopPubSub(name string) {
@@ -216,34 +149,39 @@ func (s *Subscriber) StartAppSubscriptions() error {
 
 	s.appSubActive = true
 
+	for _, subs := range s.appSubs {
+		for _, sub := range subs {
+			sub.Stop()
+		}
+	}
 	s.appSubs = make(map[string][]*subscription.Subscription)
+
 	var errs []error
-	for _, sub := range s.compStore.ListSubscriptionsApp() {
-		ps, ok := s.compStore.GetPubSub(sub.PubsubName)
-		if !ok {
-			continue
-		}
+	for name, ps := range s.compStore.ListPubSubs() {
+		ps := ps
+		for _, sub := range s.compStore.ListSubscriptionsAppByPubSub(name) {
+			sub := sub
+			ss, err := subscription.New(subscription.Options{
+				AppID:      s.appID,
+				Namespace:  s.namespace,
+				PubSubName: sub.PubsubName,
+				Topic:      sub.Topic,
+				IsHTTP:     s.isHTTP,
+				PubSub:     ps,
+				Resiliency: s.resiliency,
+				TraceSpec:  s.tracingSpec,
+				Route:      sub,
+				Channels:   s.channels,
+				GRPC:       s.grpc,
+				Adapter:    s.adapter,
+			})
+			if err != nil {
+				errs = append(errs, err)
+				continue
+			}
 
-		ss, err := subscription.New(subscription.Options{
-			AppID:      s.appID,
-			Namespace:  s.namespace,
-			PubSubName: sub.PubsubName,
-			Topic:      sub.Topic,
-			IsHTTP:     s.isHTTP,
-			PubSub:     &ps,
-			Resiliency: s.resiliency,
-			TraceSpec:  s.tracingSpec,
-			Route:      sub,
-			Channels:   s.channels,
-			GRPC:       s.grpc,
-			Adapter:    s.adapter,
-		})
-		if err != nil {
-			errs = append(errs, err)
-			continue
+			s.appSubs[name] = append(s.appSubs[name], ss)
 		}
-
-		s.appSubs[sub.PubsubName] = append(s.appSubs[sub.PubsubName], ss)
 	}
 
 	return errors.Join(errs...)
@@ -295,14 +233,101 @@ func (s *Subscriber) InitProgramaticSubscriptions(ctx context.Context) error {
 	return s.initProgramaticSubscriptions(ctx)
 }
 
+func (s *Subscriber) reloadPubSubStream(name string, pubsub *rtpubsub.PubsubItem) error {
+	for _, sub := range s.streamSubs[name] {
+		sub.Stop()
+	}
+	s.streamSubs[name] = nil
+
+	if s.closed {
+		return nil
+	}
+
+	var subs []*subscription.Subscription
+	var errs []error
+	for _, sub := range s.compStore.ListSubscriptionsStreamByPubSub(name) {
+		ss, err := subscription.New(subscription.Options{
+			AppID:           s.appID,
+			Namespace:       s.namespace,
+			PubSubName:      name,
+			Topic:           sub.Topic,
+			IsHTTP:          s.isHTTP,
+			PubSub:          pubsub,
+			Resiliency:      s.resiliency,
+			TraceSpec:       s.tracingSpec,
+			Route:           sub,
+			Channels:        s.channels,
+			GRPC:            s.grpc,
+			Adapter:         s.adapter,
+			AdapterStreamer: s.adapterStreamer,
+		})
+		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to create subscription for %s: %s", name, err))
+			continue
+		}
+
+		subs = append(subs, ss)
+	}
+
+	s.streamSubs[name] = subs
+
+	return errors.Join(errs...)
+}
+
+func (s *Subscriber) reloadPubSubApp(name string, pubsub *rtpubsub.PubsubItem) error {
+	for _, sub := range s.appSubs[name] {
+		sub.Stop()
+	}
+
+	s.appSubs[name] = nil
+
+	if !s.appSubActive || s.closed {
+		return nil
+	}
+
+	if err := s.initProgramaticSubscriptions(context.TODO()); err != nil {
+		return err
+	}
+
+	var subs []*subscription.Subscription
+	var errs []error
+	for _, sub := range s.compStore.ListSubscriptionsAppByPubSub(name) {
+		ss, err := subscription.New(subscription.Options{
+			AppID:      s.appID,
+			Namespace:  s.namespace,
+			PubSubName: name,
+			Topic:      sub.Topic,
+			IsHTTP:     s.isHTTP,
+			PubSub:     pubsub,
+			Resiliency: s.resiliency,
+			TraceSpec:  s.tracingSpec,
+			Route:      sub,
+			Channels:   s.channels,
+			GRPC:       s.grpc,
+			Adapter:    s.adapter,
+		})
+		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to create subscription for %s: %s", name, err))
+			continue
+		}
+
+		subs = append(subs, ss)
+	}
+
+	s.appSubs[name] = subs
+
+	return errors.Join(errs...)
+}
+
 func (s *Subscriber) initProgramaticSubscriptions(ctx context.Context) error {
 	if s.hasInitProg {
 		return nil
 	}
 
-	if len(s.compStore.ListPubSubs()) == 0 {
-		return nil
-	}
+	// TODO: @joshvanl
+	//if len(s.compStore.ListPubSubs()) == 0 {
+	//	return nil
+	//}
 
 	appChannel := s.channels.AppChannel()
 	if appChannel == nil {

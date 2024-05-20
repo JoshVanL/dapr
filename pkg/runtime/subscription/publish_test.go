@@ -803,8 +803,3 @@ func TestOnNewPublishedMessageGRPC(t *testing.T) {
 		})
 	}
 }
-
-func matchContextInterface(v any) bool {
-	_, ok := v.(context.Context)
-	return ok
-}

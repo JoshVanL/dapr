@@ -198,7 +198,7 @@ func (c *ComponentStore) ListSubscriptionsApp() []rtpubsub.Subscription {
 	return subs
 }
 
-func (c *ComponentStore) ListSubscriptionsByPubSub(name string) []rtpubsub.Subscription {
+func (c *ComponentStore) ListSubscriptionsAppByPubSub(name string) []rtpubsub.Subscription {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 

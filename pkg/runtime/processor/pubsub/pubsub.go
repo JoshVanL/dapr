@@ -92,7 +92,7 @@ func (p *pubsub) Init(ctx context.Context, comp compapi.Component) error {
 	}
 
 	pubsubName := comp.ObjectMeta.Name
-	pubsubItem := rtpubsub.PubsubItem{
+	pubsubItem := &rtpubsub.PubsubItem{
 		Component:           pubSub,
 		ScopedSubscriptions: scopes.GetScopedTopics(scopes.SubscriptionScopes, p.appID, properties),
 		ScopedPublishings:   scopes.GetScopedTopics(scopes.PublishingScopes, p.appID, properties),

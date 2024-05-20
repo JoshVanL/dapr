@@ -22,7 +22,7 @@ import (
 	"github.com/dapr/kit/logger"
 )
 
-type GetPubSubFn func(name string) (rtpubsub.PubsubItem, bool)
+type GetPubSubFn func(name string) (*rtpubsub.PubsubItem, bool)
 
 type Options struct {
 	AppID       string
@@ -97,7 +97,7 @@ func (p *publisher) BulkPublish(ctx context.Context, req *contribpubsub.BulkPubl
 	return rtpubsub.ApplyBulkPublishResiliency(ctx, req, policyDef, defaultBulkPublisher)
 }
 
-func isOperationAllowed(topic string, pubsub rtpubsub.PubsubItem) bool {
+func isOperationAllowed(topic string, pubsub *rtpubsub.PubsubItem) bool {
 	var inAllowedTopics, inProtectedTopics bool
 
 	// first check if allowedTopics contain it

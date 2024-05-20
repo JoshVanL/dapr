@@ -18,13 +18,13 @@ import (
 	rtpubsub "github.com/dapr/dapr/pkg/runtime/pubsub"
 )
 
-func (c *ComponentStore) AddPubSub(name string, item rtpubsub.PubsubItem) {
+func (c *ComponentStore) AddPubSub(name string, item *rtpubsub.PubsubItem) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	c.pubSubs[name] = item
 }
 
-func (c *ComponentStore) GetPubSub(name string) (rtpubsub.PubsubItem, bool) {
+func (c *ComponentStore) GetPubSub(name string) (*rtpubsub.PubsubItem, bool) {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 	pubsub, ok := c.pubSubs[name]
@@ -42,7 +42,7 @@ func (c *ComponentStore) GetPubSubComponent(name string) (pubsub.PubSub, bool) {
 	return pubsub.Component, ok
 }
 
-func (c *ComponentStore) ListPubSubs() map[string]rtpubsub.PubsubItem {
+func (c *ComponentStore) ListPubSubs() map[string]*rtpubsub.PubsubItem {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 	return c.pubSubs
