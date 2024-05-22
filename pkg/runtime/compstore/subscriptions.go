@@ -200,3 +200,9 @@ func (c *ComponentStore) ListDeclarativeSubscriptions() []subapi.Subscription {
 	}
 	return subs
 }
+
+func (c *ComponentStore) ListProgramaticSubscriptions() []rtpubsub.Subscription {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	return c.subscriptions.programatics
+}

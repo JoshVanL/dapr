@@ -15,21 +15,17 @@ package publisher
 
 import (
 	"context"
-	"encoding/json"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	contribpubsub "github.com/dapr/components-contrib/pubsub"
-	subscriptionsapi "github.com/dapr/dapr/pkg/apis/subscriptions/v2alpha1"
 	"github.com/dapr/dapr/pkg/resiliency"
 	"github.com/dapr/dapr/pkg/runtime/compstore"
 	rtpubsub "github.com/dapr/dapr/pkg/runtime/pubsub"
-	runtimePubsub "github.com/dapr/dapr/pkg/runtime/pubsub"
 	daprt "github.com/dapr/dapr/pkg/testing"
 	"github.com/dapr/kit/logger"
 )
@@ -445,65 +441,6 @@ func Test_isOperationAllowed(t *testing.T) {
 		b := isOperationAllowed("B", pubSub)
 		assert.False(t, b)
 	})
-}
-
-// helper to populate subscription array for 2 pubsubs.
-// 'topics' are the topics for the first pubsub.
-// 'topics2' are the topics for the second pubsub.
-func getSubscriptionsJSONString(topics []string, topics2 []string) string {
-	s := []runtimePubsub.SubscriptionJSON{}
-	for _, t := range topics {
-		s = append(s, runtimePubsub.SubscriptionJSON{
-			PubsubName: TestPubsubName,
-			Topic:      t,
-			Routes: runtimePubsub.RoutesJSON{
-				Default: t,
-			},
-		})
-	}
-
-	for _, t := range topics2 {
-		s = append(s, runtimePubsub.SubscriptionJSON{
-			PubsubName: TestSecondPubsubName,
-			Topic:      t,
-			Routes: runtimePubsub.RoutesJSON{
-				Default: t,
-			},
-		})
-	}
-	b, _ := json.Marshal(&s)
-
-	return string(b)
-}
-
-func getSubscriptionCustom(topic, path string) string {
-	s := []runtimePubsub.SubscriptionJSON{
-		{
-			PubsubName: TestPubsubName,
-			Topic:      topic,
-			Routes: runtimePubsub.RoutesJSON{
-				Default: path,
-			},
-		},
-	}
-	b, _ := json.Marshal(&s)
-	return string(b)
-}
-
-func testDeclarativeSubscription() subscriptionsapi.Subscription {
-	return subscriptionsapi.Subscription{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "Subscription",
-			APIVersion: "dapr.io/v1alpha1",
-		},
-		Spec: subscriptionsapi.SubscriptionSpec{
-			Topic: "topic1",
-			Routes: subscriptionsapi.Routes{
-				Default: "myroute",
-			},
-			Pubsubname: "pubsub",
-		},
-	}
 }
 
 func TestNamespacedPublisher(t *testing.T) {

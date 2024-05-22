@@ -131,8 +131,8 @@ func (s *Subscriber) StopPubSub(name string) {
 		sub.Stop()
 	}
 
-	s.appSubs = make(map[string][]*subscription.Subscription)
-	s.streamSubs = make(map[string][]*subscription.Subscription)
+	s.appSubs[name] = nil
+	s.streamSubs[name] = nil
 }
 
 func (s *Subscriber) StartAppSubscriptions() error {
@@ -223,8 +223,8 @@ func (s *Subscriber) StopAllSubscriptionsForever() {
 		}
 	}
 
-	s.appSubs = nil
-	s.streamSubs = nil
+	s.appSubs = make(map[string][]*subscription.Subscription)
+	s.streamSubs = make(map[string][]*subscription.Subscription)
 }
 
 func (s *Subscriber) InitProgramaticSubscriptions(ctx context.Context) error {
