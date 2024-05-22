@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 
 	"github.com/dapr/components-contrib/metadata"
 	contribpubsub "github.com/dapr/components-contrib/pubsub"
@@ -65,7 +64,6 @@ type Subscription struct {
 	adapterStreamer rtpubsub.AdapterStreamer
 
 	cancel func()
-	wg     sync.WaitGroup
 }
 
 var log = logger.NewLogger("dapr.runtime.processor.pubsub.subscription")

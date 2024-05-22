@@ -406,7 +406,7 @@ func (s *Subscription) publishBulkMessageHTTP(ctx context.Context, bulkSubCallDa
 	if (statusCode >= 200) && (statusCode <= 299) {
 		// Any 2xx is considered a success.
 		var appBulkResponse contribpubsub.AppBulkResponse
-		err := json.NewDecoder(resp.RawData()).Decode(&appBulkResponse)
+		err = json.NewDecoder(resp.RawData()).Decode(&appBulkResponse)
 		if err != nil {
 			bscData.bulkSubDiag.statusWiseDiag[string(contribpubsub.Retry)] += int64(len(rawMsgEntries))
 			bscData.bulkSubDiag.elapsed = elapsed

@@ -239,11 +239,11 @@ func (s *Subscriber) reloadPubSubStream(name string, pubsub *rtpubsub.PubsubItem
 	}
 	s.streamSubs[name] = nil
 
-	if s.closed {
+	if s.closed || pubsub == nil {
 		return nil
 	}
 
-	var subs []*subscription.Subscription
+	subs := make([]*subscription.Subscription, 0, len(s.compStore.ListSubscriptionsStreamByPubSub(name)))
 	var errs []error
 	for _, sub := range s.compStore.ListSubscriptionsStreamByPubSub(name) {
 		ss, err := subscription.New(subscription.Options{
@@ -281,7 +281,7 @@ func (s *Subscriber) reloadPubSubApp(name string, pubsub *rtpubsub.PubsubItem) e
 
 	s.appSubs[name] = nil
 
-	if !s.appSubActive || s.closed {
+	if !s.appSubActive || s.closed || pubsub == nil {
 		return nil
 	}
 
@@ -289,8 +289,8 @@ func (s *Subscriber) reloadPubSubApp(name string, pubsub *rtpubsub.PubsubItem) e
 		return err
 	}
 
-	var subs []*subscription.Subscription
 	var errs []error
+	subs := make([]*subscription.Subscription, 0, len(s.compStore.ListSubscriptionsAppByPubSub(name)))
 	for _, sub := range s.compStore.ListSubscriptionsAppByPubSub(name) {
 		ss, err := subscription.New(subscription.Options{
 			AppID:      s.appID,
@@ -324,10 +324,10 @@ func (s *Subscriber) initProgramaticSubscriptions(ctx context.Context) error {
 		return nil
 	}
 
-	// TODO: @joshvanl
-	//if len(s.compStore.ListPubSubs()) == 0 {
-	//	return nil
-	//}
+	// If no pubsubs registered, return early.
+	if len(s.compStore.ListPubSubs()) == 0 {
+		return nil
+	}
 
 	appChannel := s.channels.AppChannel()
 	if appChannel == nil {

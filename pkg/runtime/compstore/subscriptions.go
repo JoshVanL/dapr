@@ -18,46 +18,16 @@ import (
 	rtpubsub "github.com/dapr/dapr/pkg/runtime/pubsub"
 )
 
-//type TopicRoutes map[string]TopicRouteElem
-
-//func (c *ComponentStore) SetTopicRoutes(topicRoutes map[string]TopicRoutes) {
-//	c.lock.Lock()
-//	defer c.lock.Unlock()
-//	c.topicRoutes = topicRoutes
-//}
-//
-//func (c *ComponentStore) DeleteTopicRoute(name string) {
-//	c.lock.Lock()
-//	defer c.lock.Unlock()
-//	delete(c.topicRoutes, name)
-//}
-//
-//func (c *ComponentStore) GetTopicRoutes() map[string]TopicRoutes {
-//	c.lock.RLock()
-//	defer c.lock.RUnlock()
-//	return c.topicRoutes
-//}
-
-//type TopicRoute struct {
-//	Metadata        map[string]string
-//	Rules           []*rtpubsub.Rule
-//	DeadLetterTopic string
-//	BulkSubscribe   *rtpubsub.BulkSubscribe
-//}
-//
-//type Subscription struct {
-//	Sub   rtpubsub.Subscription
-//	Route TopicRoute
-//}
-
 type DeclarativeSubscription struct {
 	Comp         *subapi.Subscription
 	Subscription rtpubsub.Subscription
 }
 
 type subscriptions struct {
-	programatics     []rtpubsub.Subscription
-	declaratives     map[string]*DeclarativeSubscription
+	programatics []rtpubsub.Subscription
+	declaratives map[string]*DeclarativeSubscription
+	// declarativesList used to track order of declarative subscriptions for
+	// processing priority.
 	declarativesList []string
 	streams          map[string]*DeclarativeSubscription
 }
@@ -134,9 +104,6 @@ func (c *ComponentStore) ListSubscriptions() []rtpubsub.Subscription {
 		sub := c.subscriptions.declaratives[name].Subscription
 		key := sub.PubsubName + "||" + sub.Topic
 		if _, ok := taken[key]; !ok {
-			// TODO: @joshvanl
-			//		subs[j] = sub
-			//	} else {
 			taken[key] = len(subs)
 			subs = append(subs, sub)
 		}
@@ -165,52 +132,34 @@ func (c *ComponentStore) ListSubscriptions() []rtpubsub.Subscription {
 	return subs
 }
 
-func (c *ComponentStore) ListSubscriptionsApp() []rtpubsub.Subscription {
-	c.lock.RLock()
-	defer c.lock.RUnlock()
-
-	var subs []rtpubsub.Subscription
-	taken := make(map[string]int)
-
-	for _, name := range c.subscriptions.declarativesList {
-		sub := c.subscriptions.declaratives[name].Subscription
-		key := sub.PubsubName + "||" + sub.Topic
-		if _, ok := taken[key]; !ok {
-			// TODO: @joshvanl
-			//	subs[j] = sub
-			//} else {
-			taken[key] = len(subs)
-			subs = append(subs, sub)
-		}
-	}
-
-	for i := range c.subscriptions.programatics {
-		sub := c.subscriptions.programatics[i]
-		key := sub.PubsubName + "||" + sub.Topic
-		if j, ok := taken[key]; ok {
-			subs[j] = sub
-		} else {
-			taken[key] = len(subs)
-			subs = append(subs, sub)
-		}
-	}
-
-	return subs
-}
-
 func (c *ComponentStore) ListSubscriptionsAppByPubSub(name string) []rtpubsub.Subscription {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 
 	var subs []rtpubsub.Subscription
-	for _, sub := range c.subscriptions.programatics {
-		if sub.PubsubName == name {
-			subs = append(subs, sub)
+	taken := make(map[string]int)
+	for _, subName := range c.subscriptions.declarativesList {
+		sub := c.subscriptions.declaratives[subName]
+		if sub.Subscription.PubsubName != name {
+			continue
+		}
+
+		if _, ok := taken[sub.Subscription.Topic]; !ok {
+			taken[sub.Subscription.Topic] = len(subs)
+			subs = append(subs, sub.Subscription)
 		}
 	}
-	for _, sub := range c.subscriptions.declaratives {
-		if sub.Subscription.PubsubName == name {
-			subs = append(subs, sub.Subscription)
+	for i := range c.subscriptions.programatics {
+		sub := c.subscriptions.programatics[i]
+		if sub.PubsubName != name {
+			continue
+		}
+
+		if j, ok := taken[sub.Topic]; ok {
+			subs[j] = sub
+		} else {
+			taken[sub.Topic] = len(subs)
+			subs = append(subs, sub)
 		}
 	}
 
@@ -251,58 +200,3 @@ func (c *ComponentStore) ListDeclarativeSubscriptions() []subapi.Subscription {
 	}
 	return subs
 }
-
-//func (c *ComponentStore) SetSubscriptions(subscriptions []rtpubsub.Subscription) {
-//	c.lock.Lock()
-//	defer c.lock.Unlock()
-//	c.subscriptions = subscriptions
-//}
-//
-//
-//func (c *ComponentStore) AddDeclarativeSubscription(subscriptions ...subapi.Subscription) error {
-//	c.lock.Lock()
-//	defer c.lock.Unlock()
-//
-//	for _, sub := range subscriptions {
-//		for _, existing := range c.declarativeSubscriptions {
-//			if existing.ObjectMeta.Name == sub.ObjectMeta.Name {
-//				return fmt.Errorf("subscription with name %s already exists", sub.ObjectMeta.Name)
-//			}
-//		}
-//	}
-//
-//	c.declarativeSubscriptions = append(c.declarativeSubscriptions, subscriptions...)
-//
-//	return nil
-//}
-//
-//func (c *ComponentStore) ListDeclarativeSubscriptions() []subapi.Subscription {
-//	c.lock.RLock()
-//	defer c.lock.RUnlock()
-//	return c.declarativeSubscriptions
-//}
-//
-//func (c *ComponentStore) GetDeclarativeSubscription(name string) (subapi.Subscription, bool) {
-//	c.lock.RLock()
-//	defer c.lock.RUnlock()
-//	for i, sub := range c.declarativeSubscriptions {
-//		if sub.ObjectMeta.Name == name {
-//			return c.declarativeSubscriptions[i], true
-//		}
-//	}
-//	return subapi.Subscription{}, false
-//}
-//
-//func (c *ComponentStore) DeleteDeclaraiveSubscription(names ...string) {
-//	c.lock.Lock()
-//	defer c.lock.Unlock()
-//
-//	for _, name := range names {
-//		for i, sub := range c.declarativeSubscriptions {
-//			if sub.ObjectMeta.Name == name {
-//				c.declarativeSubscriptions = append(c.declarativeSubscriptions[:i], c.declarativeSubscriptions[i+1:]...)
-//				break
-//			}
-//		}
-//	}
-//}

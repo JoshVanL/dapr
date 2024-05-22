@@ -119,8 +119,6 @@ func (s *streamer) Publish(ctx context.Context, msg *rtpubsub.SubscribedMessage)
 	defer defFn()
 
 	start := time.Now()
-	// TODO: @joshvanl: send stream evelopes on a send channel to prevent
-	// concurrent writes.
 	err = conn.stream.Send(envelope)
 	elapsed := diag.ElapsedSince(start)
 

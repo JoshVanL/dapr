@@ -15,14 +15,23 @@ package subscription
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
+	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 
 	contribpubsub "github.com/dapr/components-contrib/pubsub"
+	channelt "github.com/dapr/dapr/pkg/channel/testing"
 	invokev1 "github.com/dapr/dapr/pkg/messaging/v1"
 	runtimev1pb "github.com/dapr/dapr/pkg/proto/runtime/v1"
+	"github.com/dapr/dapr/pkg/resiliency"
+	"github.com/dapr/dapr/pkg/runtime/channels"
+	runtimePubsub "github.com/dapr/dapr/pkg/runtime/pubsub"
+	daprt "github.com/dapr/dapr/pkg/testing"
 )
 
 const (
@@ -102,738 +111,745 @@ func getExpectedExtension() map[string]ExpectedExtension {
 	}
 }
 
-//
-//	func TestBulkSubscribe(t *testing.T) {
-//		const testBulkSubscribePubsub = "bulkSubscribePubSub"
-//
-//		t.Run("bulk Subscribe Message for raw payload", func(t *testing.T) {
-//			comp := &mockSubscribePubSub{}
-//			require.NoError(t, comp.Init(context.Background(), contribpubsub.Metadata{}))
-//
-//			ps, err := New(Options{
-//				Resiliency: resiliency.New(log),
-//				IsHTTP:     true,
-//				Channels:   new(channels.Channels),
-//				PubSub:     &runtimePubsub.PubsubItem{Component: comp},
-//				AppID:      TestRuntimeConfigID,
-//				Namespace:  TestRuntimeConfigID,
-//				PubSubName: testBulkSubscribePubsub,
-//				Topic:      "topic0",
-//			})
-//			require.NoError(t, err)
-//
-//			subscriptionItems := []runtimePubsub.SubscriptionJSON{
-//				{
-//					PubsubName: testBulkSubscribePubsub, Topic: "topic0", Route: "orders",
-//					BulkSubscribe: runtimePubsub.BulkSubscribeJSON{Enabled: true},
-//					Metadata:      map[string]string{"rawPayload": "true"},
-//				},
-//			}
-//			sub, _ := json.Marshal(subscriptionItems)
-//			fakeResp := invokev1.NewInvokeMethodResponse(200, "OK", nil).
-//				WithRawDataBytes(sub).
-//				WithContentType("application/json")
-//			defer fakeResp.Close()
-//
-//			mockAppChannel := new(channelt.MockAppChannel)
-//			mockAppChannel.Init()
-//			ps.channels.WithAppChannel(mockAppChannel)
-//			mockAppChannel.On("InvokeMethod", mock.MatchedBy(matchContextInterface), matchDaprRequestMethod("dapr/subscribe")).Return(fakeResp, nil)
-//			mockAppChannel.On("InvokeMethod", mock.MatchedBy(matchContextInterface), mock.Anything).Return(fakeResp, nil)
-//
-//			err = comp.Publish(context.TODO(), &contribpubsub.PublishRequest{
-//				PubsubName: testBulkSubscribePubsub,
-//				Topic:      "topic0",
-//				Data:       []byte(`{"orderId":"1"}`),
-//			})
-//			require.NoError(t, err)
-//			pubsubIns := comp
-//			assert.Equal(t, 1, pubsubIns.bulkPubCount["topic0"])
-//			assert.True(t, pubsubIns.isBulkSubscribe)
-//			reqs := mockAppChannel.GetInvokedRequest()
-//			mockAppChannel.AssertNumberOfCalls(t, "InvokeMethod", 2)
-//			assert.Contains(t, string(reqs["orders"]), `event":"eyJvcmRlcklkIjoiMSJ9"`)
-//		})
-//
-//		t.Run("bulk Subscribe Message for cloud event", func(t *testing.T) {
-//			comp := &mockSubscribePubSub{}
-//			require.NoError(t, comp.Init(context.Background(), contribpubsub.Metadata{}))
-//
-//			ps, err := New(Options{
-//				PubSub:     &runtimePubsub.PubsubItem{Component: comp},
-//				Resiliency: resiliency.New(log),
-//				IsHTTP:     true,
-//				Channels:   new(channels.Channels),
-//			})
-//			require.NoError(t, err)
-//
-//			// TODO: @joshvanl
-//			//ps.registry.RegisterComponent(
-//			//	func(_ logger.Logger) contribpubsub.PubSub {
-//			//		return &mockSubscribePubSub{}
-//			//	},
-//			//	"mockPubSub",
-//			//)
-//			subscriptionItems := []runtimePubsub.SubscriptionJSON{
-//				{
-//					PubsubName: testBulkSubscribePubsub, Topic: "topic0", Route: "orders",
-//					BulkSubscribe: runtimePubsub.BulkSubscribeJSON{Enabled: true},
-//				},
-//			}
-//			sub, _ := json.Marshal(subscriptionItems)
-//			fakeResp := invokev1.NewInvokeMethodResponse(200, "OK", nil).
-//				WithRawDataBytes(sub).
-//				WithContentType("application/json")
-//			defer fakeResp.Close()
-//
-//			mockAppChannel := new(channelt.MockAppChannel)
-//			mockAppChannel.Init()
-//			ps.channels.WithAppChannel(mockAppChannel)
-//			mockAppChannel.On("InvokeMethod", mock.MatchedBy(matchContextInterface), matchDaprRequestMethod("dapr/subscribe")).Return(fakeResp, nil)
-//			mockAppChannel.On("InvokeMethod", mock.MatchedBy(matchContextInterface), mock.Anything).Return(fakeResp, nil)
-//
-//			order := `{"data":{"orderId":1},"datacontenttype":"application/json","id":"8b540b03-04b5-4871-96ae-c6bde0d5e16d","pubsubname":"orderpubsub","source":"checkout","specversion":"1.0","topic":"orders","traceid":"00-e61de949bb4de415a7af49fc86675648-ffb64972bb907224-01","traceparent":"00-e61de949bb4de415a7af49fc86675648-ffb64972bb907224-01","tracestate":"","type":"com.dapr.event.sent"}`
-//
-//			err = comp.Publish(context.TODO(), &contribpubsub.PublishRequest{
-//				PubsubName: testBulkSubscribePubsub,
-//				Topic:      "topic0",
-//				Data:       []byte(order),
-//			})
-//			require.NoError(t, err)
-//			pubsubIns := comp
-//			assert.Equal(t, 1, pubsubIns.bulkPubCount["topic0"])
-//			assert.True(t, pubsubIns.isBulkSubscribe)
-//			reqs := mockAppChannel.GetInvokedRequest()
-//			mockAppChannel.AssertNumberOfCalls(t, "InvokeMethod", 2)
-//			assert.Contains(t, string(reqs["orders"]), eventKey+order)
-//		})
-//
-//		//t.Run("bulk Subscribe multiple Messages at once for cloud events", func(t *testing.T) {
-//		//	ps := New(Options{
-//		//		Registry:       registry.New(registry.NewOptions()).PubSubs(),
-//		//		Meta:           meta.New(meta.Options{}),
-//		//		Resiliency:     resiliency.New(log),
-//		//		ComponentStore: compstore.New(),
-//		//		IsHTTP:         true,
-//		//		Channels:       new(channels.Channels),
-//		//	})
-//		//	ms := &mockSubscribePubSub{
-//		//		features: []contribpubsub.Feature{contribpubsub.FeatureBulkPublish},
-//		//	}
-//		//	ps.registry.RegisterComponent(
-//		//		func(_ logger.Logger) contribpubsub.PubSub {
-//		//			return ms
-//		//		},
-//		//		"mockPubSub",
-//		//	)
-//
-//		//subscriptionItems := []runtimePubsub.SubscriptionJSON{
-//		//	{
-//		//		PubsubName: testBulkSubscribePubsub, Topic: "topic0", Route: "orders",
-//		//		BulkSubscribe: runtimePubsub.BulkSubscribeJSON{Enabled: true},
-//		//	},
-//		//}
-//		//	sub, _ := json.Marshal(subscriptionItems)
-//		//	fakeResp := invokev1.NewInvokeMethodResponse(200, "OK", nil).
-//		//		WithRawDataBytes(sub).
-//		//		WithContentType("application/json")
-//		//	defer fakeResp.Close()
-//
-//		//	mockAppChannel := new(channelt.MockAppChannel)
-//		//	mockAppChannel.Init()
-//		//	ps.channels.WithAppChannel(mockAppChannel)
-//		//	mockAppChannel.On("InvokeMethod", mock.MatchedBy(matchContextInterface), matchDaprRequestMethod("dapr/subscribe")).Return(fakeResp, nil)
-//		//	fakeResp1 := invokev1.NewInvokeMethodResponse(200, "OK", nil)
-//		//	defer fakeResp1.Close()
-//		//	mockAppChannel.On("InvokeMethod", mock.MatchedBy(matchContextInterface), mock.Anything).Return(fakeResp1, nil)
-//
-//		//	require.NoError(t, ps.Init(context.TODO(), pubsubComponent))
-//		//	require.NoError(t, ps.StartSubscriptions(context.TODO()))
-//
-//		//	msgArr := getBulkMessageEntries(2)
-//
-//		//	ps.BulkPublish(context.TODO(), &contribpubsub.BulkPublishRequest{
-//		//		PubsubName: testBulkSubscribePubsub,
-//		//		Topic:      "topic0",
-//		//		Entries:    msgArr,
-//		//	})
-//
-//		//	assert.Len(t, ms.GetBulkResponse().Statuses, 2)
-//		//	require.Error(t, ms.GetBulkResponse().Error)
-//		//	require.NoError(t, assertItemExistsOnce(ms.GetBulkResponse().Statuses, "1111111a", "2222222b"))
-//
-//		//	pubSub, ok := ps.compStore.GetPubSub(testBulkSubscribePubsub)
-//		//	require.True(t, ok)
-//		//	pubsubIns := pubSub.Component.(*mockSubscribePubSub)
-//		//	assert.Equal(t, 1, pubsubIns.bulkPubCount["topic0"])
-//		//	assert.True(t, pubsubIns.isBulkSubscribe)
-//		//	reqs := mockAppChannel.GetInvokedRequest()
-//		//	mockAppChannel.AssertNumberOfCalls(t, "InvokeMethod", 2)
-//		//	assert.Contains(t, string(reqs["orders"]), eventKey+order1)
-//		//	assert.Contains(t, string(reqs["orders"]), eventKey+order2)
-//
-//		//	fakeResp2 := invokev1.NewInvokeMethodResponse(404, "OK", nil)
-//		//	defer fakeResp2.Close()
-//		//	mockAppChannel1 := new(channelt.MockAppChannel)
-//		//	mockAppChannel1.Init()
-//		//	ps.channels.WithAppChannel(mockAppChannel1)
-//		//	mockAppChannel1.On("InvokeMethod", mock.MatchedBy(matchContextInterface), mock.Anything).Return(fakeResp2, nil)
-//
-//		//	msgArr = getBulkMessageEntries(3)
-//
-//		//	ps.BulkPublish(context.TODO(), &contribpubsub.BulkPublishRequest{
-//		//		PubsubName: testBulkSubscribePubsub,
-//		//		Topic:      "topic0",
-//		//		Entries:    msgArr,
-//		//	})
-//
-//		//	assert.Len(t, ms.GetBulkResponse().Statuses, 3)
-//		//	require.NoError(t, ms.GetBulkResponse().Error)
-//		//	require.NoError(t, assertItemExistsOnce(ms.GetBulkResponse().Statuses, "1111111a", "2222222b", "333333c"))
-//
-//		//	assert.Equal(t, 2, pubsubIns.bulkPubCount["topic0"])
-//		//	assert.True(t, pubsubIns.isBulkSubscribe)
-//		//	reqs = mockAppChannel1.GetInvokedRequest()
-//		//	mockAppChannel1.AssertNumberOfCalls(t, "InvokeMethod", 1)
-//		//	assert.Contains(t, string(reqs["orders"]), eventKey+order1)
-//		//	assert.Contains(t, string(reqs["orders"]), eventKey+order2)
-//		//	assert.Contains(t, string(reqs["orders"]), eventKey+order3)
-//
-//		//	fakeResp3 := invokev1.NewInvokeMethodResponse(400, "OK", nil)
-//		//	defer fakeResp3.Close()
-//		//	mockAppChannel2 := new(channelt.MockAppChannel)
-//		//	mockAppChannel2.Init()
-//		//	ps.channels.WithAppChannel(mockAppChannel2)
-//		//	mockAppChannel2.On("InvokeMethod", mock.MatchedBy(matchContextInterface), mock.Anything).Return(fakeResp3, nil)
-//
-//		//	msgArr = getBulkMessageEntries(4)
-//
-//		//	ps.BulkPublish(context.TODO(), &contribpubsub.BulkPublishRequest{
-//		//		PubsubName: testBulkSubscribePubsub,
-//		//		Topic:      "topic0",
-//		//		Entries:    msgArr,
-//		//	})
-//
-//		//	assert.Len(t, ms.GetBulkResponse().Statuses, 4)
-//		//	require.Error(t, ms.GetBulkResponse().Error)
-//		//	require.NoError(t, assertItemExistsOnce(ms.GetBulkResponse().Statuses, "1111111a", "2222222b", "333333c", "4444444d"))
-//
-//		//	assert.Equal(t, 3, pubsubIns.bulkPubCount["topic0"])
-//		//	assert.True(t, pubsubIns.isBulkSubscribe)
-//		//	reqs = mockAppChannel2.GetInvokedRequest()
-//		//	mockAppChannel2.AssertNumberOfCalls(t, "InvokeMethod", 1)
-//		//	assert.Contains(t, string(reqs["orders"]), eventKey+order1)
-//		//	assert.Contains(t, string(reqs["orders"]), eventKey+order2)
-//		//	assert.Contains(t, string(reqs["orders"]), eventKey+order3)
-//		//	assert.Contains(t, string(reqs["orders"]), eventKey+order4)
-//
-//		//	mockAppChannel3 := new(channelt.MockAppChannel)
-//		//	mockAppChannel3.Init()
-//		//	ps.channels.WithAppChannel(mockAppChannel3)
-//		//	mockAppChannel3.On("InvokeMethod", mock.MatchedBy(matchContextInterface), mock.Anything).Return(nil, errors.New("Mock error"))
-//		//	msgArr = getBulkMessageEntries(1)
-//
-//		//	ps.BulkPublish(context.TODO(), &contribpubsub.BulkPublishRequest{
-//		//		PubsubName: testBulkSubscribePubsub,
-//		//		Topic:      "topic0",
-//		//		Entries:    msgArr,
-//		//	})
-//
-//		//	assert.Len(t, ms.GetBulkResponse().Statuses, 1)
-//		//	require.Error(t, ms.GetBulkResponse().Error)
-//		//	require.NoError(t, assertItemExistsOnce(ms.GetBulkResponse().Statuses, "1111111a"))
-//
-//		//	assert.Equal(t, 4, pubsubIns.bulkPubCount["topic0"])
-//		//	assert.True(t, pubsubIns.isBulkSubscribe)
-//		//	reqs = mockAppChannel3.GetInvokedRequest()
-//		//	mockAppChannel3.AssertNumberOfCalls(t, "InvokeMethod", 1)
-//		//	assert.Contains(t, string(reqs["orders"]), eventKey+order1)
-//		//})
-//
-//		//t.Run("bulk Subscribe events on different paths", func(t *testing.T) {
-//		//	reg := registry.New(registry.NewOptions())
-//		//	ps := New(Options{
-//		//		Registry:       reg.PubSubs(),
-//		//		Meta:           meta.New(meta.Options{}),
-//		//		Resiliency:     resiliency.New(log),
-//		//		ComponentStore: compstore.New(),
-//		//		IsHTTP:         true,
-//		//		Channels:       new(channels.Channels),
-//		//	})
-//		//	ps.registry.RegisterComponent(
-//		//		func(_ logger.Logger) contribpubsub.PubSub {
-//		//			return &mockSubscribePubSub{
-//		//				features: []contribpubsub.Feature{contribpubsub.FeatureBulkPublish},
-//		//			}
-//		//		},
-//		//		"mockPubSub",
-//		//	)
-//
-//		//	subscriptionItems := []runtimePubsub.SubscriptionJSON{
-//		//		{
-//		//			PubsubName: testBulkSubscribePubsub,
-//		//			Topic:      "topic0",
-//		//			Routes: runtimePubsub.RoutesJSON{
-//		//				Rules: []*runtimePubsub.RuleJSON{
-//		//					{
-//		//						Path:  orders1,
-//		//						Match: `event.type == "type1"`,
-//		//					},
-//		//					{
-//		//						Path:  "orders2",
-//		//						Match: `event.type == "type2"`,
-//		//					},
-//		//				},
-//		//			},
-//		//			BulkSubscribe: runtimePubsub.BulkSubscribeJSON{Enabled: true},
-//		//		},
-//		//	}
-//		//	sub, _ := json.Marshal(subscriptionItems)
-//		//	fakeResp := invokev1.NewInvokeMethodResponse(200, "OK", nil).
-//		//		WithRawDataBytes(sub).
-//		//		WithContentType("application/json")
-//		//	defer fakeResp.Close()
-//
-//		//	mockAppChannel := new(channelt.MockAppChannel)
-//		//	mockAppChannel.Init()
-//		//	ps.channels.WithAppChannel(mockAppChannel)
-//		//	mockAppChannel.On("InvokeMethod", mock.MatchedBy(matchContextInterface), matchDaprRequestMethod("dapr/subscribe")).Return(fakeResp, nil)
-//		//	mockAppChannel.On("InvokeMethod", mock.MatchedBy(matchContextInterface), mock.Anything).Return(fakeResp, nil)
-//
-//		//	require.NoError(t, ps.Init(context.TODO(), pubsubComponent))
-//		//	require.NoError(t, ps.StartSubscriptions(context.TODO()))
-//
-//		//	msgArr := getBulkMessageEntries(2)
-//
-//		//	_, err := ps.BulkPublish(context.TODO(), &contribpubsub.BulkPublishRequest{
-//		//		PubsubName: testBulkSubscribePubsub,
-//		//		Topic:      "topic0",
-//		//		Entries:    msgArr,
-//		//	})
-//		//	require.NoError(t, err)
-//
-//		//	pubSub, ok := ps.compStore.GetPubSub(testBulkSubscribePubsub)
-//		//	require.True(t, ok)
-//		//	pubsubIns := pubSub.Component.(*mockSubscribePubSub)
-//		//	assert.Equal(t, 1, pubsubIns.bulkPubCount["topic0"])
-//		//	assert.True(t, pubsubIns.isBulkSubscribe)
-//		//	reqs := mockAppChannel.GetInvokedRequest()
-//		//	mockAppChannel.AssertNumberOfCalls(t, "InvokeMethod", 3)
-//		//	assert.Contains(t, string(reqs["orders1"]), eventKey+order1)
-//		//	assert.NotContains(t, string(reqs["orders1"]), eventKey+order2)
-//		//	assert.Contains(t, string(reqs["orders2"]), eventKey+order2)
-//		//	assert.NotContains(t, string(reqs["orders2"]), eventKey+order1)
-//		//})
-//
-//		//t.Run("verify Responses when bulk Subscribe events on different paths", func(t *testing.T) {
-//		//	reg := registry.New(registry.NewOptions())
-//		//	ps := New(Options{
-//		//		Registry:       reg.PubSubs(),
-//		//		Meta:           meta.New(meta.Options{}),
-//		//		Resiliency:     resiliency.New(log),
-//		//		ComponentStore: compstore.New(),
-//		//		IsHTTP:         true,
-//		//		Channels:       new(channels.Channels),
-//		//	})
-//		//	ps.registry.RegisterComponent(
-//		//		func(_ logger.Logger) contribpubsub.PubSub {
-//		//			return &mockSubscribePubSub{
-//		//				features: []contribpubsub.Feature{contribpubsub.FeatureBulkPublish},
-//		//			}
-//		//		},
-//		//		"mockPubSub",
-//		//	)
-//
-//		//	subscriptionItems := []runtimePubsub.SubscriptionJSON{
-//		//		{
-//		//			PubsubName: testBulkSubscribePubsub,
-//		//			Topic:      "topic0",
-//		//			Routes: runtimePubsub.RoutesJSON{
-//		//				Rules: []*runtimePubsub.RuleJSON{
-//		//					{
-//		//						Path:  orders1,
-//		//						Match: `event.type == "type1"`,
-//		//					},
-//		//					{
-//		//						Path:  "orders2",
-//		//						Match: `event.type == "type2"`,
-//		//					},
-//		//				},
-//		//			},
-//		//			BulkSubscribe: runtimePubsub.BulkSubscribeJSON{Enabled: true},
-//		//		},
-//		//	}
-//		//	sub, _ := json.Marshal(subscriptionItems)
-//		//	fakeResp := invokev1.NewInvokeMethodResponse(200, "OK", nil).
-//		//		WithRawDataBytes(sub).
-//		//		WithContentType("application/json")
-//		//	defer fakeResp.Close()
-//
-//		//	mockAppChannel := new(channelt.MockAppChannel)
-//		//	mockAppChannel.Init()
-//		//	ps.channels.WithAppChannel(mockAppChannel)
-//		//	mockAppChannel.On("InvokeMethod", mock.MatchedBy(matchContextInterface), matchDaprRequestMethod("dapr/subscribe")).Return(fakeResp, nil)
-//
-//		//	require.NoError(t, ps.Init(context.TODO(), pubsubComponent))
-//		//	require.NoError(t, ps.StartSubscriptions(context.TODO()))
-//
-//		//	msgArr := getBulkMessageEntries(10)
-//		//	responseItemsOrders1 := contribpubsub.AppBulkResponse{
-//		//		AppResponses: []contribpubsub.AppBulkResponseEntry{
-//		//			{EntryId: "1111111a", Status: "SUCCESS"},
-//		//			{EntryId: "333333c", Status: "RETRY"},
-//		//			{EntryId: "5555555e", Status: "DROP"},
-//		//			{EntryId: "7777777g", Status: "RETRY"},
-//		//			{EntryId: "8888888h", Status: "SUCCESS"},
-//		//			{EntryId: "9999999i", Status: "SUCCESS"},
-//		//		},
-//		//	}
-//
-//		//	resp1, _ := json.Marshal(responseItemsOrders1)
-//		//	respInvoke1 := invokev1.NewInvokeMethodResponse(200, "OK", nil).
-//		//		WithRawDataBytes(resp1).
-//		//		WithContentType("application/json")
-//		//	defer respInvoke1.Close()
-//
-//		//	responseItemsOrders2 := contribpubsub.AppBulkResponse{
-//		//		AppResponses: []contribpubsub.AppBulkResponseEntry{
-//		//			{EntryId: "2222222b", Status: "SUCCESS"},
-//		//			{EntryId: "4444444d", Status: "DROP"},
-//		//			{EntryId: "66666666f", Status: "DROP"},
-//		//			{EntryId: "10101010j", Status: "SUCCESS"},
-//		//		},
-//		//	}
-//
-//		//	resp2, _ := json.Marshal(responseItemsOrders2)
-//		//	respInvoke2 := invokev1.NewInvokeMethodResponse(200, "OK", nil).
-//		//		WithRawDataBytes(resp2).
-//		//		WithContentType("application/json")
-//		//	defer respInvoke2.Close()
-//
-//		//	mockAppChannel.On("InvokeMethod", mock.MatchedBy(matchContextInterface), matchDaprRequestMethod("orders1")).Return(respInvoke1, nil)
-//		//	mockAppChannel.On("InvokeMethod", mock.MatchedBy(matchContextInterface), matchDaprRequestMethod("orders2")).Return(respInvoke2, nil)
-//
-//		//	_, err := ps.BulkPublish(context.TODO(), &contribpubsub.BulkPublishRequest{
-//		//		PubsubName: testBulkSubscribePubsub,
-//		//		Topic:      "topic0",
-//		//		Entries:    msgArr,
-//		//	})
-//		//	require.NoError(t, err)
-//
-//		//	pubSub, ok := ps.compStore.GetPubSub(testBulkSubscribePubsub)
-//		//	require.True(t, ok)
-//		//	pubsubIns := pubSub.Component.(*mockSubscribePubSub)
-//		//	assert.Equal(t, 1, pubsubIns.bulkPubCount["topic0"])
-//		//	assert.True(t, pubsubIns.isBulkSubscribe)
-//		//	reqs := mockAppChannel.GetInvokedRequest()
-//		//	mockAppChannel.AssertNumberOfCalls(t, "InvokeMethod", 3)
-//		//	assert.True(t, verifyIfEventContainsStrings(reqs["orders1"], eventKey+order1,
-//		//		eventKey+order3, eventKey+order5, eventKey+order7, eventKey+order8, eventKey+order9))
-//		//	assert.True(t, verifyIfEventNotContainsStrings(reqs["orders1"], eventKey+order2,
-//		//		eventKey+order4, eventKey+order6, eventKey+order10))
-//		//	assert.True(t, verifyIfEventContainsStrings(reqs["orders2"], eventKey+order2,
-//		//		eventKey+order4, eventKey+order6, eventKey+order10))
-//		//	assert.True(t, verifyIfEventNotContainsStrings(reqs["orders2"], eventKey+order1,
-//		//		eventKey+order3, eventKey+order5, eventKey+order7, eventKey+order8, eventKey+order9))
-//
-//		//	expectedResponse := BulkResponseExpectation{
-//		//		Responses: []BulkResponseEntryExpectation{
-//		//			{EntryId: "1111111a", IsError: false},
-//		//			{EntryId: "2222222b", IsError: false},
-//		//			{EntryId: "333333c", IsError: true},
-//		//			{EntryId: "4444444d", IsError: false},
-//		//			{EntryId: "5555555e", IsError: false},
-//		//			{EntryId: "66666666f", IsError: false},
-//		//			{EntryId: "7777777g", IsError: true},
-//		//			{EntryId: "8888888h", IsError: false},
-//		//			{EntryId: "9999999i", IsError: false},
-//		//			{EntryId: "10101010j", IsError: false},
-//		//		},
-//		//	}
-//
-//		//	assert.True(t, verifyBulkSubscribeResponses(expectedResponse, pubsubIns.bulkReponse.Statuses))
-//		//})
-//
-//		//t.Run("verify Responses when entryId supplied blank while sending messages", func(t *testing.T) {
-//		//	reg := registry.New(registry.NewOptions())
-//		//	ps := New(Options{
-//		//		Registry:       reg.PubSubs(),
-//		//		Meta:           meta.New(meta.Options{}),
-//		//		Resiliency:     resiliency.New(log),
-//		//		ComponentStore: compstore.New(),
-//		//		IsHTTP:         true,
-//		//		Channels:       new(channels.Channels),
-//		//	})
-//		//	ps.registry.RegisterComponent(
-//		//		func(_ logger.Logger) contribpubsub.PubSub {
-//		//			return &mockSubscribePubSub{
-//		//				features: []contribpubsub.Feature{contribpubsub.FeatureBulkPublish},
-//		//			}
-//		//		},
-//		//		"mockPubSub",
-//		//	)
-//
-//		//	subscriptionItems := []runtimePubsub.SubscriptionJSON{
-//		//		{
-//		//			PubsubName:    testBulkSubscribePubsub,
-//		//			Topic:         "topic0",
-//		//			Route:         "orders",
-//		//			BulkSubscribe: runtimePubsub.BulkSubscribeJSON{Enabled: true},
-//		//		},
-//		//	}
-//		//	sub, _ := json.Marshal(subscriptionItems)
-//		//	fakeResp := invokev1.NewInvokeMethodResponse(200, "OK", nil).
-//		//		WithRawDataBytes(sub).
-//		//		WithContentType("application/json")
-//		//	defer fakeResp.Close()
-//
-//		//	mockAppChannel := new(channelt.MockAppChannel)
-//		//	mockAppChannel.Init()
-//		//	ps.channels.WithAppChannel(mockAppChannel)
-//		//	mockAppChannel.On("InvokeMethod", mock.MatchedBy(matchContextInterface), matchDaprRequestMethod("dapr/subscribe")).Return(fakeResp, nil)
-//
-//		//	require.NoError(t, ps.Init(context.TODO(), pubsubComponent))
-//		//	require.NoError(t, ps.StartSubscriptions(context.TODO()))
-//
-//		//	msgArr := getBulkMessageEntries(4)
-//		//	msgArr[0].EntryId = ""
-//		//	msgArr[2].EntryId = ""
-//
-//		//	responseItemsOrders1 := contribpubsub.AppBulkResponse{
-//		//		AppResponses: []contribpubsub.AppBulkResponseEntry{
-//		//			{EntryId: "2222222b", Status: "SUCCESS"},
-//		//			{EntryId: "4444444d", Status: "SUCCESS"},
-//		//		},
-//		//	}
-//
-//		//	resp1, _ := json.Marshal(responseItemsOrders1)
-//		//	respInvoke1 := invokev1.NewInvokeMethodResponse(200, "OK", nil).
-//		//		WithRawDataBytes(resp1).
-//		//		WithContentType("application/json")
-//		//	defer respInvoke1.Close()
-//
-//		//	mockAppChannel.On("InvokeMethod", mock.MatchedBy(matchContextInterface), matchDaprRequestMethod("orders")).Return(respInvoke1, nil)
-//
-//		//	_, err := ps.BulkPublish(context.TODO(), &contribpubsub.BulkPublishRequest{
-//		//		PubsubName: testBulkSubscribePubsub,
-//		//		Topic:      "topic0",
-//		//		Entries:    msgArr,
-//		//	})
-//		//	require.NoError(t, err)
-//
-//		//	pubSub, ok := ps.compStore.GetPubSub(testBulkSubscribePubsub)
-//		//	require.True(t, ok)
-//		//	pubsubIns := pubSub.Component.(*mockSubscribePubSub)
-//		//	assert.Equal(t, 1, pubsubIns.bulkPubCount["topic0"])
-//		//	assert.True(t, pubsubIns.isBulkSubscribe)
-//		//	reqs := mockAppChannel.GetInvokedRequest()
-//		//	mockAppChannel.AssertNumberOfCalls(t, "InvokeMethod", 2)
-//		//	assert.True(t, verifyIfEventContainsStrings(reqs["orders"], eventKey+order2,
-//		//		eventKey+order4))
-//		//	assert.True(t, verifyIfEventNotContainsStrings(reqs["orders"], eventKey+order1,
-//		//		eventKey+order3))
-//
-//		//	expectedResponse := BulkResponseExpectation{
-//		//		Responses: []BulkResponseEntryExpectation{
-//		//			{EntryId: "", IsError: true},
-//		//			{EntryId: "2222222b", IsError: false},
-//		//			{EntryId: "", IsError: true},
-//		//			{EntryId: "4444444d", IsError: false},
-//		//		},
-//		//	}
-//
-//		//	assert.True(t, verifyBulkSubscribeResponses(expectedResponse, pubsubIns.bulkReponse.Statuses))
-//		//})
-//
-//		//t.Run("verify bulk Subscribe Responses when App sends back out of order entryIds", func(t *testing.T) {
-//		//	reg := registry.New(registry.NewOptions())
-//		//	ps := New(Options{
-//		//		Registry:       reg.PubSubs(),
-//		//		Meta:           meta.New(meta.Options{}),
-//		//		Resiliency:     resiliency.New(log),
-//		//		ComponentStore: compstore.New(),
-//		//		IsHTTP:         true,
-//		//		Channels:       new(channels.Channels),
-//		//	})
-//		//	ps.registry.RegisterComponent(
-//		//		func(_ logger.Logger) contribpubsub.PubSub {
-//		//			return &mockSubscribePubSub{
-//		//				features: []contribpubsub.Feature{contribpubsub.FeatureBulkPublish},
-//		//			}
-//		//		},
-//		//		"mockPubSub",
-//		//	)
-//
-//		//	subscriptionItems := []runtimePubsub.SubscriptionJSON{
-//		//		{
-//		//			PubsubName:    testBulkSubscribePubsub,
-//		//			Topic:         "topic0",
-//		//			Route:         "orders",
-//		//			BulkSubscribe: runtimePubsub.BulkSubscribeJSON{Enabled: true},
-//		//		},
-//		//	}
-//		//	sub, _ := json.Marshal(subscriptionItems)
-//		//	fakeResp := invokev1.NewInvokeMethodResponse(200, "OK", nil).
-//		//		WithRawDataBytes(sub).
-//		//		WithContentType("application/json")
-//		//	defer fakeResp.Close()
-//
-//		//	mockAppChannel := new(channelt.MockAppChannel)
-//		//	mockAppChannel.Init()
-//		//	ps.channels.WithAppChannel(mockAppChannel)
-//		//	mockAppChannel.On("InvokeMethod", mock.MatchedBy(matchContextInterface), matchDaprRequestMethod("dapr/subscribe")).Return(fakeResp, nil)
-//
-//		//	require.NoError(t, ps.Init(context.TODO(), pubsubComponent))
-//		//	require.NoError(t, ps.StartSubscriptions(context.TODO()))
-//
-//		//	msgArr := getBulkMessageEntries(5)
-//
-//		//	responseItemsOrders1 := contribpubsub.AppBulkResponse{
-//		//		AppResponses: []contribpubsub.AppBulkResponseEntry{
-//		//			{EntryId: "2222222b", Status: "RETRY"},
-//		//			{EntryId: "333333c", Status: "SUCCESS"},
-//		//			{EntryId: "5555555e", Status: "RETRY"},
-//		//			{EntryId: "1111111a", Status: "SUCCESS"},
-//		//			{EntryId: "4444444d", Status: "SUCCESS"},
-//		//		},
-//		//	}
-//
-//		//	resp1, _ := json.Marshal(responseItemsOrders1)
-//		//	respInvoke1 := invokev1.NewInvokeMethodResponse(200, "OK", nil).
-//		//		WithRawDataBytes(resp1).
-//		//		WithContentType("application/json")
-//		//	defer respInvoke1.Close()
-//
-//		//	mockAppChannel.On(
-//		//		"InvokeMethod",
-//		//		mock.MatchedBy(matchContextInterface),
-//		//		matchDaprRequestMethod("orders"),
-//		//	).Return(respInvoke1, nil)
-//
-//		//	_, err := ps.BulkPublish(context.TODO(), &contribpubsub.BulkPublishRequest{
-//		//		PubsubName: testBulkSubscribePubsub,
-//		//		Topic:      "topic0",
-//		//		Entries:    msgArr,
-//		//	})
-//		//	require.NoError(t, err)
-//
-//		//	pubSub, ok := ps.compStore.GetPubSub(testBulkSubscribePubsub)
-//		//	require.True(t, ok)
-//		//	pubsubIns := pubSub.Component.(*mockSubscribePubSub)
-//		//	assert.Equal(t, 1, pubsubIns.bulkPubCount["topic0"])
-//		//	assert.True(t, pubsubIns.isBulkSubscribe)
-//		//	reqs := mockAppChannel.GetInvokedRequest()
-//		//	mockAppChannel.AssertNumberOfCalls(t, "InvokeMethod", 2)
-//		//	assert.True(t, verifyIfEventContainsStrings(reqs["orders"], eventKey+order1,
-//		//		eventKey+order2, eventKey+order3, eventKey+order4, eventKey+order5))
-//
-//		//	expectedResponse := BulkResponseExpectation{
-//		//		Responses: []BulkResponseEntryExpectation{
-//		//			{EntryId: "1111111a", IsError: false},
-//		//			{EntryId: "2222222b", IsError: true},
-//		//			{EntryId: "333333c", IsError: false},
-//		//			{EntryId: "4444444d", IsError: false},
-//		//			{EntryId: "5555555e", IsError: true},
-//		//		},
-//		//	}
-//
-//		//	assert.True(t, verifyBulkSubscribeResponses(expectedResponse, pubsubIns.bulkReponse.Statuses))
-//		//})
-//
-//		//t.Run("verify bulk Subscribe Responses when App sends back wrong entryIds", func(t *testing.T) {
-//		//	reg := registry.New(registry.NewOptions())
-//		//	ps := New(Options{
-//		//		Registry:       reg.PubSubs(),
-//		//		Meta:           meta.New(meta.Options{}),
-//		//		Resiliency:     resiliency.New(log),
-//		//		ComponentStore: compstore.New(),
-//		//		IsHTTP:         true,
-//		//		Channels:       new(channels.Channels),
-//		//	})
-//		//	ps.registry.RegisterComponent(
-//		//		func(_ logger.Logger) contribpubsub.PubSub {
-//		//			return &mockSubscribePubSub{
-//		//				features: []contribpubsub.Feature{contribpubsub.FeatureBulkPublish},
-//		//			}
-//		//		},
-//		//		"mockPubSub",
-//		//	)
-//
-//		//	subscriptionItems := []runtimePubsub.SubscriptionJSON{
-//		//		{
-//		//			PubsubName:    testBulkSubscribePubsub,
-//		//			Topic:         "topic0",
-//		//			Route:         "orders",
-//		//			BulkSubscribe: runtimePubsub.BulkSubscribeJSON{Enabled: true},
-//		//		},
-//		//	}
-//		//	sub, _ := json.Marshal(subscriptionItems)
-//		//	fakeResp := invokev1.NewInvokeMethodResponse(200, "OK", nil).
-//		//		WithRawDataBytes(sub).
-//		//		WithContentType("application/json")
-//		//	defer fakeResp.Close()
-//
-//		//	mockAppChannel := new(channelt.MockAppChannel)
-//		//	mockAppChannel.Init()
-//		//	ps.channels.WithAppChannel(mockAppChannel)
-//		//	mockAppChannel.On("InvokeMethod", mock.MatchedBy(matchContextInterface), matchDaprRequestMethod("dapr/subscribe")).Return(fakeResp, nil)
-//
-//		//	require.NoError(t, ps.Init(context.TODO(), pubsubComponent))
-//		//	require.NoError(t, ps.StartSubscriptions(context.TODO()))
-//
-//		//	msgArr := getBulkMessageEntries(5)
-//
-//		//	responseItemsOrders1 := contribpubsub.AppBulkResponse{
-//		//		AppResponses: []contribpubsub.AppBulkResponseEntry{
-//		//			{EntryId: "wrongEntryId1", Status: "SUCCESS"},
-//		//			{EntryId: "2222222b", Status: "RETRY"},
-//		//			{EntryId: "333333c", Status: "SUCCESS"},
-//		//			{EntryId: "wrongEntryId2", Status: "SUCCESS"},
-//		//			{EntryId: "5555555e", Status: "RETRY"},
-//		//		},
-//		//	}
-//
-//		//	resp1, _ := json.Marshal(responseItemsOrders1)
-//		//	respInvoke1 := invokev1.NewInvokeMethodResponse(200, "OK", nil).
-//		//		WithRawDataBytes(resp1).
-//		//		WithContentType("application/json")
-//		//	defer respInvoke1.Close()
-//
-//		//	mockAppChannel.On("InvokeMethod", mock.MatchedBy(matchContextInterface),
-//		//		matchDaprRequestMethod("orders"),
-//		//	).Return(respInvoke1, nil)
-//
-//		//	_, err := ps.BulkPublish(context.TODO(), &contribpubsub.BulkPublishRequest{
-//		//		PubsubName: testBulkSubscribePubsub,
-//		//		Topic:      "topic0",
-//		//		Entries:    msgArr,
-//		//	})
-//		//	require.NoError(t, err)
-//
-//		//	pubSub, ok := ps.compStore.GetPubSub(testBulkSubscribePubsub)
-//		//	require.True(t, ok)
-//		//	pubsubIns := pubSub.Component.(*mockSubscribePubSub)
-//		//	assert.Equal(t, 1, pubsubIns.bulkPubCount["topic0"])
-//		//	assert.True(t, pubsubIns.isBulkSubscribe)
-//		//	reqs := mockAppChannel.GetInvokedRequest()
-//		//	mockAppChannel.AssertNumberOfCalls(t, "InvokeMethod", 2)
-//		//	assert.True(t, verifyIfEventContainsStrings(reqs["orders"], eventKey+order1,
-//		//		eventKey+order2, eventKey+order3, eventKey+order4, eventKey+order5))
-//
-//		//	expectedResponse := BulkResponseExpectation{
-//		//		Responses: []BulkResponseEntryExpectation{
-//		//			{EntryId: "1111111a", IsError: true},
-//		//			{EntryId: "2222222b", IsError: true},
-//		//			{EntryId: "333333c", IsError: false},
-//		//			{EntryId: "4444444d", IsError: true},
-//		//			{EntryId: "5555555e", IsError: true},
-//		//		},
-//		//	}
-//
-//		//	assert.True(t, verifyBulkSubscribeResponses(expectedResponse, pubsubIns.bulkReponse.Statuses))
-//		//})
-//	}
-//
+func TestBulkSubscribe(t *testing.T) {
+	const testBulkSubscribePubsub = "bulkSubscribePubSub"
+
+	t.Run("bulk Subscribe Message for raw payload", func(t *testing.T) {
+		comp := &mockSubscribePubSub{}
+		require.NoError(t, comp.Init(context.Background(), contribpubsub.Metadata{}))
+
+		ps, err := New(Options{
+			Resiliency: resiliency.New(log),
+			IsHTTP:     true,
+			Channels:   new(channels.Channels),
+			PubSub:     &runtimePubsub.PubsubItem{Component: comp},
+			AppID:      TestRuntimeConfigID,
+			Namespace:  TestRuntimeConfigID,
+			PubSubName: testBulkSubscribePubsub,
+			Topic:      "topic0",
+			Route: runtimePubsub.Subscription{
+				Rules:    []*runtimePubsub.Rule{{Path: "orders"}},
+				Metadata: daprt.GetFakeProperties(),
+				BulkSubscribe: &runtimePubsub.BulkSubscribe{
+					Enabled: true,
+				},
+			},
+		})
+		require.NoError(t, err)
+
+		subscriptionItems := []runtimePubsub.SubscriptionJSON{
+			{
+				PubsubName: testBulkSubscribePubsub, Topic: "topic0", Route: "orders",
+				BulkSubscribe: runtimePubsub.BulkSubscribeJSON{Enabled: true},
+				Metadata:      map[string]string{"rawPayload": "true"},
+			},
+		}
+		sub, _ := json.Marshal(subscriptionItems)
+		fakeResp := invokev1.NewInvokeMethodResponse(200, "OK", nil).
+			WithRawDataBytes(sub).
+			WithContentType("application/json")
+		defer fakeResp.Close()
+
+		mockAppChannel := new(channelt.MockAppChannel)
+		mockAppChannel.Init()
+		ps.channels.WithAppChannel(mockAppChannel)
+		mockAppChannel.On("InvokeMethod", mock.MatchedBy(matchContextInterface), matchDaprRequestMethod("dapr/subscribe")).Return(fakeResp, nil)
+		mockAppChannel.On("InvokeMethod", mock.MatchedBy(matchContextInterface), mock.Anything).Return(fakeResp, nil)
+
+		err = comp.Publish(context.TODO(), &contribpubsub.PublishRequest{
+			PubsubName: testBulkSubscribePubsub,
+			Topic:      "topic0",
+			Data:       []byte(`{"orderId":"1"}`),
+		})
+		require.NoError(t, err)
+		pubsubIns := comp
+		fmt.Printf("<<<%#+v\n", pubsubIns)
+		assert.Equal(t, 1, pubsubIns.bulkPubCount["topic0"])
+		assert.True(t, pubsubIns.isBulkSubscribe)
+		reqs := mockAppChannel.GetInvokedRequest()
+		mockAppChannel.AssertNumberOfCalls(t, "InvokeMethod", 2)
+		assert.Contains(t, string(reqs["orders"]), `event":"eyJvcmRlcklkIjoiMSJ9"`)
+	})
+
+	//t.Run("bulk Subscribe Message for cloud event", func(t *testing.T) {
+	//	comp := &mockSubscribePubSub{}
+	//	require.NoError(t, comp.Init(context.Background(), contribpubsub.Metadata{}))
+
+	//	ps, err := New(Options{
+	//		PubSub:     &runtimePubsub.PubsubItem{Component: comp},
+	//		Resiliency: resiliency.New(log),
+	//		IsHTTP:     true,
+	//		Channels:   new(channels.Channels),
+	//	})
+	//	require.NoError(t, err)
+
+	//	// TODO: @joshvanl
+	//	//ps.registry.RegisterComponent(
+	//	//	func(_ logger.Logger) contribpubsub.PubSub {
+	//	//		return &mockSubscribePubSub{}
+	//	//	},
+	//	//	"mockPubSub",
+	//	//)
+	//	subscriptionItems := []runtimePubsub.SubscriptionJSON{
+	//		{
+	//			PubsubName: testBulkSubscribePubsub, Topic: "topic0", Route: "orders",
+	//			BulkSubscribe: runtimePubsub.BulkSubscribeJSON{Enabled: true},
+	//		},
+	//	}
+	//	sub, _ := json.Marshal(subscriptionItems)
+	//	fakeResp := invokev1.NewInvokeMethodResponse(200, "OK", nil).
+	//		WithRawDataBytes(sub).
+	//		WithContentType("application/json")
+	//	defer fakeResp.Close()
+
+	//	mockAppChannel := new(channelt.MockAppChannel)
+	//	mockAppChannel.Init()
+	//	ps.channels.WithAppChannel(mockAppChannel)
+	//	mockAppChannel.On("InvokeMethod", mock.MatchedBy(matchContextInterface), matchDaprRequestMethod("dapr/subscribe")).Return(fakeResp, nil)
+	//	mockAppChannel.On("InvokeMethod", mock.MatchedBy(matchContextInterface), mock.Anything).Return(fakeResp, nil)
+
+	//	order := `{"data":{"orderId":1},"datacontenttype":"application/json","id":"8b540b03-04b5-4871-96ae-c6bde0d5e16d","pubsubname":"orderpubsub","source":"checkout","specversion":"1.0","topic":"orders","traceid":"00-e61de949bb4de415a7af49fc86675648-ffb64972bb907224-01","traceparent":"00-e61de949bb4de415a7af49fc86675648-ffb64972bb907224-01","tracestate":"","type":"com.dapr.event.sent"}`
+
+	//	err = comp.Publish(context.TODO(), &contribpubsub.PublishRequest{
+	//		PubsubName: testBulkSubscribePubsub,
+	//		Topic:      "topic0",
+	//		Data:       []byte(order),
+	//	})
+	//	require.NoError(t, err)
+	//	pubsubIns := comp
+	//	assert.Equal(t, 1, pubsubIns.bulkPubCount["topic0"])
+	//	assert.True(t, pubsubIns.isBulkSubscribe)
+	//	reqs := mockAppChannel.GetInvokedRequest()
+	//	mockAppChannel.AssertNumberOfCalls(t, "InvokeMethod", 2)
+	//	assert.Contains(t, string(reqs["orders"]), eventKey+order)
+	//})
+
+	//		//t.Run("bulk Subscribe multiple Messages at once for cloud events", func(t *testing.T) {
+	//		//	ps := New(Options{
+	//		//		Registry:       registry.New(registry.NewOptions()).PubSubs(),
+	//		//		Meta:           meta.New(meta.Options{}),
+	//		//		Resiliency:     resiliency.New(log),
+	//		//		ComponentStore: compstore.New(),
+	//		//		IsHTTP:         true,
+	//		//		Channels:       new(channels.Channels),
+	//		//	})
+	//		//	ms := &mockSubscribePubSub{
+	//		//		features: []contribpubsub.Feature{contribpubsub.FeatureBulkPublish},
+	//		//	}
+	//		//	ps.registry.RegisterComponent(
+	//		//		func(_ logger.Logger) contribpubsub.PubSub {
+	//		//			return ms
+	//		//		},
+	//		//		"mockPubSub",
+	//		//	)
+	//
+	//		//subscriptionItems := []runtimePubsub.SubscriptionJSON{
+	//		//	{
+	//		//		PubsubName: testBulkSubscribePubsub, Topic: "topic0", Route: "orders",
+	//		//		BulkSubscribe: runtimePubsub.BulkSubscribeJSON{Enabled: true},
+	//		//	},
+	//		//}
+	//		//	sub, _ := json.Marshal(subscriptionItems)
+	//		//	fakeResp := invokev1.NewInvokeMethodResponse(200, "OK", nil).
+	//		//		WithRawDataBytes(sub).
+	//		//		WithContentType("application/json")
+	//		//	defer fakeResp.Close()
+	//
+	//		//	mockAppChannel := new(channelt.MockAppChannel)
+	//		//	mockAppChannel.Init()
+	//		//	ps.channels.WithAppChannel(mockAppChannel)
+	//		//	mockAppChannel.On("InvokeMethod", mock.MatchedBy(matchContextInterface), matchDaprRequestMethod("dapr/subscribe")).Return(fakeResp, nil)
+	//		//	fakeResp1 := invokev1.NewInvokeMethodResponse(200, "OK", nil)
+	//		//	defer fakeResp1.Close()
+	//		//	mockAppChannel.On("InvokeMethod", mock.MatchedBy(matchContextInterface), mock.Anything).Return(fakeResp1, nil)
+	//
+	//		//	require.NoError(t, ps.Init(context.TODO(), pubsubComponent))
+	//		//	require.NoError(t, ps.StartSubscriptions(context.TODO()))
+	//
+	//		//	msgArr := getBulkMessageEntries(2)
+	//
+	//		//	ps.BulkPublish(context.TODO(), &contribpubsub.BulkPublishRequest{
+	//		//		PubsubName: testBulkSubscribePubsub,
+	//		//		Topic:      "topic0",
+	//		//		Entries:    msgArr,
+	//		//	})
+	//
+	//		//	assert.Len(t, ms.GetBulkResponse().Statuses, 2)
+	//		//	require.Error(t, ms.GetBulkResponse().Error)
+	//		//	require.NoError(t, assertItemExistsOnce(ms.GetBulkResponse().Statuses, "1111111a", "2222222b"))
+	//
+	//		//	pubSub, ok := ps.compStore.GetPubSub(testBulkSubscribePubsub)
+	//		//	require.True(t, ok)
+	//		//	pubsubIns := pubSub.Component.(*mockSubscribePubSub)
+	//		//	assert.Equal(t, 1, pubsubIns.bulkPubCount["topic0"])
+	//		//	assert.True(t, pubsubIns.isBulkSubscribe)
+	//		//	reqs := mockAppChannel.GetInvokedRequest()
+	//		//	mockAppChannel.AssertNumberOfCalls(t, "InvokeMethod", 2)
+	//		//	assert.Contains(t, string(reqs["orders"]), eventKey+order1)
+	//		//	assert.Contains(t, string(reqs["orders"]), eventKey+order2)
+	//
+	//		//	fakeResp2 := invokev1.NewInvokeMethodResponse(404, "OK", nil)
+	//		//	defer fakeResp2.Close()
+	//		//	mockAppChannel1 := new(channelt.MockAppChannel)
+	//		//	mockAppChannel1.Init()
+	//		//	ps.channels.WithAppChannel(mockAppChannel1)
+	//		//	mockAppChannel1.On("InvokeMethod", mock.MatchedBy(matchContextInterface), mock.Anything).Return(fakeResp2, nil)
+	//
+	//		//	msgArr = getBulkMessageEntries(3)
+	//
+	//		//	ps.BulkPublish(context.TODO(), &contribpubsub.BulkPublishRequest{
+	//		//		PubsubName: testBulkSubscribePubsub,
+	//		//		Topic:      "topic0",
+	//		//		Entries:    msgArr,
+	//		//	})
+	//
+	//		//	assert.Len(t, ms.GetBulkResponse().Statuses, 3)
+	//		//	require.NoError(t, ms.GetBulkResponse().Error)
+	//		//	require.NoError(t, assertItemExistsOnce(ms.GetBulkResponse().Statuses, "1111111a", "2222222b", "333333c"))
+	//
+	//		//	assert.Equal(t, 2, pubsubIns.bulkPubCount["topic0"])
+	//		//	assert.True(t, pubsubIns.isBulkSubscribe)
+	//		//	reqs = mockAppChannel1.GetInvokedRequest()
+	//		//	mockAppChannel1.AssertNumberOfCalls(t, "InvokeMethod", 1)
+	//		//	assert.Contains(t, string(reqs["orders"]), eventKey+order1)
+	//		//	assert.Contains(t, string(reqs["orders"]), eventKey+order2)
+	//		//	assert.Contains(t, string(reqs["orders"]), eventKey+order3)
+	//
+	//		//	fakeResp3 := invokev1.NewInvokeMethodResponse(400, "OK", nil)
+	//		//	defer fakeResp3.Close()
+	//		//	mockAppChannel2 := new(channelt.MockAppChannel)
+	//		//	mockAppChannel2.Init()
+	//		//	ps.channels.WithAppChannel(mockAppChannel2)
+	//		//	mockAppChannel2.On("InvokeMethod", mock.MatchedBy(matchContextInterface), mock.Anything).Return(fakeResp3, nil)
+	//
+	//		//	msgArr = getBulkMessageEntries(4)
+	//
+	//		//	ps.BulkPublish(context.TODO(), &contribpubsub.BulkPublishRequest{
+	//		//		PubsubName: testBulkSubscribePubsub,
+	//		//		Topic:      "topic0",
+	//		//		Entries:    msgArr,
+	//		//	})
+	//
+	//		//	assert.Len(t, ms.GetBulkResponse().Statuses, 4)
+	//		//	require.Error(t, ms.GetBulkResponse().Error)
+	//		//	require.NoError(t, assertItemExistsOnce(ms.GetBulkResponse().Statuses, "1111111a", "2222222b", "333333c", "4444444d"))
+	//
+	//		//	assert.Equal(t, 3, pubsubIns.bulkPubCount["topic0"])
+	//		//	assert.True(t, pubsubIns.isBulkSubscribe)
+	//		//	reqs = mockAppChannel2.GetInvokedRequest()
+	//		//	mockAppChannel2.AssertNumberOfCalls(t, "InvokeMethod", 1)
+	//		//	assert.Contains(t, string(reqs["orders"]), eventKey+order1)
+	//		//	assert.Contains(t, string(reqs["orders"]), eventKey+order2)
+	//		//	assert.Contains(t, string(reqs["orders"]), eventKey+order3)
+	//		//	assert.Contains(t, string(reqs["orders"]), eventKey+order4)
+	//
+	//		//	mockAppChannel3 := new(channelt.MockAppChannel)
+	//		//	mockAppChannel3.Init()
+	//		//	ps.channels.WithAppChannel(mockAppChannel3)
+	//		//	mockAppChannel3.On("InvokeMethod", mock.MatchedBy(matchContextInterface), mock.Anything).Return(nil, errors.New("Mock error"))
+	//		//	msgArr = getBulkMessageEntries(1)
+	//
+	//		//	ps.BulkPublish(context.TODO(), &contribpubsub.BulkPublishRequest{
+	//		//		PubsubName: testBulkSubscribePubsub,
+	//		//		Topic:      "topic0",
+	//		//		Entries:    msgArr,
+	//		//	})
+	//
+	//		//	assert.Len(t, ms.GetBulkResponse().Statuses, 1)
+	//		//	require.Error(t, ms.GetBulkResponse().Error)
+	//		//	require.NoError(t, assertItemExistsOnce(ms.GetBulkResponse().Statuses, "1111111a"))
+	//
+	//		//	assert.Equal(t, 4, pubsubIns.bulkPubCount["topic0"])
+	//		//	assert.True(t, pubsubIns.isBulkSubscribe)
+	//		//	reqs = mockAppChannel3.GetInvokedRequest()
+	//		//	mockAppChannel3.AssertNumberOfCalls(t, "InvokeMethod", 1)
+	//		//	assert.Contains(t, string(reqs["orders"]), eventKey+order1)
+	//		//})
+	//
+	//		//t.Run("bulk Subscribe events on different paths", func(t *testing.T) {
+	//		//	reg := registry.New(registry.NewOptions())
+	//		//	ps := New(Options{
+	//		//		Registry:       reg.PubSubs(),
+	//		//		Meta:           meta.New(meta.Options{}),
+	//		//		Resiliency:     resiliency.New(log),
+	//		//		ComponentStore: compstore.New(),
+	//		//		IsHTTP:         true,
+	//		//		Channels:       new(channels.Channels),
+	//		//	})
+	//		//	ps.registry.RegisterComponent(
+	//		//		func(_ logger.Logger) contribpubsub.PubSub {
+	//		//			return &mockSubscribePubSub{
+	//		//				features: []contribpubsub.Feature{contribpubsub.FeatureBulkPublish},
+	//		//			}
+	//		//		},
+	//		//		"mockPubSub",
+	//		//	)
+	//
+	//		//	subscriptionItems := []runtimePubsub.SubscriptionJSON{
+	//		//		{
+	//		//			PubsubName: testBulkSubscribePubsub,
+	//		//			Topic:      "topic0",
+	//		//			Routes: runtimePubsub.RoutesJSON{
+	//		//				Rules: []*runtimePubsub.RuleJSON{
+	//		//					{
+	//		//						Path:  orders1,
+	//		//						Match: `event.type == "type1"`,
+	//		//					},
+	//		//					{
+	//		//						Path:  "orders2",
+	//		//						Match: `event.type == "type2"`,
+	//		//					},
+	//		//				},
+	//		//			},
+	//		//			BulkSubscribe: runtimePubsub.BulkSubscribeJSON{Enabled: true},
+	//		//		},
+	//		//	}
+	//		//	sub, _ := json.Marshal(subscriptionItems)
+	//		//	fakeResp := invokev1.NewInvokeMethodResponse(200, "OK", nil).
+	//		//		WithRawDataBytes(sub).
+	//		//		WithContentType("application/json")
+	//		//	defer fakeResp.Close()
+	//
+	//		//	mockAppChannel := new(channelt.MockAppChannel)
+	//		//	mockAppChannel.Init()
+	//		//	ps.channels.WithAppChannel(mockAppChannel)
+	//		//	mockAppChannel.On("InvokeMethod", mock.MatchedBy(matchContextInterface), matchDaprRequestMethod("dapr/subscribe")).Return(fakeResp, nil)
+	//		//	mockAppChannel.On("InvokeMethod", mock.MatchedBy(matchContextInterface), mock.Anything).Return(fakeResp, nil)
+	//
+	//		//	require.NoError(t, ps.Init(context.TODO(), pubsubComponent))
+	//		//	require.NoError(t, ps.StartSubscriptions(context.TODO()))
+	//
+	//		//	msgArr := getBulkMessageEntries(2)
+	//
+	//		//	_, err := ps.BulkPublish(context.TODO(), &contribpubsub.BulkPublishRequest{
+	//		//		PubsubName: testBulkSubscribePubsub,
+	//		//		Topic:      "topic0",
+	//		//		Entries:    msgArr,
+	//		//	})
+	//		//	require.NoError(t, err)
+	//
+	//		//	pubSub, ok := ps.compStore.GetPubSub(testBulkSubscribePubsub)
+	//		//	require.True(t, ok)
+	//		//	pubsubIns := pubSub.Component.(*mockSubscribePubSub)
+	//		//	assert.Equal(t, 1, pubsubIns.bulkPubCount["topic0"])
+	//		//	assert.True(t, pubsubIns.isBulkSubscribe)
+	//		//	reqs := mockAppChannel.GetInvokedRequest()
+	//		//	mockAppChannel.AssertNumberOfCalls(t, "InvokeMethod", 3)
+	//		//	assert.Contains(t, string(reqs["orders1"]), eventKey+order1)
+	//		//	assert.NotContains(t, string(reqs["orders1"]), eventKey+order2)
+	//		//	assert.Contains(t, string(reqs["orders2"]), eventKey+order2)
+	//		//	assert.NotContains(t, string(reqs["orders2"]), eventKey+order1)
+	//		//})
+	//
+	//		//t.Run("verify Responses when bulk Subscribe events on different paths", func(t *testing.T) {
+	//		//	reg := registry.New(registry.NewOptions())
+	//		//	ps := New(Options{
+	//		//		Registry:       reg.PubSubs(),
+	//		//		Meta:           meta.New(meta.Options{}),
+	//		//		Resiliency:     resiliency.New(log),
+	//		//		ComponentStore: compstore.New(),
+	//		//		IsHTTP:         true,
+	//		//		Channels:       new(channels.Channels),
+	//		//	})
+	//		//	ps.registry.RegisterComponent(
+	//		//		func(_ logger.Logger) contribpubsub.PubSub {
+	//		//			return &mockSubscribePubSub{
+	//		//				features: []contribpubsub.Feature{contribpubsub.FeatureBulkPublish},
+	//		//			}
+	//		//		},
+	//		//		"mockPubSub",
+	//		//	)
+	//
+	//		//	subscriptionItems := []runtimePubsub.SubscriptionJSON{
+	//		//		{
+	//		//			PubsubName: testBulkSubscribePubsub,
+	//		//			Topic:      "topic0",
+	//		//			Routes: runtimePubsub.RoutesJSON{
+	//		//				Rules: []*runtimePubsub.RuleJSON{
+	//		//					{
+	//		//						Path:  orders1,
+	//		//						Match: `event.type == "type1"`,
+	//		//					},
+	//		//					{
+	//		//						Path:  "orders2",
+	//		//						Match: `event.type == "type2"`,
+	//		//					},
+	//		//				},
+	//		//			},
+	//		//			BulkSubscribe: runtimePubsub.BulkSubscribeJSON{Enabled: true},
+	//		//		},
+	//		//	}
+	//		//	sub, _ := json.Marshal(subscriptionItems)
+	//		//	fakeResp := invokev1.NewInvokeMethodResponse(200, "OK", nil).
+	//		//		WithRawDataBytes(sub).
+	//		//		WithContentType("application/json")
+	//		//	defer fakeResp.Close()
+	//
+	//		//	mockAppChannel := new(channelt.MockAppChannel)
+	//		//	mockAppChannel.Init()
+	//		//	ps.channels.WithAppChannel(mockAppChannel)
+	//		//	mockAppChannel.On("InvokeMethod", mock.MatchedBy(matchContextInterface), matchDaprRequestMethod("dapr/subscribe")).Return(fakeResp, nil)
+	//
+	//		//	require.NoError(t, ps.Init(context.TODO(), pubsubComponent))
+	//		//	require.NoError(t, ps.StartSubscriptions(context.TODO()))
+	//
+	//		//	msgArr := getBulkMessageEntries(10)
+	//		//	responseItemsOrders1 := contribpubsub.AppBulkResponse{
+	//		//		AppResponses: []contribpubsub.AppBulkResponseEntry{
+	//		//			{EntryId: "1111111a", Status: "SUCCESS"},
+	//		//			{EntryId: "333333c", Status: "RETRY"},
+	//		//			{EntryId: "5555555e", Status: "DROP"},
+	//		//			{EntryId: "7777777g", Status: "RETRY"},
+	//		//			{EntryId: "8888888h", Status: "SUCCESS"},
+	//		//			{EntryId: "9999999i", Status: "SUCCESS"},
+	//		//		},
+	//		//	}
+	//
+	//		//	resp1, _ := json.Marshal(responseItemsOrders1)
+	//		//	respInvoke1 := invokev1.NewInvokeMethodResponse(200, "OK", nil).
+	//		//		WithRawDataBytes(resp1).
+	//		//		WithContentType("application/json")
+	//		//	defer respInvoke1.Close()
+	//
+	//		//	responseItemsOrders2 := contribpubsub.AppBulkResponse{
+	//		//		AppResponses: []contribpubsub.AppBulkResponseEntry{
+	//		//			{EntryId: "2222222b", Status: "SUCCESS"},
+	//		//			{EntryId: "4444444d", Status: "DROP"},
+	//		//			{EntryId: "66666666f", Status: "DROP"},
+	//		//			{EntryId: "10101010j", Status: "SUCCESS"},
+	//		//		},
+	//		//	}
+	//
+	//		//	resp2, _ := json.Marshal(responseItemsOrders2)
+	//		//	respInvoke2 := invokev1.NewInvokeMethodResponse(200, "OK", nil).
+	//		//		WithRawDataBytes(resp2).
+	//		//		WithContentType("application/json")
+	//		//	defer respInvoke2.Close()
+	//
+	//		//	mockAppChannel.On("InvokeMethod", mock.MatchedBy(matchContextInterface), matchDaprRequestMethod("orders1")).Return(respInvoke1, nil)
+	//		//	mockAppChannel.On("InvokeMethod", mock.MatchedBy(matchContextInterface), matchDaprRequestMethod("orders2")).Return(respInvoke2, nil)
+	//
+	//		//	_, err := ps.BulkPublish(context.TODO(), &contribpubsub.BulkPublishRequest{
+	//		//		PubsubName: testBulkSubscribePubsub,
+	//		//		Topic:      "topic0",
+	//		//		Entries:    msgArr,
+	//		//	})
+	//		//	require.NoError(t, err)
+	//
+	//		//	pubSub, ok := ps.compStore.GetPubSub(testBulkSubscribePubsub)
+	//		//	require.True(t, ok)
+	//		//	pubsubIns := pubSub.Component.(*mockSubscribePubSub)
+	//		//	assert.Equal(t, 1, pubsubIns.bulkPubCount["topic0"])
+	//		//	assert.True(t, pubsubIns.isBulkSubscribe)
+	//		//	reqs := mockAppChannel.GetInvokedRequest()
+	//		//	mockAppChannel.AssertNumberOfCalls(t, "InvokeMethod", 3)
+	//		//	assert.True(t, verifyIfEventContainsStrings(reqs["orders1"], eventKey+order1,
+	//		//		eventKey+order3, eventKey+order5, eventKey+order7, eventKey+order8, eventKey+order9))
+	//		//	assert.True(t, verifyIfEventNotContainsStrings(reqs["orders1"], eventKey+order2,
+	//		//		eventKey+order4, eventKey+order6, eventKey+order10))
+	//		//	assert.True(t, verifyIfEventContainsStrings(reqs["orders2"], eventKey+order2,
+	//		//		eventKey+order4, eventKey+order6, eventKey+order10))
+	//		//	assert.True(t, verifyIfEventNotContainsStrings(reqs["orders2"], eventKey+order1,
+	//		//		eventKey+order3, eventKey+order5, eventKey+order7, eventKey+order8, eventKey+order9))
+	//
+	//		//	expectedResponse := BulkResponseExpectation{
+	//		//		Responses: []BulkResponseEntryExpectation{
+	//		//			{EntryId: "1111111a", IsError: false},
+	//		//			{EntryId: "2222222b", IsError: false},
+	//		//			{EntryId: "333333c", IsError: true},
+	//		//			{EntryId: "4444444d", IsError: false},
+	//		//			{EntryId: "5555555e", IsError: false},
+	//		//			{EntryId: "66666666f", IsError: false},
+	//		//			{EntryId: "7777777g", IsError: true},
+	//		//			{EntryId: "8888888h", IsError: false},
+	//		//			{EntryId: "9999999i", IsError: false},
+	//		//			{EntryId: "10101010j", IsError: false},
+	//		//		},
+	//		//	}
+	//
+	//		//	assert.True(t, verifyBulkSubscribeResponses(expectedResponse, pubsubIns.bulkReponse.Statuses))
+	//		//})
+	//
+	//		//t.Run("verify Responses when entryId supplied blank while sending messages", func(t *testing.T) {
+	//		//	reg := registry.New(registry.NewOptions())
+	//		//	ps := New(Options{
+	//		//		Registry:       reg.PubSubs(),
+	//		//		Meta:           meta.New(meta.Options{}),
+	//		//		Resiliency:     resiliency.New(log),
+	//		//		ComponentStore: compstore.New(),
+	//		//		IsHTTP:         true,
+	//		//		Channels:       new(channels.Channels),
+	//		//	})
+	//		//	ps.registry.RegisterComponent(
+	//		//		func(_ logger.Logger) contribpubsub.PubSub {
+	//		//			return &mockSubscribePubSub{
+	//		//				features: []contribpubsub.Feature{contribpubsub.FeatureBulkPublish},
+	//		//			}
+	//		//		},
+	//		//		"mockPubSub",
+	//		//	)
+	//
+	//		//	subscriptionItems := []runtimePubsub.SubscriptionJSON{
+	//		//		{
+	//		//			PubsubName:    testBulkSubscribePubsub,
+	//		//			Topic:         "topic0",
+	//		//			Route:         "orders",
+	//		//			BulkSubscribe: runtimePubsub.BulkSubscribeJSON{Enabled: true},
+	//		//		},
+	//		//	}
+	//		//	sub, _ := json.Marshal(subscriptionItems)
+	//		//	fakeResp := invokev1.NewInvokeMethodResponse(200, "OK", nil).
+	//		//		WithRawDataBytes(sub).
+	//		//		WithContentType("application/json")
+	//		//	defer fakeResp.Close()
+	//
+	//		//	mockAppChannel := new(channelt.MockAppChannel)
+	//		//	mockAppChannel.Init()
+	//		//	ps.channels.WithAppChannel(mockAppChannel)
+	//		//	mockAppChannel.On("InvokeMethod", mock.MatchedBy(matchContextInterface), matchDaprRequestMethod("dapr/subscribe")).Return(fakeResp, nil)
+	//
+	//		//	require.NoError(t, ps.Init(context.TODO(), pubsubComponent))
+	//		//	require.NoError(t, ps.StartSubscriptions(context.TODO()))
+	//
+	//		//	msgArr := getBulkMessageEntries(4)
+	//		//	msgArr[0].EntryId = ""
+	//		//	msgArr[2].EntryId = ""
+	//
+	//		//	responseItemsOrders1 := contribpubsub.AppBulkResponse{
+	//		//		AppResponses: []contribpubsub.AppBulkResponseEntry{
+	//		//			{EntryId: "2222222b", Status: "SUCCESS"},
+	//		//			{EntryId: "4444444d", Status: "SUCCESS"},
+	//		//		},
+	//		//	}
+	//
+	//		//	resp1, _ := json.Marshal(responseItemsOrders1)
+	//		//	respInvoke1 := invokev1.NewInvokeMethodResponse(200, "OK", nil).
+	//		//		WithRawDataBytes(resp1).
+	//		//		WithContentType("application/json")
+	//		//	defer respInvoke1.Close()
+	//
+	//		//	mockAppChannel.On("InvokeMethod", mock.MatchedBy(matchContextInterface), matchDaprRequestMethod("orders")).Return(respInvoke1, nil)
+	//
+	//		//	_, err := ps.BulkPublish(context.TODO(), &contribpubsub.BulkPublishRequest{
+	//		//		PubsubName: testBulkSubscribePubsub,
+	//		//		Topic:      "topic0",
+	//		//		Entries:    msgArr,
+	//		//	})
+	//		//	require.NoError(t, err)
+	//
+	//		//	pubSub, ok := ps.compStore.GetPubSub(testBulkSubscribePubsub)
+	//		//	require.True(t, ok)
+	//		//	pubsubIns := pubSub.Component.(*mockSubscribePubSub)
+	//		//	assert.Equal(t, 1, pubsubIns.bulkPubCount["topic0"])
+	//		//	assert.True(t, pubsubIns.isBulkSubscribe)
+	//		//	reqs := mockAppChannel.GetInvokedRequest()
+	//		//	mockAppChannel.AssertNumberOfCalls(t, "InvokeMethod", 2)
+	//		//	assert.True(t, verifyIfEventContainsStrings(reqs["orders"], eventKey+order2,
+	//		//		eventKey+order4))
+	//		//	assert.True(t, verifyIfEventNotContainsStrings(reqs["orders"], eventKey+order1,
+	//		//		eventKey+order3))
+	//
+	//		//	expectedResponse := BulkResponseExpectation{
+	//		//		Responses: []BulkResponseEntryExpectation{
+	//		//			{EntryId: "", IsError: true},
+	//		//			{EntryId: "2222222b", IsError: false},
+	//		//			{EntryId: "", IsError: true},
+	//		//			{EntryId: "4444444d", IsError: false},
+	//		//		},
+	//		//	}
+	//
+	//		//	assert.True(t, verifyBulkSubscribeResponses(expectedResponse, pubsubIns.bulkReponse.Statuses))
+	//		//})
+	//
+	//		//t.Run("verify bulk Subscribe Responses when App sends back out of order entryIds", func(t *testing.T) {
+	//		//	reg := registry.New(registry.NewOptions())
+	//		//	ps := New(Options{
+	//		//		Registry:       reg.PubSubs(),
+	//		//		Meta:           meta.New(meta.Options{}),
+	//		//		Resiliency:     resiliency.New(log),
+	//		//		ComponentStore: compstore.New(),
+	//		//		IsHTTP:         true,
+	//		//		Channels:       new(channels.Channels),
+	//		//	})
+	//		//	ps.registry.RegisterComponent(
+	//		//		func(_ logger.Logger) contribpubsub.PubSub {
+	//		//			return &mockSubscribePubSub{
+	//		//				features: []contribpubsub.Feature{contribpubsub.FeatureBulkPublish},
+	//		//			}
+	//		//		},
+	//		//		"mockPubSub",
+	//		//	)
+	//
+	//		//	subscriptionItems := []runtimePubsub.SubscriptionJSON{
+	//		//		{
+	//		//			PubsubName:    testBulkSubscribePubsub,
+	//		//			Topic:         "topic0",
+	//		//			Route:         "orders",
+	//		//			BulkSubscribe: runtimePubsub.BulkSubscribeJSON{Enabled: true},
+	//		//		},
+	//		//	}
+	//		//	sub, _ := json.Marshal(subscriptionItems)
+	//		//	fakeResp := invokev1.NewInvokeMethodResponse(200, "OK", nil).
+	//		//		WithRawDataBytes(sub).
+	//		//		WithContentType("application/json")
+	//		//	defer fakeResp.Close()
+	//
+	//		//	mockAppChannel := new(channelt.MockAppChannel)
+	//		//	mockAppChannel.Init()
+	//		//	ps.channels.WithAppChannel(mockAppChannel)
+	//		//	mockAppChannel.On("InvokeMethod", mock.MatchedBy(matchContextInterface), matchDaprRequestMethod("dapr/subscribe")).Return(fakeResp, nil)
+	//
+	//		//	require.NoError(t, ps.Init(context.TODO(), pubsubComponent))
+	//		//	require.NoError(t, ps.StartSubscriptions(context.TODO()))
+	//
+	//		//	msgArr := getBulkMessageEntries(5)
+	//
+	//		//	responseItemsOrders1 := contribpubsub.AppBulkResponse{
+	//		//		AppResponses: []contribpubsub.AppBulkResponseEntry{
+	//		//			{EntryId: "2222222b", Status: "RETRY"},
+	//		//			{EntryId: "333333c", Status: "SUCCESS"},
+	//		//			{EntryId: "5555555e", Status: "RETRY"},
+	//		//			{EntryId: "1111111a", Status: "SUCCESS"},
+	//		//			{EntryId: "4444444d", Status: "SUCCESS"},
+	//		//		},
+	//		//	}
+	//
+	//		//	resp1, _ := json.Marshal(responseItemsOrders1)
+	//		//	respInvoke1 := invokev1.NewInvokeMethodResponse(200, "OK", nil).
+	//		//		WithRawDataBytes(resp1).
+	//		//		WithContentType("application/json")
+	//		//	defer respInvoke1.Close()
+	//
+	//		//	mockAppChannel.On(
+	//		//		"InvokeMethod",
+	//		//		mock.MatchedBy(matchContextInterface),
+	//		//		matchDaprRequestMethod("orders"),
+	//		//	).Return(respInvoke1, nil)
+	//
+	//		//	_, err := ps.BulkPublish(context.TODO(), &contribpubsub.BulkPublishRequest{
+	//		//		PubsubName: testBulkSubscribePubsub,
+	//		//		Topic:      "topic0",
+	//		//		Entries:    msgArr,
+	//		//	})
+	//		//	require.NoError(t, err)
+	//
+	//		//	pubSub, ok := ps.compStore.GetPubSub(testBulkSubscribePubsub)
+	//		//	require.True(t, ok)
+	//		//	pubsubIns := pubSub.Component.(*mockSubscribePubSub)
+	//		//	assert.Equal(t, 1, pubsubIns.bulkPubCount["topic0"])
+	//		//	assert.True(t, pubsubIns.isBulkSubscribe)
+	//		//	reqs := mockAppChannel.GetInvokedRequest()
+	//		//	mockAppChannel.AssertNumberOfCalls(t, "InvokeMethod", 2)
+	//		//	assert.True(t, verifyIfEventContainsStrings(reqs["orders"], eventKey+order1,
+	//		//		eventKey+order2, eventKey+order3, eventKey+order4, eventKey+order5))
+	//
+	//		//	expectedResponse := BulkResponseExpectation{
+	//		//		Responses: []BulkResponseEntryExpectation{
+	//		//			{EntryId: "1111111a", IsError: false},
+	//		//			{EntryId: "2222222b", IsError: true},
+	//		//			{EntryId: "333333c", IsError: false},
+	//		//			{EntryId: "4444444d", IsError: false},
+	//		//			{EntryId: "5555555e", IsError: true},
+	//		//		},
+	//		//	}
+	//
+	//		//	assert.True(t, verifyBulkSubscribeResponses(expectedResponse, pubsubIns.bulkReponse.Statuses))
+	//		//})
+	//
+	//		//t.Run("verify bulk Subscribe Responses when App sends back wrong entryIds", func(t *testing.T) {
+	//		//	reg := registry.New(registry.NewOptions())
+	//		//	ps := New(Options{
+	//		//		Registry:       reg.PubSubs(),
+	//		//		Meta:           meta.New(meta.Options{}),
+	//		//		Resiliency:     resiliency.New(log),
+	//		//		ComponentStore: compstore.New(),
+	//		//		IsHTTP:         true,
+	//		//		Channels:       new(channels.Channels),
+	//		//	})
+	//		//	ps.registry.RegisterComponent(
+	//		//		func(_ logger.Logger) contribpubsub.PubSub {
+	//		//			return &mockSubscribePubSub{
+	//		//				features: []contribpubsub.Feature{contribpubsub.FeatureBulkPublish},
+	//		//			}
+	//		//		},
+	//		//		"mockPubSub",
+	//		//	)
+	//
+	//		//	subscriptionItems := []runtimePubsub.SubscriptionJSON{
+	//		//		{
+	//		//			PubsubName:    testBulkSubscribePubsub,
+	//		//			Topic:         "topic0",
+	//		//			Route:         "orders",
+	//		//			BulkSubscribe: runtimePubsub.BulkSubscribeJSON{Enabled: true},
+	//		//		},
+	//		//	}
+	//		//	sub, _ := json.Marshal(subscriptionItems)
+	//		//	fakeResp := invokev1.NewInvokeMethodResponse(200, "OK", nil).
+	//		//		WithRawDataBytes(sub).
+	//		//		WithContentType("application/json")
+	//		//	defer fakeResp.Close()
+	//
+	//		//	mockAppChannel := new(channelt.MockAppChannel)
+	//		//	mockAppChannel.Init()
+	//		//	ps.channels.WithAppChannel(mockAppChannel)
+	//		//	mockAppChannel.On("InvokeMethod", mock.MatchedBy(matchContextInterface), matchDaprRequestMethod("dapr/subscribe")).Return(fakeResp, nil)
+	//
+	//		//	require.NoError(t, ps.Init(context.TODO(), pubsubComponent))
+	//		//	require.NoError(t, ps.StartSubscriptions(context.TODO()))
+	//
+	//		//	msgArr := getBulkMessageEntries(5)
+	//
+	//		//	responseItemsOrders1 := contribpubsub.AppBulkResponse{
+	//		//		AppResponses: []contribpubsub.AppBulkResponseEntry{
+	//		//			{EntryId: "wrongEntryId1", Status: "SUCCESS"},
+	//		//			{EntryId: "2222222b", Status: "RETRY"},
+	//		//			{EntryId: "333333c", Status: "SUCCESS"},
+	//		//			{EntryId: "wrongEntryId2", Status: "SUCCESS"},
+	//		//			{EntryId: "5555555e", Status: "RETRY"},
+	//		//		},
+	//		//	}
+	//
+	//		//	resp1, _ := json.Marshal(responseItemsOrders1)
+	//		//	respInvoke1 := invokev1.NewInvokeMethodResponse(200, "OK", nil).
+	//		//		WithRawDataBytes(resp1).
+	//		//		WithContentType("application/json")
+	//		//	defer respInvoke1.Close()
+	//
+	//		//	mockAppChannel.On("InvokeMethod", mock.MatchedBy(matchContextInterface),
+	//		//		matchDaprRequestMethod("orders"),
+	//		//	).Return(respInvoke1, nil)
+	//
+	//		//	_, err := ps.BulkPublish(context.TODO(), &contribpubsub.BulkPublishRequest{
+	//		//		PubsubName: testBulkSubscribePubsub,
+	//		//		Topic:      "topic0",
+	//		//		Entries:    msgArr,
+	//		//	})
+	//		//	require.NoError(t, err)
+	//
+	//		//	pubSub, ok := ps.compStore.GetPubSub(testBulkSubscribePubsub)
+	//		//	require.True(t, ok)
+	//		//	pubsubIns := pubSub.Component.(*mockSubscribePubSub)
+	//		//	assert.Equal(t, 1, pubsubIns.bulkPubCount["topic0"])
+	//		//	assert.True(t, pubsubIns.isBulkSubscribe)
+	//		//	reqs := mockAppChannel.GetInvokedRequest()
+	//		//	mockAppChannel.AssertNumberOfCalls(t, "InvokeMethod", 2)
+	//		//	assert.True(t, verifyIfEventContainsStrings(reqs["orders"], eventKey+order1,
+	//		//		eventKey+order2, eventKey+order3, eventKey+order4, eventKey+order5))
+	//
+	//		//	expectedResponse := BulkResponseExpectation{
+	//		//		Responses: []BulkResponseEntryExpectation{
+	//		//			{EntryId: "1111111a", IsError: true},
+	//		//			{EntryId: "2222222b", IsError: true},
+	//		//			{EntryId: "333333c", IsError: false},
+	//		//			{EntryId: "4444444d", IsError: true},
+	//		//			{EntryId: "5555555e", IsError: true},
+	//		//		},
+	//		//	}
+	//
+	//		//	assert.True(t, verifyBulkSubscribeResponses(expectedResponse, pubsubIns.bulkReponse.Statuses))
+	//		//})
+}
+
 // //func TestBulkSubscribeGRPC(t *testing.T) {
 // //	testBulkSubscribePubsub := "bulkSubscribePubSub"
 // //	pubsubComponent := componentsV1alpha1.Component{

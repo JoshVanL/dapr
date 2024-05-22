@@ -28,7 +28,6 @@ import (
 	"github.com/dapr/dapr/pkg/runtime/processor/subscriber"
 	rtpubsub "github.com/dapr/dapr/pkg/runtime/pubsub"
 	"github.com/dapr/dapr/pkg/scopes"
-	"github.com/dapr/kit/logger"
 )
 
 type Options struct {
@@ -48,8 +47,6 @@ type pubsub struct {
 
 	lock sync.RWMutex
 }
-
-var log = logger.NewLogger("dapr.runtime.processor.pubsub")
 
 func New(opts Options) *pubsub {
 	return &pubsub{
