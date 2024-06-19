@@ -23,6 +23,7 @@ import (
 	"io"
 
 	"github.com/dapr/dapr/pkg/actors/internal"
+	internalv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 )
 
 const InternalActorTypePrefix = "dapr.internal."
@@ -32,25 +33,29 @@ type InternalActorFactory = func(actorType string, actorID string, actors Actors
 
 // InternalActor represents the interface for invoking an "internal" actor (one which is built into daprd directly).
 type InternalActor interface {
-	InvokeMethod(ctx context.Context, methodName string, data []byte, metadata map[string][]string) ([]byte, error)
+	InvokeMethod(ctx context.Context, req *internalv1pb.InternalInvokeRequest, metadata map[string][]string) ([]byte, error)
 	DeactivateActor(ctx context.Context) error
 	InvokeReminder(ctx context.Context, reminder InternalActorReminder, metadata map[string][]string) error
 	InvokeTimer(ctx context.Context, timer InternalActorReminder, metadata map[string][]string) error
 }
 
 type InternalActorReminder struct {
-	Name    string
-	Data    []byte
-	DueTime string
-	Period  string
+	ActorID   string
+	ActorType string
+	Name      string
+	Data      []byte
+	DueTime   string
+	Period    string
 }
 
 func newInternalActorReminder(r *internal.Reminder) InternalActorReminder {
 	return InternalActorReminder{
-		Name:    r.Name,
-		Data:    r.Data,
-		DueTime: r.DueTime,
-		Period:  r.Period.String(),
+		Name:      r.Name,
+		Data:      r.Data,
+		DueTime:   r.DueTime,
+		Period:    r.Period.String(),
+		ActorID:   r.ActorID,
+		ActorType: r.ActorType,
 	}
 }
 
