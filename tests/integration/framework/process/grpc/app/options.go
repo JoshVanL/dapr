@@ -22,6 +22,7 @@ import (
 	commonv1 "github.com/dapr/dapr/pkg/proto/common/v1"
 	rtv1 "github.com/dapr/dapr/pkg/proto/runtime/v1"
 	procgrpc "github.com/dapr/dapr/tests/integration/framework/process/grpc"
+	testpb "github.com/dapr/dapr/tests/integration/framework/process/grpc/app/proto"
 )
 
 // options contains the options for running a GRPC server app in integration
@@ -37,6 +38,7 @@ type options struct {
 	listInputBindFn    func(context.Context, *emptypb.Empty) (*rtv1.ListInputBindingsResponse, error)
 	onBindingEventFn   func(context.Context, *rtv1.BindingEventRequest) (*rtv1.BindingEventResponse, error)
 	healthCheckFn      func(context.Context, *emptypb.Empty) (*rtv1.HealthCheckResponse, error)
+	pingFn             func(context.Context, *testpb.PingRequest) (*testpb.PingResponse, error)
 }
 
 func WithGRPCOptions(opts ...procgrpc.Option) func(*options) {
@@ -90,6 +92,12 @@ func WithOnBindingEventFn(fn func(context.Context, *rtv1.BindingEventRequest) (*
 func WithHealthCheckFn(fn func(context.Context, *emptypb.Empty) (*rtv1.HealthCheckResponse, error)) func(*options) {
 	return func(opts *options) {
 		opts.healthCheckFn = fn
+	}
+}
+
+func WithPingFn(fn func(context.Context, *testpb.PingRequest) (*testpb.PingResponse, error)) func(*options) {
+	return func(opts *options) {
+		opts.pingFn = fn
 	}
 }
 
