@@ -1098,21 +1098,23 @@ func (a *actorsRuntime) doExecuteReminderOrTimerOnInternalActor(ctx context.Cont
 			return err
 		}
 	} else {
-		log.Debugf("Executing reminder for internal actor '%s'", reminder.Key())
+		key := reminder.Key()
+
+		log.Debugf("Executing reminder for internal actor '%s'", key)
 
 		a.lock.Lock()
-		if _, ok := a.internalInProgress[reminder.Name]; ok {
+		if _, ok := a.internalInProgress[key]; ok {
 			a.lock.Unlock()
 			// We don't need to return cancel here as the first invocation will delete the reminder.
-			log.Infof("%s: duplicate invocation detected for activity '%s', likely due to long processing time. Ignoring", reminder.ActorID, reminder.Name)
+			log.Debugf("Duplicate concurrent reminder invocation detected for '%s', likely due to long processing time. Ignoring in favour of the active invocation", key)
 			return nil
 		}
-		a.internalInProgress[reminder.Name] = struct{}{}
+		a.internalInProgress[key] = struct{}{}
 		a.lock.Unlock()
 
 		defer func() {
 			a.lock.Lock()
-			delete(a.internalInProgress, reminder.Name)
+			delete(a.internalInProgress, key)
 			a.lock.Unlock()
 		}()
 
