@@ -131,6 +131,22 @@ func (a *activityActor) InvokeMethod(ctx context.Context, methodName string, dat
 
 // InvokeReminder implements actors.InternalActor and executes the activity logic.
 func (a *activityActor) InvokeReminder(ctx context.Context, reminder actors.InternalActorReminder, metadata map[string][]string) error {
+	a.lock.Lock()
+	if _, ok := a.inprogress[reminder.Name]; ok {
+		a.lock.Unlock()
+		// We don't need to return cancel here as the first invocation will delete the reminder.
+		wfLogger.Infof("%s: duplicate invocation detected for activity '%s', likely due to long processing time. Ignoring", a.actorID, reminder.Name)
+		return nil
+	}
+	a.inprogress[reminder.Name] = struct{}{}
+	a.lock.Unlock()
+
+	defer func() {
+		a.lock.Lock()
+		delete(a.inprogress, reminder.Name)
+		a.lock.Unlock()
+	}()
+
 	wfLogger.Debugf("Activity actor '%s': invoking reminder '%s'", a.actorID, reminder.Name)
 
 	state, _ := a.loadActivityState(ctx)
@@ -150,10 +166,6 @@ func (a *activityActor) InvokeReminder(ctx context.Context, reminder actors.Inte
 	case errors.Is(err, context.DeadlineExceeded):
 		wfLogger.Warnf("%s: execution of '%s' timed-out and will be retried later: %v", a.actorID, reminder.Name, err)
 		return nil
-	case errors.Is(err, ErrDuplicateInvocation):
-		// We don't need to return cancel here as the first invocation will delete the reminder.
-		wfLogger.Infof("%s: duplicate invocation detected for activity '%s', likely due to long processing time. Ignoring", a.actorID, reminder.Name)
-		return nil
 	case errors.Is(err, context.Canceled):
 		wfLogger.Warnf("%s: received cancellation signal while waiting for activity execution '%s'", a.actorID, reminder.Name)
 		return nil
@@ -168,20 +180,6 @@ func (a *activityActor) InvokeReminder(ctx context.Context, reminder actors.Inte
 }
 
 func (a *activityActor) executeActivity(ctx context.Context, name string, eventPayload []byte) error {
-	a.lock.Lock()
-	if _, ok := a.inprogress[name]; ok {
-		a.lock.Unlock()
-		return ErrDuplicateInvocation
-	}
-	a.inprogress[name] = struct{}{}
-	a.lock.Unlock()
-
-	defer func() {
-		a.lock.Lock()
-		delete(a.inprogress, name)
-		a.lock.Unlock()
-	}()
-
 	taskEvent, err := backend.UnmarshalHistoryEvent(eventPayload)
 	if err != nil {
 		return err
