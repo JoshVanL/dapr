@@ -145,7 +145,7 @@ func (a *activityActor) InvokeReminder(ctx context.Context, reminder actors.Inte
 		return actors.ErrReminderCanceled
 	case errors.Is(err, context.DeadlineExceeded):
 		wfLogger.Warnf("%s: execution of '%s' timed-out and will be retried later: %v", a.actorID, reminder.Name, err)
-		return nil
+		return err
 	case errors.Is(err, context.Canceled):
 		wfLogger.Warnf("%s: received cancellation signal while waiting for activity execution '%s'", a.actorID, reminder.Name)
 		return nil

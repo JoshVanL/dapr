@@ -1119,6 +1119,13 @@ func (a *actorsRuntime) doExecuteReminderOrTimerOnInternalActor(ctx context.Cont
 
 		err = internalAct.InvokeReminder(ctx, reminder, md)
 
+		// Ensure that the in progress tracker is removed if the internal reminder
+		// timed out.
+		if errors.Is(err, context.DeadlineExceeded) {
+			a.lock.Lock()
+			delete(a.internalReminderInProgress, key)
+			a.lock.Unlock()
+		}
 		if err != nil && !errors.Is(err, ErrReminderCanceled) {
 			log.Errorf("Error executing reminder for internal actor '%s': %v", reminder.Key(), err)
 		}
