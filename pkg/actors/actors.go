@@ -995,6 +995,10 @@ func (a *actorsRuntime) drainRebalancedActors() {
 	// visit all currently active actors.
 	var wg sync.WaitGroup
 
+	a.lock.Lock()
+	a.internalInProgress = make(map[string]struct{})
+	a.lock.Unlock()
+
 	a.actorsTable.Range(func(key any, value any) bool {
 		wg.Add(1)
 		go func(key any, value any) {
