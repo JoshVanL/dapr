@@ -145,6 +145,9 @@ type actorsRuntime struct {
 	closeCh            chan struct{}
 	apiLevel           atomic.Uint32
 
+	lock               sync.Mutex
+	internalInProgress map[string]struct{}
+
 	// TODO: @joshvanl Remove in Dapr 1.12 when ActorStateTTL is finalized.
 	stateTTLEnabled bool
 }
@@ -190,6 +193,8 @@ func newActorsWithClock(opts ActorsOpts, clock clock.WithTicker) (ActorRuntime, 
 		internalActors:     haxmap.New[string, InternalActor](32),
 		compStore:          opts.CompStore,
 		sec:                opts.Security,
+
+		internalInProgress: map[string]struct{}{},
 
 		// TODO: @joshvanl Remove in Dapr 1.12 when ActorStateTTL is finalized.
 		stateTTLEnabled: opts.StateTTLEnabled,
@@ -1094,6 +1099,22 @@ func (a *actorsRuntime) doExecuteReminderOrTimerOnInternalActor(ctx context.Cont
 		}
 	} else {
 		log.Debugf("Executing reminder for internal actor '%s'", reminder.Key())
+
+		a.lock.Lock()
+		if _, ok := a.internalInProgress[reminder.Name]; ok {
+			a.lock.Unlock()
+			// We don't need to return cancel here as the first invocation will delete the reminder.
+			log.Infof("%s: duplicate invocation detected for activity '%s', likely due to long processing time. Ignoring", reminder.ActorID, reminder.Name)
+			return nil
+		}
+		a.internalInProgress[reminder.Name] = struct{}{}
+		a.lock.Unlock()
+
+		defer func() {
+			a.lock.Lock()
+			delete(a.internalInProgress, reminder.Name)
+			a.lock.Unlock()
+		}()
 
 		err = internalAct.InvokeReminder(ctx, reminder, md)
 		if err != nil {
