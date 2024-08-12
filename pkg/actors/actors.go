@@ -1112,19 +1112,19 @@ func (a *actorsRuntime) doExecuteReminderOrTimerOnInternalActor(ctx context.Cont
 		a.internalInProgress[key] = struct{}{}
 		a.lock.Unlock()
 
-		defer func() {
+		err = internalAct.InvokeReminder(ctx, reminder, md)
+
+		if errors.Is(err, ErrReminderCanceled) {
 			a.lock.Lock()
 			delete(a.internalInProgress, key)
 			a.lock.Unlock()
-		}()
-
-		err = internalAct.InvokeReminder(ctx, reminder, md)
-		if err != nil {
-			if !errors.Is(err, ErrReminderCanceled) {
-				log.Errorf("Error executing reminder for internal actor '%s': %v", reminder.Key(), err)
-			}
-			return err
 		}
+
+		if err != nil {
+			log.Errorf("Error executing reminder for internal actor '%s': %v", reminder.Key(), err)
+		}
+
+		return err
 	}
 
 	return nil

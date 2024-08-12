@@ -1,0 +1,72 @@
+diff --git b/pkg/runtime/wfengine/backends/actors/activity_actor.go a/pkg/runtime/wfengine/backends/actors/activity_actor.go
+index 21faa4613..cb89eb2c3 100644
+--- b/pkg/runtime/wfengine/backends/actors/activity_actor.go
++++ a/pkg/runtime/wfengine/backends/actors/activity_actor.go
+@@ -22,7 +22,6 @@ import (
+ 	"errors"
+ 	"fmt"
+ 	"strings"
+-	"sync"
+ 	"time"
+ 
+ 	"github.com/microsoft/durabletask-go/api"
+@@ -47,8 +46,6 @@ type activityActor struct {
+ 	defaultTimeout   time.Duration
+ 	reminderInterval time.Duration
+ 	config           actorsBackendConfig
+-	lock             sync.Mutex
+-	inprogress       map[string]struct{}
+ }
+ 
+ // ActivityRequest represents a request by a worklow to invoke an activity.
+@@ -80,7 +77,6 @@ func NewActivityActor(scheduler activityScheduler, backendConfig actorsBackendCo
+ 			reminderInterval: 1 * time.Minute,
+ 			config:           backendConfig,
+ 			cachingDisabled:  opts.cachingDisabled,
+-			inprogress:       make(map[string]struct{}),
+ 		}
+ 
+ 		if opts.defaultTimeout > 0 {
+@@ -131,22 +127,6 @@ func (a *activityActor) InvokeMethod(ctx context.Context, methodName string, dat
+ 
+ // InvokeReminder implements actors.InternalActor and executes the activity logic.
+ func (a *activityActor) InvokeReminder(ctx context.Context, reminder actors.InternalActorReminder, metadata map[string][]string) error {
+-	a.lock.Lock()
+-	if _, ok := a.inprogress[reminder.Name]; ok {
+-		a.lock.Unlock()
+-		// We don't need to return cancel here as the first invocation will delete the reminder.
+-		wfLogger.Infof("%s: duplicate invocation detected for activity '%s', likely due to long processing time. Ignoring", a.actorID, reminder.Name)
+-		return nil
+-	}
+-	a.inprogress[reminder.Name] = struct{}{}
+-	a.lock.Unlock()
+-
+-	defer func() {
+-		a.lock.Lock()
+-		delete(a.inprogress, reminder.Name)
+-		a.lock.Unlock()
+-	}()
+-
+ 	wfLogger.Debugf("Activity actor '%s': invoking reminder '%s'", a.actorID, reminder.Name)
+ 
+ 	state, _ := a.loadActivityState(ctx)
+@@ -384,12 +364,18 @@ func (a *activityActor) createReliableReminder(ctx context.Context, data any) er
+ 	if err != nil {
+ 		return fmt.Errorf("failed to encode data as JSON: %w", err)
+ 	}
++
++	period := a.reminderInterval.String()
++	if a.actorRuntime.UsingSchedulerReminders() {
++		period = fmt.Sprintf("R2/PT%vS", int(a.reminderInterval.Seconds()))
++	}
++
+ 	return a.actorRuntime.CreateReminder(ctx, &actors.CreateReminderRequest{
+ 		ActorType: a.config.activityActorType,
+ 		ActorID:   a.actorID,
+ 		Data:      dataEnc,
+ 		DueTime:   "0s",
+ 		Name:      reminderName,
+-		Period:    a.reminderInterval.String(),
++		Period:    period,
+ 	})
+ }
