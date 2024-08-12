@@ -1109,7 +1109,8 @@ func (a *actorsRuntime) doExecuteReminderOrTimerOnInternalActor(ctx context.Cont
 		a.lock.Lock()
 		if _, ok := a.internalInProgress[key]; ok {
 			a.lock.Unlock()
-			// We don't need to return cancel here as the first invocation will delete the reminder.
+			// We don't need to return cancel here as the first invocation will
+			// delete the reminder.
 			log.Debugf("Duplicate concurrent reminder invocation detected for '%s', likely due to long processing time. Ignoring in favour of the active invocation", key)
 			return nil
 		}
@@ -1118,13 +1119,7 @@ func (a *actorsRuntime) doExecuteReminderOrTimerOnInternalActor(ctx context.Cont
 
 		err = internalAct.InvokeReminder(ctx, reminder, md)
 
-		if errors.Is(err, ErrReminderCanceled) {
-			a.lock.Lock()
-			delete(a.internalInProgress, key)
-			a.lock.Unlock()
-		}
-
-		if err != nil {
+		if err != nil && !errors.Is(err, ErrReminderCanceled) {
 			log.Errorf("Error executing reminder for internal actor '%s': %v", reminder.Key(), err)
 		}
 
@@ -1191,6 +1186,9 @@ func (a *actorsRuntime) ExecuteLocalOrRemoteActorReminder(ctx context.Context, r
 			}); derr != nil {
 				log.Errorf("Error deleting reminder %s: %s", reminder.Key(), derr)
 			}
+			a.lock.Lock()
+			delete(a.internalInProgress, constructCompositeKey(reminder.ActorType, reminder.ActorID, reminder.Name))
+			a.lock.Unlock()
 		}()
 		return nil
 	}
