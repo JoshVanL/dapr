@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/microsoft/durabletask-go/api"
@@ -46,6 +47,8 @@ type activityActor struct {
 	defaultTimeout   time.Duration
 	reminderInterval time.Duration
 	config           actorsBackendConfig
+	lock             sync.Mutex
+	inprogress       map[string]chan struct{}
 }
 
 // ActivityRequest represents a request by a worklow to invoke an activity.
@@ -77,6 +80,7 @@ func NewActivityActor(scheduler activityScheduler, backendConfig actorsBackendCo
 			reminderInterval: 1 * time.Minute,
 			config:           backendConfig,
 			cachingDisabled:  opts.cachingDisabled,
+			inprogress:       make(map[string]chan struct{}),
 		}
 
 		if opts.defaultTimeout > 0 {
@@ -146,6 +150,10 @@ func (a *activityActor) InvokeReminder(ctx context.Context, reminder actors.Inte
 	case errors.Is(err, context.DeadlineExceeded):
 		wfLogger.Warnf("%s: execution of '%s' timed-out and will be retried later: %v", a.actorID, reminder.Name, err)
 		return nil
+	case errors.Is(err, ErrDuplicateInvocation):
+		// We don't need to return cancel here as the first invocation will delete the reminder.
+		wfLogger.Debugf("%s: duplicate invocation detected for activity '%s', ignoring", a.actorID, reminder.Name)
+		return nil
 	case errors.Is(err, context.Canceled):
 		wfLogger.Warnf("%s: received cancellation signal while waiting for activity execution '%s'", a.actorID, reminder.Name)
 		return nil
@@ -160,6 +168,23 @@ func (a *activityActor) InvokeReminder(ctx context.Context, reminder actors.Inte
 }
 
 func (a *activityActor) executeActivity(ctx context.Context, name string, eventPayload []byte) error {
+	a.lock.Lock()
+	inprogress, ok := a.inprogress[name]
+	if ok {
+		a.lock.Unlock()
+		select {
+		case <-inprogress:
+			return ErrDuplicateInvocation
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+
+	ch := make(chan struct{})
+	defer close(ch)
+	a.inprogress[name] = ch
+	a.lock.Unlock()
+
 	taskEvent, err := backend.UnmarshalHistoryEvent(eventPayload)
 	if err != nil {
 		return err
