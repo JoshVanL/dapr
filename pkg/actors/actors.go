@@ -145,8 +145,8 @@ type actorsRuntime struct {
 	closeCh            chan struct{}
 	apiLevel           atomic.Uint32
 
-	lock               sync.Mutex
-	internalInProgress map[string]struct{}
+	lock                       sync.Mutex
+	internalReminderInProgress map[string]struct{}
 
 	// TODO: @joshvanl Remove in Dapr 1.12 when ActorStateTTL is finalized.
 	stateTTLEnabled bool
@@ -194,7 +194,7 @@ func newActorsWithClock(opts ActorsOpts, clock clock.WithTicker) (ActorRuntime, 
 		compStore:          opts.CompStore,
 		sec:                opts.Security,
 
-		internalInProgress: map[string]struct{}{},
+		internalReminderInProgress: map[string]struct{}{},
 
 		// TODO: @joshvanl Remove in Dapr 1.12 when ActorStateTTL is finalized.
 		stateTTLEnabled: opts.StateTTLEnabled,
@@ -996,7 +996,7 @@ func (a *actorsRuntime) drainRebalancedActors() {
 	var wg sync.WaitGroup
 
 	a.lock.Lock()
-	a.internalInProgress = make(map[string]struct{})
+	a.internalReminderInProgress = make(map[string]struct{})
 	a.lock.Unlock()
 
 	a.actorsTable.Range(func(key any, value any) bool {
@@ -1107,14 +1107,14 @@ func (a *actorsRuntime) doExecuteReminderOrTimerOnInternalActor(ctx context.Cont
 		log.Debugf("Executing reminder for internal actor '%s'", key)
 
 		a.lock.Lock()
-		if _, ok := a.internalInProgress[key]; ok {
+		if _, ok := a.internalReminderInProgress[key]; ok {
 			a.lock.Unlock()
 			// We don't need to return cancel here as the first invocation will
 			// delete the reminder.
 			log.Debugf("Duplicate concurrent reminder invocation detected for '%s', likely due to long processing time. Ignoring in favour of the active invocation", key)
 			return nil
 		}
-		a.internalInProgress[key] = struct{}{}
+		a.internalReminderInProgress[key] = struct{}{}
 		a.lock.Unlock()
 
 		err = internalAct.InvokeReminder(ctx, reminder, md)
@@ -1187,7 +1187,7 @@ func (a *actorsRuntime) ExecuteLocalOrRemoteActorReminder(ctx context.Context, r
 				log.Errorf("Error deleting reminder %s: %s", reminder.Key(), derr)
 			}
 			a.lock.Lock()
-			delete(a.internalInProgress, constructCompositeKey(reminder.ActorType, reminder.ActorID, reminder.Name))
+			delete(a.internalReminderInProgress, constructCompositeKey(reminder.ActorType, reminder.ActorID, reminder.Name))
 			a.lock.Unlock()
 		}()
 		return nil
