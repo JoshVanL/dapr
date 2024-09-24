@@ -52,19 +52,18 @@ func New(t *testing.T, fopts ...Option) *SQLite {
 	t.Helper()
 
 	opts := options{
-		name: "mystore",
+		name:   "mystore",
+		dbPath: filepath.Join(t.TempDir(), "test-data.db"),
 	}
-
 	for _, fopt := range fopts {
 		fopt(&opts)
 	}
 
 	// Create a SQLite database in the test's temporary directory
-	dbPath := filepath.Join(t.TempDir(), "test-data.db")
-	t.Logf("Storing SQLite database at %s", dbPath)
+	t.Logf("Storing SQLite database at %s", opts.dbPath)
 
 	return &SQLite{
-		dbPath:            dbPath,
+		dbPath:            opts.dbPath,
 		name:              opts.name,
 		metadata:          opts.metadata,
 		migrations:        opts.migrations,

@@ -1,8 +1,6 @@
 module github.com/dapr/dapr
 
-go 1.23
-
-toolchain go1.23.1
+go 1.23.1
 
 require (
 	contrib.go.opencensus.io/exporter/prometheus v0.4.2
@@ -495,3 +493,7 @@ replace github.com/stretchr/testify => github.com/stretchr/testify v1.8.4
 //
 // Then, run `make modtidy-all` in this repository.
 // This ensures that go.mod and go.sum are up-to-date for each go.mod file.
+
+replace github.com/diagridio/go-etcd-cron => github.com/joshvanl/go-etcd-cron v0.0.0-20240923232236-76edc5bc1c08
+
+replace github.com/dapr/kit => github.com/joshvanl/kit v0.0.0-20240923214824-8b9ec753c4bf

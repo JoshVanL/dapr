@@ -11,10 +11,23 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package reminders
+package actor
 
-import (
-	_ "github.com/dapr/dapr/tests/integration/suite/actors/reminders/migration"
-	_ "github.com/dapr/dapr/tests/integration/suite/actors/reminders/scheduler"
-	_ "github.com/dapr/dapr/tests/integration/suite/actors/reminders/serialization"
-)
+type Option func(*options)
+
+type options struct {
+	enableScheduler bool
+	dbPath          *string
+}
+
+func WithScheduler(enable bool) Option {
+	return func(o *options) {
+		o.enableScheduler = enable
+	}
+}
+
+func WithDBPath(path string) Option {
+	return func(o *options) {
+		o.dbPath = &path
+	}
+}
