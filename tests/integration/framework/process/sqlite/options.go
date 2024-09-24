@@ -20,6 +20,7 @@ type options struct {
 	metadata          map[string]string
 	migrations        []string
 	execs             []string
+	dbPath            string
 }
 
 // WithName sets the name for the state store.
@@ -72,5 +73,11 @@ CREATE TABLE state (
 func WithExecs(execs ...string) Option {
 	return func(o *options) {
 		o.execs = execs
+	}
+}
+
+func WithDBPath(dbPath string) Option {
+	return func(o *options) {
+		o.dbPath = dbPath
 	}
 }
