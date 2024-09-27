@@ -22,7 +22,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
@@ -55,7 +54,7 @@ func (o *overwrite) Setup(t *testing.T) []framework.Option {
 		app.WithConfig(`{"entities": ["myactortype"]}`),
 		app.WithHandlerFunc("/actors/myactortype/myactorid", func(http.ResponseWriter, *http.Request) {}),
 	)
-	o.scheduler = scheduler.New(t, scheduler.WithLogLevel("debug"))
+	o.scheduler = scheduler.New(t)
 	o.place = placement.New(t)
 
 	return []framework.Option{
@@ -64,6 +63,8 @@ func (o *overwrite) Setup(t *testing.T) []framework.Option {
 }
 
 func (o *overwrite) Run(t *testing.T, ctx context.Context) {
+	o.scheduler.WaitUntilRunning(t, ctx)
+
 	opts := []daprd.Option{
 		daprd.WithResourceFiles(o.db.GetComponent(t)),
 		daprd.WithPlacementAddresses(o.place.Address()),
@@ -88,8 +89,11 @@ spec:
 
 	daprd1.Run(t, ctx)
 	daprd1.WaitUntilRunning(t, ctx)
-	client := daprd1.GRPCClient(t, ctx)
-	_, err := client.RegisterActorReminder(ctx, &rtv1.RegisterActorReminderRequest{
+
+	assert.Empty(t, o.db.ActorReminders(t, ctx, "myactortype").Reminders)
+	assert.Empty(t, o.scheduler.EtcdJobs(t, ctx))
+
+	_, err := daprd1.GRPCClient(t, ctx).RegisterActorReminder(ctx, &rtv1.RegisterActorReminderRequest{
 		ActorType: "myactortype",
 		ActorId:   "myactorid",
 		Name:      "myreminder",
@@ -99,22 +103,8 @@ spec:
 		Ttl:       "10000s",
 	})
 	require.NoError(t, err)
-	sclient := o.scheduler.Client(t, ctx)
-	resp, err := sclient.ListJobs(ctx, &schedulerv1.ListJobsRequest{
-		Metadata: &schedulerv1.JobMetadata{
-			AppId:     daprd1.AppID(),
-			Namespace: daprd1.Namespace(),
-			Target: &schedulerv1.JobTargetMetadata{
-				Type: &schedulerv1.JobTargetMetadata_Actor{
-					Actor: &schedulerv1.TargetActorReminder{
-						Id:   "myactorid",
-						Type: "myactortype",
-					},
-				},
-			},
-		},
-	})
-	require.NoError(t, err)
+
+	resp := o.scheduler.ListJobActors(t, ctx, daprd1.Namespace(), daprd1.AppID(), "myactortype", "myactorid")
 
 	require.Len(t, resp.GetJobs(), 1)
 	njob := resp.GetJobs()[0]
@@ -128,12 +118,15 @@ spec:
 		Data:     expAny,
 		Repeats:  ptr.Of(uint32(100)),
 	}, njob.GetJob())
+
+	assert.Empty(t, o.db.ActorReminders(t, ctx, "myactortype").Reminders)
+	assert.Len(t, o.scheduler.EtcdJobs(t, ctx), 1)
+
 	daprd1.Cleanup(t)
 
 	daprd2.Run(t, ctx)
 	daprd2.WaitUntilRunning(t, ctx)
-	client = daprd2.GRPCClient(t, ctx)
-	_, err = client.RegisterActorReminder(ctx, &rtv1.RegisterActorReminderRequest{
+	_, err = daprd2.GRPCClient(t, ctx).RegisterActorReminder(ctx, &rtv1.RegisterActorReminderRequest{
 		ActorType: "myactortype",
 		ActorId:   "myactorid",
 		Name:      "myreminder",
@@ -143,26 +136,11 @@ spec:
 		Ttl:       "20000s",
 	})
 	require.NoError(t, err)
-	eresp, err := o.scheduler.ETCDClient(t).KV.Get(ctx, "dapr/jobs", clientv3.WithPrefix())
-	require.NoError(t, err)
-	assert.Len(t, eresp.Kvs, 1)
 
-	resp, err = sclient.ListJobs(ctx, &schedulerv1.ListJobsRequest{
-		Metadata: &schedulerv1.JobMetadata{
-			AppId:     daprd2.AppID(),
-			Namespace: daprd2.Namespace(),
-			Target: &schedulerv1.JobTargetMetadata{
-				Type: &schedulerv1.JobTargetMetadata_Actor{
-					Actor: &schedulerv1.TargetActorReminder{
-						Id:   "myactorid",
-						Type: "myactortype",
-					},
-				},
-			},
-		},
-	})
-	require.NoError(t, err)
-	require.Len(t, resp.GetJobs(), 1)
+	assert.Len(t, o.db.ActorReminders(t, ctx, "myactortype").Reminders, 1)
+	assert.Len(t, o.scheduler.EtcdJobs(t, ctx), 1)
+
+	resp = o.scheduler.ListJobActors(t, ctx, daprd1.Namespace(), daprd1.AppID(), "myactortype", "myactorid")
 	njob = resp.GetJobs()[0]
 	assert.Equal(t, "dapr/jobs/actorreminder||default||myactortype||myactorid||myreminder", njob.GetName())
 	expAny, err = anypb.New(wrapperspb.Bytes([]byte(`"` + base64.URLEncoding.EncodeToString([]byte("mydata1")) + `"`)))
@@ -174,25 +152,15 @@ spec:
 		Data:     expAny,
 		Repeats:  ptr.Of(uint32(100)),
 	}, njob.GetJob())
+
+	assert.Len(t, o.db.ActorReminders(t, ctx, "myactortype").Reminders, 1)
+	assert.Len(t, o.scheduler.EtcdJobs(t, ctx), 1)
+
 	daprd2.Cleanup(t)
 
 	daprd3.Run(t, ctx)
 	daprd3.WaitUntilRunning(t, ctx)
-	resp, err = sclient.ListJobs(ctx, &schedulerv1.ListJobsRequest{
-		Metadata: &schedulerv1.JobMetadata{
-			AppId:     daprd2.AppID(),
-			Namespace: daprd2.Namespace(),
-			Target: &schedulerv1.JobTargetMetadata{
-				Type: &schedulerv1.JobTargetMetadata_Actor{
-					Actor: &schedulerv1.TargetActorReminder{
-						Id:   "myactorid",
-						Type: "myactortype",
-					},
-				},
-			},
-		},
-	})
-	require.NoError(t, err)
+	resp = o.scheduler.ListJobActors(t, ctx, daprd1.Namespace(), daprd1.AppID(), "myactortype", "myactorid")
 	require.Len(t, resp.GetJobs(), 1)
 	njob = resp.GetJobs()[0]
 	assert.Equal(t, "dapr/jobs/actorreminder||default||myactortype||myactorid||myreminder", njob.GetName())
@@ -206,5 +174,9 @@ spec:
 	assert.InDelta(t, expTTL.UnixMilli(), gotTTL.UnixMilli(), float64(time.Second*10))
 	assert.Equal(t, expAny, njob.GetJob().Data)
 	assert.Equal(t, ptr.Of(uint32(200)), njob.GetJob().Repeats)
+
+	assert.Len(t, o.db.ActorReminders(t, ctx, "myactortype").Reminders, 1)
+	assert.Len(t, o.scheduler.EtcdJobs(t, ctx), 1)
+
 	daprd3.Cleanup(t)
 }

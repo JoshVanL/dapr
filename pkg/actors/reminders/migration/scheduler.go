@@ -43,6 +43,7 @@ func ToScheduler(ctx context.Context, opts ToSchedulerOptions) error {
 	schedulerReminders := make(map[string][]*internal.Reminder)
 
 	for _, actorType := range opts.ActorTypes {
+		log.Debugf("Listing state reminders for actor type %s", actorType)
 		stateR, err := opts.StateReminders.ListReminders(ctx, internal.ListRemindersRequest{
 			ActorType: actorType,
 		})
@@ -51,10 +52,12 @@ func ToScheduler(ctx context.Context, opts ToSchedulerOptions) error {
 		}
 		for i := range stateR {
 			if ok, _ := opts.LookUpActorFn(ctx, actorType, stateR[i].ActorID); ok {
+				log.Debugf("Hosted state reminder %s for actor %s in state store", stateR[i].Key(), stateR[i].ActorID)
 				stateReminders[actorType] = append(stateReminders[actorType], stateR[i])
 			}
 		}
 
+		log.Debugf("Listing scheduler reminders for actor type %s", actorType)
 		schedR, err := opts.SchedulerReminders.ListReminders(ctx, internal.ListRemindersRequest{
 			ActorType: actorType,
 		})
@@ -82,6 +85,7 @@ func ToScheduler(ctx context.Context, opts ToSchedulerOptions) error {
 			}
 
 			if !exists {
+				log.Debugf("Found missing scheduler reminder %s", stateReminder.Key())
 				missingReminders = append(missingReminders, stateReminder)
 			}
 		}

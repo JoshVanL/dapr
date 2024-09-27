@@ -20,7 +20,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	clientv3 "go.etcd.io/etcd/client/v3"
 
 	rtv1 "github.com/dapr/dapr/pkg/proto/runtime/v1"
 	"github.com/dapr/dapr/tests/integration/framework"
@@ -33,7 +32,7 @@ import (
 )
 
 func init() {
-	suite.Register(new(basic))
+	suite.Register(new(noop))
 }
 
 type noop struct {
@@ -49,7 +48,7 @@ func (n *noop) Setup(t *testing.T) []framework.Option {
 		app.WithConfig(`{"entities": ["myactortype"]}`),
 		app.WithHandlerFunc("/actors/myactortype/myactorid", func(http.ResponseWriter, *http.Request) {}),
 	)
-	n.scheduler = scheduler.New(t, scheduler.WithLogLevel("debug"))
+	n.scheduler = scheduler.New(t)
 	n.place = placement.New(t)
 
 	return []framework.Option{
@@ -80,6 +79,10 @@ spec:
 
 	daprd1.Run(t, ctx)
 	daprd1.WaitUntilRunning(t, ctx)
+
+	assert.Empty(t, n.db.ActorReminders(t, ctx, "myactortype").Reminders)
+	assert.Empty(t, n.scheduler.EtcdJobs(t, ctx))
+
 	client := daprd1.GRPCClient(t, ctx)
 	_, err := client.RegisterActorReminder(ctx, &rtv1.RegisterActorReminderRequest{
 		ActorType: "myactortype",
@@ -91,15 +94,15 @@ spec:
 		Ttl:       "10000s",
 	})
 	require.NoError(t, err)
-	resp, err := n.scheduler.ETCDClient(t).KV.Get(ctx, "dapr/jobs", clientv3.WithPrefix())
-	require.NoError(t, err)
-	assert.Empty(t, resp.Kvs)
+
+	assert.Len(t, n.db.ActorReminders(t, ctx, "myactortype").Reminders, 1)
+	assert.Empty(t, n.scheduler.EtcdJobs(t, ctx))
 	daprd1.Cleanup(t)
 
 	daprd2.Run(t, ctx)
 	daprd2.WaitUntilRunning(t, ctx)
-	resp, err = n.scheduler.ETCDClient(t).KV.Get(ctx, "dapr/jobs", clientv3.WithPrefix())
-	require.NoError(t, err)
-	assert.Len(t, resp.Kvs, 0)
 	daprd2.Cleanup(t)
+
+	assert.Len(t, n.db.ActorReminders(t, ctx, "myactortype").Reminders, 1)
+	assert.Empty(t, n.scheduler.EtcdJobs(t, ctx))
 }

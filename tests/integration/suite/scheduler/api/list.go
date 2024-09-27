@@ -74,57 +74,34 @@ func (l *list) Run(t *testing.T, ctx context.Context) {
 		}
 	}
 
-	jobRequest := func(ns, id string) *schedulerv1pb.ListJobsRequest {
-		return &schedulerv1pb.ListJobsRequest{
-			Metadata: jobMetadata(ns, id),
-		}
-	}
-
-	actorRequest := func(ns, id, actorType, actorID string) *schedulerv1pb.ListJobsRequest {
-		return &schedulerv1pb.ListJobsRequest{
-			Metadata: actorMetadata(ns, id, actorType, actorID),
-		}
-	}
+	assert.False(t, l.scheduler.ListJobJobs(t, ctx, "default", "test").GetHasMore())
+	assert.Empty(t, l.scheduler.ListJobJobs(t, ctx, "default", "test").GetJobs())
+	assert.False(t, l.scheduler.ListJobActors(t, ctx, "default", "test", "myactortype", "myactorid").GetHasMore())
+	assert.Empty(t, l.scheduler.ListJobActors(t, ctx, "default", "test", "myactortype", "myactorid").GetJobs())
 
 	client := l.scheduler.Client(t, ctx)
-	assertLen := func(t *testing.T, req *schedulerv1pb.ListJobsRequest, expected int) {
-		t.Helper()
-		resp, err := client.ListJobs(ctx, req)
-		require.NoError(t, err)
-		assert.Len(t, resp.GetJobs(), expected)
-	}
-
-	resp, err := client.ListJobs(ctx, jobRequest("default", "test"))
-	require.NoError(t, err)
-	assert.False(t, resp.GetHasMore())
-	assert.Empty(t, resp.GetJobs())
-	resp, err = client.ListJobs(ctx, actorRequest("default", "test", "myactortype", "myactorid"))
-	require.NoError(t, err)
-	assert.False(t, resp.GetHasMore())
-	assert.Empty(t, resp.GetJobs())
-
-	_, err = client.ScheduleJob(ctx, &schedulerv1.ScheduleJobRequest{
+	_, err := client.ScheduleJob(ctx, &schedulerv1.ScheduleJobRequest{
 		Name:     "test",
 		Job:      &schedulerv1.Job{Schedule: ptr.Of("@every 20s")},
 		Metadata: jobMetadata("default", "test"),
 	})
 	require.NoError(t, err)
 
-	assertLen(t, jobRequest("default", "test"), 1)
-	assertLen(t, jobRequest("default", "not-test"), 0)
-	assertLen(t, jobRequest("not-default", "test"), 0)
-	assertLen(t, actorRequest("default", "test", "myactortype", "myactorid"), 0)
+	assert.Len(t, l.scheduler.ListJobJobs(t, ctx, "default", "test").GetJobs(), 1)
+	assert.Empty(t, l.scheduler.ListJobJobs(t, ctx, "default", "not-test").GetJobs())
+	assert.Empty(t, l.scheduler.ListJobJobs(t, ctx, "not-default", "test").GetJobs())
+	assert.Empty(t, l.scheduler.ListJobActors(t, ctx, "default", "test", "myactortype", "myactorid").GetJobs())
 
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		_, err = client.ScheduleJob(ctx, &schedulerv1.ScheduleJobRequest{
 			Name:     strconv.Itoa(i),
 			Job:      &schedulerv1.Job{Schedule: ptr.Of("@every 20s")},
 			Metadata: jobMetadata("default", "test"),
 		})
 	}
-	assertLen(t, jobRequest("default", "test"), 11)
-	assertLen(t, jobRequest("default", "not-test"), 0)
-	assertLen(t, jobRequest("not-default", "test"), 0)
+	assert.Len(t, l.scheduler.ListJobJobs(t, ctx, "default", "test").GetJobs(), 11)
+	assert.Empty(t, l.scheduler.ListJobJobs(t, ctx, "default", "not-test").GetJobs())
+	assert.Empty(t, l.scheduler.ListJobJobs(t, ctx, "not-default", "test").GetJobs())
 
 	_, err = client.ScheduleJob(ctx, &schedulerv1.ScheduleJobRequest{
 		Name: "test",
@@ -137,87 +114,87 @@ func (l *list) Run(t *testing.T, ctx context.Context) {
 			},
 		},
 	})
-	assertLen(t, jobRequest("default", "test"), 11)
-	assertLen(t, jobRequest("default", "not-test"), 0)
-	assertLen(t, jobRequest("not-default", "test"), 1)
+	assert.Len(t, l.scheduler.ListJobJobs(t, ctx, "default", "test").GetJobs(), 11)
+	assert.Empty(t, l.scheduler.ListJobJobs(t, ctx, "default", "not-test").GetJobs())
+	assert.Len(t, l.scheduler.ListJobJobs(t, ctx, "not-default", "test").GetJobs(), 1)
 
 	_, err = client.ScheduleJob(ctx, &schedulerv1.ScheduleJobRequest{
 		Name:     "test",
 		Job:      &schedulerv1.Job{Schedule: ptr.Of("@every 20s")},
 		Metadata: jobMetadata("default", "not-test"),
 	})
-	assertLen(t, jobRequest("default", "test"), 11)
-	assertLen(t, jobRequest("default", "not-test"), 1)
-	assertLen(t, jobRequest("not-default", "test"), 1)
+	assert.Len(t, l.scheduler.ListJobJobs(t, ctx, "default", "test").GetJobs(), 11)
+	assert.Len(t, l.scheduler.ListJobJobs(t, ctx, "default", "not-test").GetJobs(), 1)
+	assert.Len(t, l.scheduler.ListJobJobs(t, ctx, "not-default", "test").GetJobs(), 1)
 
 	_, err = client.ScheduleJob(ctx, &schedulerv1.ScheduleJobRequest{
 		Name:     "test",
 		Job:      &schedulerv1.Job{Schedule: ptr.Of("@every 20s")},
 		Metadata: actorMetadata("default", "test", "myactortype", "myactorid"),
 	})
-	assertLen(t, jobRequest("default", "test"), 11)
-	assertLen(t, jobRequest("default", "not-test"), 1)
-	assertLen(t, jobRequest("not-default", "test"), 1)
-	assertLen(t, actorRequest("default", "test", "myactortype", "myactorid"), 1)
-	assertLen(t, actorRequest("not-default", "test", "myactortype", "myactorid"), 0)
-	assertLen(t, actorRequest("default", "test", "myactortype", "not-myactorid"), 0)
-	assertLen(t, actorRequest("default", "test", "not-myactortype", "myactorid"), 0)
-	assertLen(t, actorRequest("default", "test", "not-myactortype", "not-myactorid"), 0)
+	assert.Len(t, l.scheduler.ListJobJobs(t, ctx, "default", "test").GetJobs(), 11)
+	assert.Len(t, l.scheduler.ListJobJobs(t, ctx, "default", "not-test").GetJobs(), 1)
+	assert.Len(t, l.scheduler.ListJobJobs(t, ctx, "not-default", "test").GetJobs(), 1)
+	assert.Len(t, l.scheduler.ListJobActors(t, ctx, "default", "test", "myactortype", "myactorid").GetJobs(), 1)
+	assert.Empty(t, l.scheduler.ListJobActors(t, ctx, "not-default", "test", "myactortype", "myactorid").GetJobs())
+	assert.Empty(t, l.scheduler.ListJobActors(t, ctx, "default", "test", "myactortype", "not-myactorid").GetJobs())
+	assert.Empty(t, l.scheduler.ListJobActors(t, ctx, "default", "test", "not-myactortype", "myactorid").GetJobs())
+	assert.Empty(t, l.scheduler.ListJobActors(t, ctx, "default", "test", "not-myactortype", "not-myactorid").GetJobs())
 
 	_, err = client.ScheduleJob(ctx, &schedulerv1.ScheduleJobRequest{
 		Name:     "test",
 		Job:      &schedulerv1.Job{Schedule: ptr.Of("@every 20s")},
 		Metadata: actorMetadata("default", "test", "not-myactortype", "myactorid"),
 	})
-	assertLen(t, jobRequest("default", "test"), 11)
-	assertLen(t, jobRequest("default", "not-test"), 1)
-	assertLen(t, jobRequest("not-default", "test"), 1)
-	assertLen(t, actorRequest("default", "test", "myactortype", "myactorid"), 1)
-	assertLen(t, actorRequest("not-default", "test", "myactortype", "myactorid"), 0)
-	assertLen(t, actorRequest("default", "test", "myactortype", "not-myactorid"), 0)
-	assertLen(t, actorRequest("default", "test", "not-myactortype", "myactorid"), 1)
-	assertLen(t, actorRequest("default", "test", "not-myactortype", "not-myactorid"), 0)
+	assert.Len(t, l.scheduler.ListJobJobs(t, ctx, "default", "test").GetJobs(), 11)
+	assert.Len(t, l.scheduler.ListJobJobs(t, ctx, "default", "not-test").GetJobs(), 1)
+	assert.Len(t, l.scheduler.ListJobJobs(t, ctx, "not-default", "test").GetJobs(), 1)
+	assert.Len(t, l.scheduler.ListJobActors(t, ctx, "default", "test", "myactortype", "myactorid").GetJobs(), 1)
+	assert.Empty(t, l.scheduler.ListJobActors(t, ctx, "not-default", "test", "myactortype", "myactorid").GetJobs())
+	assert.Empty(t, l.scheduler.ListJobActors(t, ctx, "default", "test", "myactortype", "not-myactorid").GetJobs())
+	assert.Len(t, l.scheduler.ListJobActors(t, ctx, "default", "test", "not-myactortype", "myactorid").GetJobs(), 1)
+	assert.Empty(t, l.scheduler.ListJobActors(t, ctx, "default", "test", "not-myactortype", "not-myactorid").GetJobs())
 
 	_, err = client.ScheduleJob(ctx, &schedulerv1.ScheduleJobRequest{
 		Name:     "test",
 		Job:      &schedulerv1.Job{Schedule: ptr.Of("@every 20s")},
 		Metadata: actorMetadata("default", "test", "myactortype", "not-myactorid"),
 	})
-	assertLen(t, jobRequest("default", "test"), 11)
-	assertLen(t, jobRequest("default", "not-test"), 1)
-	assertLen(t, jobRequest("not-default", "test"), 1)
-	assertLen(t, actorRequest("default", "test", "myactortype", "myactorid"), 1)
-	assertLen(t, actorRequest("not-default", "test", "not-myactortype", "myactorid"), 0)
-	assertLen(t, actorRequest("default", "test", "not-myactortype", "myactorid"), 1)
-	assertLen(t, actorRequest("default", "test", "myactortype", "not-myactorid"), 1)
-	assertLen(t, actorRequest("default", "test", "not-myactortype", "not-myactorid"), 0)
+	assert.Len(t, l.scheduler.ListJobJobs(t, ctx, "default", "test").GetJobs(), 11)
+	assert.Len(t, l.scheduler.ListJobJobs(t, ctx, "default", "not-test").GetJobs(), 1)
+	assert.Len(t, l.scheduler.ListJobJobs(t, ctx, "not-default", "test").GetJobs(), 1)
+	assert.Len(t, l.scheduler.ListJobActors(t, ctx, "default", "test", "myactortype", "myactorid").GetJobs(), 1)
+	assert.Empty(t, l.scheduler.ListJobActors(t, ctx, "not-default", "test", "myactortype", "myactorid").GetJobs())
+	assert.Len(t, l.scheduler.ListJobActors(t, ctx, "default", "test", "myactortype", "not-myactorid").GetJobs(), 1)
+	assert.Len(t, l.scheduler.ListJobActors(t, ctx, "default", "test", "not-myactortype", "myactorid").GetJobs(), 1)
+	assert.Empty(t, l.scheduler.ListJobActors(t, ctx, "default", "test", "not-myactortype", "not-myactorid").GetJobs())
 
 	_, err = client.ScheduleJob(ctx, &schedulerv1.ScheduleJobRequest{
 		Name:     "test2",
 		Job:      &schedulerv1.Job{Schedule: ptr.Of("@every 20s")},
 		Metadata: actorMetadata("default", "test", "myactortype", "not-myactorid"),
 	})
-	assertLen(t, jobRequest("default", "test"), 11)
-	assertLen(t, jobRequest("default", "not-test"), 1)
-	assertLen(t, jobRequest("not-default", "test"), 1)
-	assertLen(t, actorRequest("default", "test", "myactortype", "myactorid"), 1)
-	assertLen(t, actorRequest("not-default", "test", "not-myactortype", "myactorid"), 0)
-	assertLen(t, actorRequest("default", "test", "not-myactortype", "myactorid"), 1)
-	assertLen(t, actorRequest("default", "test", "myactortype", "not-myactorid"), 2)
-	assertLen(t, actorRequest("default", "test", "not-myactortype", "not-myactorid"), 0)
+	assert.Len(t, l.scheduler.ListJobJobs(t, ctx, "default", "test").GetJobs(), 11)
+	assert.Len(t, l.scheduler.ListJobJobs(t, ctx, "default", "not-test").GetJobs(), 1)
+	assert.Len(t, l.scheduler.ListJobJobs(t, ctx, "not-default", "test").GetJobs(), 1)
+	assert.Len(t, l.scheduler.ListJobActors(t, ctx, "default", "test", "myactortype", "myactorid").GetJobs(), 1)
+	assert.Empty(t, l.scheduler.ListJobActors(t, ctx, "not-default", "test", "myactortype", "myactorid").GetJobs())
+	assert.Len(t, l.scheduler.ListJobActors(t, ctx, "default", "test", "not-myactortype", "myactorid").GetJobs(), 1)
+	assert.Len(t, l.scheduler.ListJobActors(t, ctx, "default", "test", "myactortype", "not-myactorid").GetJobs(), 2)
+	assert.Empty(t, l.scheduler.ListJobActors(t, ctx, "default", "test", "not-myactortype", "not-myactorid").GetJobs())
 
 	_, err = client.DeleteJob(ctx, &schedulerv1.DeleteJobRequest{
 		Name:     "test",
 		Metadata: jobMetadata("default", "test"),
 	})
-	assertLen(t, jobRequest("default", "test"), 10)
-	assertLen(t, jobRequest("default", "not-test"), 1)
-	assertLen(t, jobRequest("not-default", "test"), 1)
-	assertLen(t, actorRequest("default", "test", "myactortype", "myactorid"), 1)
-	assertLen(t, actorRequest("not-default", "test", "not-myactortype", "myactorid"), 0)
-	assertLen(t, actorRequest("default", "test", "not-myactortype", "myactorid"), 1)
-	assertLen(t, actorRequest("default", "test", "myactortype", "not-myactorid"), 2)
-	assertLen(t, actorRequest("default", "test", "not-myactortype", "not-myactorid"), 0)
+	assert.Len(t, l.scheduler.ListJobJobs(t, ctx, "default", "test").GetJobs(), 10)
+	assert.Len(t, l.scheduler.ListJobJobs(t, ctx, "default", "not-test").GetJobs(), 1)
+	assert.Len(t, l.scheduler.ListJobJobs(t, ctx, "not-default", "test").GetJobs(), 1)
+	assert.Len(t, l.scheduler.ListJobActors(t, ctx, "default", "test", "myactortype", "myactorid").GetJobs(), 1)
+	assert.Empty(t, l.scheduler.ListJobActors(t, ctx, "not-default", "test", "myactortype", "myactorid").GetJobs())
+	assert.Len(t, l.scheduler.ListJobActors(t, ctx, "default", "test", "not-myactortype", "myactorid").GetJobs(), 1)
+	assert.Len(t, l.scheduler.ListJobActors(t, ctx, "default", "test", "myactortype", "not-myactorid").GetJobs(), 2)
+	assert.Empty(t, l.scheduler.ListJobActors(t, ctx, "default", "test", "not-myactortype", "not-myactorid").GetJobs())
 
 	for i := 0; i < 6; i++ {
 		_, err = client.DeleteJob(ctx, &schedulerv1.DeleteJobRequest{
@@ -225,14 +202,14 @@ func (l *list) Run(t *testing.T, ctx context.Context) {
 			Metadata: jobMetadata("default", "test"),
 		})
 	}
-	assertLen(t, jobRequest("default", "test"), 4)
-	assertLen(t, jobRequest("default", "not-test"), 1)
-	assertLen(t, jobRequest("not-default", "test"), 1)
-	assertLen(t, actorRequest("default", "test", "myactortype", "myactorid"), 1)
-	assertLen(t, actorRequest("not-default", "test", "not-myactortype", "myactorid"), 0)
-	assertLen(t, actorRequest("default", "test", "not-myactortype", "myactorid"), 1)
-	assertLen(t, actorRequest("default", "test", "myactortype", "not-myactorid"), 2)
-	assertLen(t, actorRequest("default", "test", "not-myactortype", "not-myactorid"), 0)
+	assert.Len(t, l.scheduler.ListJobJobs(t, ctx, "default", "test").GetJobs(), 4)
+	assert.Len(t, l.scheduler.ListJobJobs(t, ctx, "default", "not-test").GetJobs(), 1)
+	assert.Len(t, l.scheduler.ListJobJobs(t, ctx, "not-default", "test").GetJobs(), 1)
+	assert.Len(t, l.scheduler.ListJobActors(t, ctx, "default", "test", "myactortype", "myactorid").GetJobs(), 1)
+	assert.Empty(t, l.scheduler.ListJobActors(t, ctx, "not-default", "test", "myactortype", "myactorid").GetJobs())
+	assert.Len(t, l.scheduler.ListJobActors(t, ctx, "default", "test", "not-myactortype", "myactorid").GetJobs(), 1)
+	assert.Len(t, l.scheduler.ListJobActors(t, ctx, "default", "test", "myactortype", "not-myactorid").GetJobs(), 2)
+	assert.Empty(t, l.scheduler.ListJobActors(t, ctx, "default", "test", "not-myactortype", "not-myactorid").GetJobs())
 
 	_, err = client.ScheduleJob(ctx, &schedulerv1.ScheduleJobRequest{
 		Name:     "test123",
@@ -240,10 +217,8 @@ func (l *list) Run(t *testing.T, ctx context.Context) {
 		Metadata: jobMetadata("default", "test"),
 	})
 	require.NoError(t, err)
-	assertLen(t, jobRequest("default", "test"), 5)
+	assert.Len(t, l.scheduler.ListJobJobs(t, ctx, "default", "test").GetJobs(), 5)
 	assert.EventuallyWithT(t, func(c *assert.CollectT) {
-		resp, err := client.ListJobs(ctx, jobRequest("default", "test"))
-		require.NoError(t, err)
-		assert.Len(c, resp.GetJobs(), 4)
+		assert.Len(c, l.scheduler.ListJobJobs(t, ctx, "default", "test").GetJobs(), 4)
 	}, time.Second*10, time.Millisecond*10)
 }

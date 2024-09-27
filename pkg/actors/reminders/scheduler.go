@@ -210,18 +210,12 @@ func (s *scheduler) GetReminder(ctx context.Context, req *internal.GetReminderRe
 		return nil, err
 	}
 
-	//var data json.RawMessage
-	//if err := json.Unmarshal(jsonBytes, &data); err != nil {
-	//	return nil, err
-	//}
-
 	reminder := &internal.Reminder{
 		ActorID:   req.ActorID,
 		ActorType: req.ActorType,
-		//Data:      data,
-		Data:    jsonBytes,
-		Period:  internal.NewSchedulerReminderPeriod(job.GetJob().GetSchedule(), job.GetJob().GetRepeats()),
-		DueTime: job.GetJob().GetDueTime(),
+		Data:      jsonBytes,
+		Period:    internal.NewSchedulerReminderPeriod(job.GetJob().GetSchedule(), job.GetJob().GetRepeats()),
+		DueTime:   job.GetJob().GetDueTime(),
 	}
 
 	return reminder, nil
@@ -286,11 +280,6 @@ func (s *scheduler) ListReminders(ctx context.Context, req internal.ListReminder
 		if err != nil {
 			return nil, err
 		}
-
-		//var data json.RawMessage
-		//if err := json.Unmarshal(jsonBytes, &data); err != nil {
-		//	return nil, err
-		//}
 
 		seg := strings.Split(named.GetName(), "||")
 		name := seg[len(seg)-1]

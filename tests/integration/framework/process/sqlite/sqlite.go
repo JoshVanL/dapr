@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"testing"
 
 	// Blank import for the sqlite driver
@@ -42,18 +43,23 @@ type SQLite struct {
 	dbPath            string
 	name              string
 	metadata          map[string]string
-	migrations        []string
+	migrations        []func(string) string
 	isActorStateStore bool
 	execs             []string
 	conn              *sql.DB
+	tableName         string
+	lock              sync.Mutex
+	runOnce           sync.Once
+	cleanupOnce       sync.Once
 }
 
 func New(t *testing.T, fopts ...Option) *SQLite {
 	t.Helper()
 
 	opts := options{
-		name:   "mystore",
-		dbPath: filepath.Join(t.TempDir(), "test-data.db"),
+		name:      "mystore",
+		dbPath:    filepath.Join(t.TempDir(), "test-data.db"),
+		tableName: "inttest",
 	}
 	for _, fopt := range fopts {
 		fopt(&opts)
@@ -69,29 +75,36 @@ func New(t *testing.T, fopts ...Option) *SQLite {
 		migrations:        opts.migrations,
 		isActorStateStore: opts.isActorStateStore,
 		execs:             opts.execs,
+		tableName:         opts.tableName,
 	}
 }
 
 func (s *SQLite) Run(t *testing.T, ctx context.Context) {
-	for _, migration := range s.migrations {
-		_, err := s.GetConnection(t).ExecContext(ctx, migration)
-		require.NoError(t, err)
-	}
+	s.runOnce.Do(func() {
+		for _, migration := range s.migrations {
+			_, err := s.GetConnection(t).ExecContext(ctx, migration(s.tableName))
+			require.NoError(t, err)
+		}
 
-	for _, exec := range s.execs {
-		_, err := s.GetConnection(t).ExecContext(ctx, exec)
-		require.NoError(t, err)
-	}
+		for _, exec := range s.execs {
+			_, err := s.GetConnection(t).ExecContext(ctx, exec)
+			require.NoError(t, err)
+		}
+	})
 }
 
 func (s *SQLite) Cleanup(t *testing.T) {
-	if s.conn != nil {
-		require.NoError(t, s.conn.Close())
-	}
+	s.cleanupOnce.Do(func() {
+		if s.conn != nil {
+			require.NoError(t, s.conn.Close())
+		}
+	})
 }
 
 // GetConnection returns the connection to the SQLite database.
 func (s *SQLite) GetConnection(t *testing.T) *sql.DB {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	if s.conn != nil {
 		return s.conn
 	}
@@ -117,6 +130,7 @@ func (s *SQLite) GetComponent(t *testing.T) string {
 			Metadata: []commonapi.NameValuePair{
 				{Name: "connectionString", Value: toDynamicValue(t, "file:"+s.dbPath)},
 				{Name: "actorStateStore", Value: toDynamicValue(t, strconv.FormatBool(s.isActorStateStore))},
+				{Name: "tableName", Value: toDynamicValue(t, s.tableName)},
 			},
 		},
 	}
@@ -131,6 +145,10 @@ func (s *SQLite) GetComponent(t *testing.T) string {
 	enc, err := json.Marshal(c)
 	require.NoError(t, err)
 	return string(enc)
+}
+
+func (s *SQLite) TableName() string {
+	return s.tableName
 }
 
 func toDynamicValue(t *testing.T, val string) commonapi.DynamicValue {

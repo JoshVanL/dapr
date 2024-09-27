@@ -22,7 +22,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	clientv3 "go.etcd.io/etcd/client/v3"
 
 	rtv1 "github.com/dapr/dapr/pkg/proto/runtime/v1"
 	"github.com/dapr/dapr/tests/integration/framework"
@@ -56,7 +55,7 @@ func (d *distributed) Setup(t *testing.T) []framework.Option {
 		app.WithConfig(`{"entities": ["myactortype"]}`),
 		app.WithHandlerFunc("/actors", func(http.ResponseWriter, *http.Request) {}),
 	)
-	d.scheduler = scheduler.New(t, scheduler.WithLogLevel("debug"))
+	d.scheduler = scheduler.New(t)
 	d.place = placement.New(t)
 
 	return []framework.Option{
@@ -120,11 +119,11 @@ spec:
 	}
 	wg.Wait()
 
-	resp, err := d.scheduler.ETCDClient(t).KV.Get(ctx, "dapr/jobs", clientv3.WithPrefix())
-	require.NoError(t, err)
-	assert.Empty(t, resp.Kvs)
-	daprd1.Cleanup(t)
+	assert.Len(t, d.db.ActorReminders(t, ctx, "myactortype").Reminders, 100)
+	assert.Len(t, d.db.ActorReminders(t, ctx, "myactortype2").Reminders, 100)
+	assert.Empty(t, d.scheduler.EtcdJobs(t, ctx))
 
+	daprd1.Cleanup(t)
 	daprd2.Run(t, ctx)
 	daprd3.Run(t, ctx)
 	daprd4.Run(t, ctx)
@@ -133,15 +132,17 @@ spec:
 	daprd3.WaitUntilRunning(t, ctx)
 	daprd4.WaitUntilRunning(t, ctx)
 	daprd5.WaitUntilRunning(t, ctx)
-	resp, err = d.scheduler.ETCDClient(t).KV.Get(ctx, "dapr/jobs", clientv3.WithPrefix())
-	require.NoError(t, err)
-	assert.Len(t, resp.Kvs, 100)
+
+	assert.Len(t, d.db.ActorReminders(t, ctx, "myactortype").Reminders, 100)
+	assert.Len(t, d.db.ActorReminders(t, ctx, "myactortype2").Reminders, 100)
+	assert.Len(t, d.scheduler.EtcdJobs(t, ctx), 100)
 
 	daprd6.Run(t, ctx)
 	daprd6.WaitUntilRunning(t, ctx)
-	resp, err = d.scheduler.ETCDClient(t).KV.Get(ctx, "dapr/jobs", clientv3.WithPrefix())
-	require.NoError(t, err)
-	assert.Len(t, resp.Kvs, 200)
+
+	assert.Len(t, d.db.ActorReminders(t, ctx, "myactortype").Reminders, 100)
+	assert.Len(t, d.db.ActorReminders(t, ctx, "myactortype2").Reminders, 100)
+	assert.Len(t, d.scheduler.EtcdJobs(t, ctx), 200)
 
 	daprd2.Cleanup(t)
 	daprd3.Cleanup(t)

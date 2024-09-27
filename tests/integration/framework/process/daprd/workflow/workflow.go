@@ -23,12 +23,12 @@ import (
 
 	rtv1 "github.com/dapr/dapr/pkg/proto/runtime/v1"
 	"github.com/dapr/dapr/tests/integration/framework/iowriter/logger"
-	"github.com/dapr/dapr/tests/integration/framework/process/daprd/actor"
+	"github.com/dapr/dapr/tests/integration/framework/process/daprd/actors"
 )
 
 type Workflow struct {
 	registry *task.TaskRegistry
-	actor    *actor.Actor
+	actors   *actors.Actors
 }
 
 func New(t *testing.T, fopts ...Option) *Workflow {
@@ -43,35 +43,35 @@ func New(t *testing.T, fopts ...Option) *Workflow {
 
 	return &Workflow{
 		registry: opts.registry,
-		actor:    actor.New(t, actor.WithScheduler(opts.enableScheduler)),
+		actors:   actors.New(t, actors.WithFeatureSchedulerReminders(opts.enableScheduler)),
 	}
 }
 
 func (w *Workflow) Run(t *testing.T, ctx context.Context) {
-	w.actor.Run(t, ctx)
+	w.actors.Run(t, ctx)
 }
 
 func (w *Workflow) Cleanup(t *testing.T) {
-	w.actor.Cleanup(t)
+	w.actors.Cleanup(t)
 }
 
 func (w *Workflow) WaitUntilRunning(t *testing.T, ctx context.Context) {
-	w.actor.WaitUntilRunning(t, ctx)
+	w.actors.WaitUntilRunning(t, ctx)
 }
 
 func (w *Workflow) BackendClient(t *testing.T, ctx context.Context) *client.TaskHubGrpcClient {
 	t.Helper()
-	backendClient := client.NewTaskHubGrpcClient(w.actor.GRPCConn(t, ctx), logger.New(t))
+	backendClient := client.NewTaskHubGrpcClient(w.actors.GRPCConn(t, ctx), logger.New(t))
 	require.NoError(t, backendClient.StartWorkItemListener(ctx, w.registry))
 	return backendClient
 }
 
 func (w *Workflow) GRPCClient(t *testing.T, ctx context.Context) rtv1.DaprClient {
 	t.Helper()
-	return w.actor.GRPCClient(t, ctx)
+	return w.actors.GRPCClient(t, ctx)
 }
 
 func (w *Workflow) Metrics(t *testing.T, ctx context.Context) map[string]float64 {
 	t.Helper()
-	return w.actor.Metrics(t, ctx)
+	return w.actors.Metrics(t, ctx)
 }

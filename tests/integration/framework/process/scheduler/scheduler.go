@@ -21,7 +21,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,6 +29,7 @@ import (
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -47,9 +48,8 @@ import (
 )
 
 type Scheduler struct {
-	exec    process.Interface
-	ports   *ports.Ports
-	running atomic.Bool
+	exec  process.Interface
+	ports *ports.Ports
 
 	port        int
 	healthzPort int
@@ -61,6 +61,9 @@ type Scheduler struct {
 	initialCluster  string
 	etcdClientPorts map[string]string
 	sentry          *sentry.Sentry
+
+	runOnce sync.Once
+	cleanup sync.Once
 }
 
 func New(t *testing.T, fopts ...Option) *Scheduler {
@@ -153,20 +156,16 @@ func New(t *testing.T, fopts ...Option) *Scheduler {
 }
 
 func (s *Scheduler) Run(t *testing.T, ctx context.Context) {
-	if !s.running.CompareAndSwap(false, true) {
-		t.Fatal("Process is already running")
-	}
-
-	s.ports.Free(t)
-	s.exec.Run(t, ctx)
+	s.runOnce.Do(func() {
+		s.ports.Free(t)
+		s.exec.Run(t, ctx)
+	})
 }
 
 func (s *Scheduler) Cleanup(t *testing.T) {
-	if !s.running.CompareAndSwap(true, false) {
-		return
-	}
-
-	s.exec.Cleanup(t)
+	s.cleanup.Do(func() {
+		s.exec.Cleanup(t)
+	})
 }
 
 func (s *Scheduler) WaitUntilRunning(t *testing.T, ctx context.Context) {
@@ -267,7 +266,7 @@ func (s *Scheduler) ClientMTLS(t *testing.T, ctx context.Context, appID string) 
 	return schedulerv1pb.NewSchedulerClient(conn)
 }
 
-func (s *Scheduler) ETCDClient(t *testing.T) *clientv3.Client {
+func (s *Scheduler) EtcdClient(t *testing.T) *clientv3.Client {
 	t.Helper()
 
 	client, err := clientv3.New(clientv3.Config{
@@ -281,4 +280,46 @@ func (s *Scheduler) ETCDClient(t *testing.T) *clientv3.Client {
 	})
 
 	return client
+}
+
+func (s *Scheduler) EtcdJobs(t *testing.T, ctx context.Context) []*mvccpb.KeyValue {
+	t.Helper()
+	resp, err := s.EtcdClient(t).KV.Get(ctx, "dapr/jobs", clientv3.WithPrefix())
+	require.NoError(t, err)
+	return resp.Kvs
+}
+
+func (s *Scheduler) ListJobActors(t *testing.T, ctx context.Context, namespace, appID, actorType, actorID string) *schedulerv1pb.ListJobsResponse {
+	t.Helper()
+	resp, err := s.Client(t, ctx).ListJobs(ctx, &schedulerv1pb.ListJobsRequest{
+		Metadata: &schedulerv1pb.JobMetadata{
+			Namespace: namespace, AppId: appID,
+			Target: &schedulerv1pb.JobTargetMetadata{
+				Type: &schedulerv1pb.JobTargetMetadata_Actor{
+					Actor: &schedulerv1pb.TargetActorReminder{
+						Type: actorType,
+						Id:   actorID,
+					},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	return resp
+}
+
+func (s *Scheduler) ListJobJobs(t *testing.T, ctx context.Context, namespace, appID string) *schedulerv1pb.ListJobsResponse {
+	t.Helper()
+	resp, err := s.Client(t, ctx).ListJobs(ctx, &schedulerv1pb.ListJobsRequest{
+		Metadata: &schedulerv1pb.JobMetadata{
+			Namespace: namespace, AppId: appID,
+			Target: &schedulerv1pb.JobTargetMetadata{
+				Type: &schedulerv1pb.JobTargetMetadata_Job{
+					Job: new(schedulerv1pb.TargetJob),
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	return resp
 }

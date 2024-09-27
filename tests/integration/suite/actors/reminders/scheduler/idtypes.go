@@ -198,10 +198,15 @@ func (i *idtype) Run(t *testing.T, ctx context.Context) {
 		}
 	}
 
+	i.lock.Lock()
+	expMethodCalled := i.actorIDsNum * i.actorTypesNum * i.daprdsNum
+	i.lock.Unlock()
+
 	assert.EventuallyWithT(t, func(c *assert.CollectT) {
 		i.lock.Lock()
-		defer i.lock.Unlock()
-		assert.Len(c, i.methodcalled, i.actorIDsNum*i.actorTypesNum*i.daprdsNum)
+		methodCalled := i.methodcalled
+		i.lock.Unlock()
+		assert.Len(c, methodCalled, expMethodCalled)
 	}, time.Second*20, time.Millisecond*10)
 
 	require.EventuallyWithT(t, func(c *assert.CollectT) {
