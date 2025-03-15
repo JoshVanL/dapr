@@ -131,6 +131,12 @@ func newHashMap() *hashMap {
 	}
 }
 
+func NewConsistentHashTables() *ConsistentHashTables {
+	return &ConsistentHashTables{
+		Entries: make(map[string]*Consistent),
+	}
+}
+
 func NewVirtualNodesCache() *VirtualNodesCache {
 	return &VirtualNodesCache{
 		data: make(map[int64]*hashMap),

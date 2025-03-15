@@ -47,10 +47,16 @@ func NewActorError(res *internalv1pb.InternalInvokeResponse) error {
 	}
 
 	msg := res.GetMessage()
+	body := []byte{}
+	var contentType string
+	if msg != nil {
+		body = msg.GetData().GetValue()
+		contentType = msg.GetContentType()
+	}
 	return &ActorError{
-		body:        msg.GetData().GetValue(),
+		body:        body,
 		headers:     res.GetHeaders(),
-		contentType: msg.GetContentType(),
+		contentType: contentType,
 		statusCode:  statusCode,
 		message:     "actor error with details in body",
 	}
