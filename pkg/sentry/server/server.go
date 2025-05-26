@@ -15,10 +15,13 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
 	"net"
+	"net/http"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -31,6 +34,7 @@ import (
 	"github.com/dapr/dapr/pkg/sentry/monitoring"
 	"github.com/dapr/dapr/pkg/sentry/server/ca"
 	"github.com/dapr/dapr/pkg/sentry/server/validator"
+	"github.com/dapr/kit/concurrency"
 	secpem "github.com/dapr/kit/crypto/pem"
 	"github.com/dapr/kit/logger"
 )
@@ -220,4 +224,76 @@ func (s *Server) signCertificate(ctx context.Context, req *sentryv1pb.SignCertif
 		TrustChainCertificates: [][]byte{s.ca.TrustAnchors()},
 		ValidUntil:             timestamppb.New(chain[0].NotAfter),
 	}, nil
+
+	return concurrency.NewRunnerManager(
+		func(ctx context.Context) error {
+			listener, err := net.Listen("tcp", addr)
+			if err != nil {
+				return fmt.Errorf("failed to listen on %s: %w", addr, err)
+			}
+
+			s.htarget.Ready()
+
+			if s.insecure {
+				log.Infof("Starting OIDC HTTP server (insecure) on %s", addr)
+				if err := server.Serve(listener); err != http.ErrServerClosed {
+					return fmt.Errorf("OIDC HTTP server error: %w", err)
+				}
+				return nil
+			}
+
+			log.Infof("Starting OIDC HTTP server on %s", addr)
+			tlsListener := tls.NewListener(listener, s.tlsConfig)
+			if err := server.Serve(tlsListener); err != http.ErrServerClosed {
+				return fmt.Errorf("OIDC HTTP server error: %w", err)
+			}
+
+			return nil
+		},
+		func(ctx context.Context) error {
+			<-ctx.Done()
+			s.htarget.NotReady()
+			log.Info("Shutting down OIDC HTTP server")
+			sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			return s.server.Shutdown(sctx)
+		},
+	).Run(ctx)
+
+	// errCh := make(chan error, 1)
+	// readyCh := make(chan struct{}, 1)
+	//
+	// go func() {
+	// }()
+	//
+	// select {
+	// case <-readyCh:
+	//
+	//	s.htarget.Ready()
+	//
+	// case err := <-errCh:
+	//
+	//	s.htarget.NotReady()
+	//	return err
+	//
+	// case <-ctx.Done():
+	//
+	//		s.htarget.NotReady()
+	//		return ctx.Err()
+	//	}
+	//
+	// select {
+	// case err := <-errCh:
+	//
+	//	s.htarget.NotReady()
+	//	return err
+	//
+	// case <-ctx.Done():
+	//
+	//		s.htarget.NotReady()
+	//		log.Info("Shutting down OIDC HTTP server")
+	//		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	//		defer cancel()
+	//		return s.server.Shutdown(shutdownCtx)
+	//	}
 }

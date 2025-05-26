@@ -103,3 +103,27 @@ func (n *Namespace) ActorType(namespace, actorType string) (loop.Interface[loops
 
 	return store.actorTypes.get(actorType)
 }
+
+func (n *Namespace) AllAppIDs(namespace, id string) []loop.Interface[loops.Event] {
+	n.lock.RLock()
+	defer n.lock.RUnlock()
+
+	store, ok := n.stores[namespace]
+	if !ok {
+		return nil
+	}
+
+	return store.appIDs.getAll(id)
+}
+
+func (n *Namespace) AllActorTypes(namespace, actorType string) []loop.Interface[loops.Event] {
+	n.lock.RLock()
+	defer n.lock.RUnlock()
+
+	store, ok := n.stores[namespace]
+	if !ok {
+		return nil
+	}
+
+	return store.actorTypes.getAll(actorType)
+}

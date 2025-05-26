@@ -14,6 +14,7 @@ limitations under the License.
 package api
 
 import (
+	_ "github.com/dapr/dapr/tests/integration/suite/scheduler/api/broadcast"
 	_ "github.com/dapr/dapr/tests/integration/suite/scheduler/api/list"
 	_ "github.com/dapr/dapr/tests/integration/suite/scheduler/api/watchhosts"
 )

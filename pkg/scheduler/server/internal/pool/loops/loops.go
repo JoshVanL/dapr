@@ -47,5 +47,28 @@ type ConnCloseStream struct {
 	StreamIDx uint64
 }
 
+// JobPut is the event for putting a job into the scheduler.
+type JobPut struct {
+	Job *internalsv1pb.JobEvent
+}
+
+// JobDelete is the event for deleting a job from the scheduler.
+type JobDelete struct {
+	Job *internalsv1pb.JobEvent
+}
+
+// JobDropAll is the event for dropping all broadcast jobs from the scheduler.
+type JobDropAll struct{}
+
+// BroadcastAddJob is the event for adding a job to the broadcast queue.
+type BroadcastAddJob struct {
+	Job *internalsv1pb.JobEvent
+}
+
+// BroadcastDeleteJob is the event for deleting a job from the broadcast queue.
+type BroadcastDeleteJob struct {
+	Job *internalsv1pb.JobEvent
+}
+
 // Shutdown is the event for shutting down the scheduler loops.
 type Shutdown struct{}

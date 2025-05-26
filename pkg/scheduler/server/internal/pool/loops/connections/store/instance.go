@@ -67,3 +67,17 @@ func (i *instance) get(name string) (loop.Interface[loops.Event], bool) {
 	defer func() { en.idx++ }()
 	return en.conns[en.idx%uint64(len(en.conns))].Loop, true
 }
+
+func (i *instance) getAll(name string) []loop.Interface[loops.Event] {
+	en, ok := i.entries[name]
+	if !ok {
+		return nil
+	}
+
+	loops := make([]loop.Interface[loops.Event], len(en.conns))
+	for idx, conn := range en.conns {
+		loops[idx] = conn.Loop
+	}
+
+	return loops
+}

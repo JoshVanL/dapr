@@ -3,6 +3,7 @@ syntax = "proto3";
 package dapr.proto.scheduler.v1;
 
 import "dapr/proto/scheduler/v1/failurepolicy.proto";
+import "dapr/proto/scheduler/v1/broadcast.proto";
 import "google/protobuf/any.proto";
 
 option go_package = "github.com/dapr/dapr/pkg/proto/scheduler/v1;scheduler";
@@ -69,6 +70,9 @@ enum JobTargetType {
 
   // JOB_TARGET_TYPE_ACTOR_REMINDER is the actor reminder target type.
   JOB_TARGET_TYPE_ACTOR_REMINDER = 1;
+
+  // JOB_TARGET_TYPE_DURABLE_ACTOR_ID is the broadcast durable actor ID target type.
+  JOB_TARGET_TYPE_DURBALE_ACTOR_ID = 2;
 }
 
 // JobTargetMetadata holds the typed metadata associated with the job for
@@ -77,6 +81,7 @@ message JobTargetMetadata {
   oneof type {
     TargetJob job = 1;
     TargetActorReminder actor = 2;
+    TargetBroadcast broadcast = 3;
   }
 }
 

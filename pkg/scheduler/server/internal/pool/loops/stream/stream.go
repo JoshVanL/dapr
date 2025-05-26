@@ -1,4 +1,5 @@
 /*
+
 Copyright 2025 The Dapr Authors
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -109,13 +110,14 @@ func (s *stream) Handle(ctx context.Context, event loops.Event) error {
 // the job to the stream and stores the result function in the inflight map.
 func (s *stream) handleTriggerRequest(req *loops.TriggerRequest) {
 	s.triggerIDx++
+	triggerIDx := s.triggerIDx
 	s.lock.Lock()
-	s.inflight[s.triggerIDx] = req.ResultFn
+	s.inflight[triggerIDx] = req.ResultFn
 	s.lock.Unlock()
 
 	job := &schedulerv1pb.WatchJobsResponse{
 		Name:     req.Job.GetName(),
-		Id:       s.triggerIDx,
+		Id:       triggerIDx,
 		Data:     req.Job.GetData(),
 		Metadata: req.Job.GetMetadata(),
 	}

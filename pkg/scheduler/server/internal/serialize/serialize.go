@@ -88,6 +88,13 @@ func (s *Serializer) PrefixFromList(ctx context.Context, req *schedulerv1pb.JobM
 		return s, nil
 	case *schedulerv1pb.JobTargetMetadata_Job:
 		return joinStrings("app", req.GetNamespace(), req.GetAppId()), nil
+	case *schedulerv1pb.JobTargetMetadata_Broadcast:
+		switch b := t.GetBroadcast().GetBroadcast().(type) {
+		case *schedulerv1pb.TargetBroadcast_DurableActorId:
+			return joinStrings("broadcast-duractorid", req.GetNamespace(), b.DurableActorId.GetType(), b.DurableActorId.GetId()), nil
+		default:
+			return "", fmt.Errorf("unknown broadcast type: %v", b)
+		}
 	default:
 		return "", fmt.Errorf("unknown job type: %v", t)
 	}
@@ -137,6 +144,13 @@ func buildJobName(req Request) (string, error) {
 		return joinStrings("actorreminder", meta.GetNamespace(), actor.GetType(), actor.GetId(), name), nil
 	case *schedulerv1pb.JobTargetMetadata_Job:
 		return joinStrings("app", meta.GetNamespace(), meta.GetAppId(), name), nil
+	case *schedulerv1pb.JobTargetMetadata_Broadcast:
+		switch b := t.GetBroadcast().GetBroadcast().(type) {
+		case *schedulerv1pb.TargetBroadcast_DurableActorId:
+			return joinStrings("broadcast-duractorid", meta.GetNamespace(), b.DurableActorId.GetType(), b.DurableActorId.GetId(), name), nil
+		default:
+			return "", fmt.Errorf("unknown broadcast type: %v", b)
+		}
 	default:
 		return "", fmt.Errorf("unknown job type: %v", t)
 	}

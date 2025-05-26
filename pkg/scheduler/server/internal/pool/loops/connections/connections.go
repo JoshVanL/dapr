@@ -24,8 +24,9 @@ import (
 
 	schedulerv1pb "github.com/dapr/dapr/pkg/proto/scheduler/v1"
 	"github.com/dapr/dapr/pkg/scheduler/server/internal/pool/loops"
+	"github.com/dapr/dapr/pkg/scheduler/server/internal/pool/loops/connections/store"
 	"github.com/dapr/dapr/pkg/scheduler/server/internal/pool/loops/stream"
-	"github.com/dapr/dapr/pkg/scheduler/server/internal/pool/store"
+	"github.com/dapr/dapr/pkg/scheduler/server/internal/pool/loops/trigger"
 	"github.com/dapr/kit/events/loop"
 	"github.com/dapr/kit/logger"
 )
@@ -48,14 +49,17 @@ type connections struct {
 	streamIDx  uint64
 	streamPool *store.Namespace
 	wg         sync.WaitGroup
+
+	triggerLoops map[string]loop.Interface[loops.Event]
 }
 
 func New(opts Options) loop.Interface[loops.Event] {
 	conns := &connections{
-		streams:    make(map[uint64]context.CancelCauseFunc),
-		cancelPool: opts.CancelPool,
-		cron:       opts.Cron,
-		streamPool: store.New(),
+		streams:      make(map[uint64]context.CancelCauseFunc),
+		cancelPool:   opts.CancelPool,
+		cron:         opts.Cron,
+		streamPool:   store.New(),
+		triggerLoops: make(map[string]loop.Interface[loops.Event]),
 	}
 
 	conns.loop = loop.New(conns, 1024)
@@ -63,15 +67,22 @@ func New(opts Options) loop.Interface[loops.Event] {
 }
 
 func (c *connections) Handle(ctx context.Context, event loops.Event) error {
+	fmt.Printf(">>> connections.Handle: %T\n", event)
 	switch e := event.(type) {
 	case *loops.ConnAdd:
 		return c.handleAdd(ctx, e)
 	case *loops.ConnCloseStream:
 		c.handleCloseStream(e)
-	case *loops.TriggerRequest:
-		c.handleTriggerRequest(e)
 	case *loops.Shutdown:
 		c.handleShutdown()
+
+	case *loops.TriggerRequest:
+		c.handleTriggerRequest(e)
+	case *loops.BroadcastAddJob:
+		return c.handleBroadcastAdd(e)
+	case *loops.BroadcastDeleteJob:
+		return c.handleBroadcastDelete(e)
+
 	default:
 		return fmt.Errorf("unknown connections event type: %T", e)
 	}
@@ -148,18 +159,25 @@ func (c *connections) handleAdd(ctx context.Context, add *loops.ConnAdd) error {
 		},
 	})
 
+	// TODO: @joshvanl: need to send all current broadcast jobs.
+
 	return nil
 }
 
 // handleTriggerRequest handles a trigger request for a job.
 func (c *connections) handleTriggerRequest(req *loops.TriggerRequest) {
-	loop, ok := c.getStreamLoop(req.Job.GetMetadata())
+	trig, ok := c.triggerLoops[req.Job.GetKey()]
 	if !ok {
-		req.ResultFn(api.TriggerResponseResult_UNDELIVERABLE)
-		return
+		// TODO: @joshvanl: cache
+		trig = trigger.New(trigger.Options{
+			StreamPool: c.streamPool,
+		})
+		c.triggerLoops[req.Job.GetKey()] = trig
+
+		go trig.Run(context.TODO())
 	}
 
-	loop.Enqueue(req)
+	trig.Enqueue(req)
 }
 
 // handleCloseStream handles a close stream request.
@@ -178,21 +196,49 @@ func (c *connections) handleCloseStream(closeStream *loops.ConnCloseStream) erro
 func (c *connections) handleShutdown() {
 	defer c.wg.Wait()
 
+	var wg sync.WaitGroup
+	wg.Add(len(c.streams))
 	for _, cancel := range c.streams {
-		cancel(nil)
+		go func() {
+			cancel(nil)
+			wg.Done()
+		}()
 	}
+
+	wg.Wait()
 
 	c.streams = make(map[uint64]context.CancelCauseFunc)
 }
 
-// getStreamLoop returns a stream loop from the pool based on the metadata.
-func (c *connections) getStreamLoop(meta *schedulerv1pb.JobMetadata) (loop.Interface[loops.Event], bool) {
-	switch t := meta.GetTarget(); t.GetType().(type) {
-	case *schedulerv1pb.JobTargetMetadata_Job:
-		return c.streamPool.AppID(meta.GetNamespace(), meta.GetAppId())
-	case *schedulerv1pb.JobTargetMetadata_Actor:
-		return c.streamPool.ActorType(meta.GetNamespace(), t.GetActor().GetType())
-	default:
-		return nil, false
+// TODO: @joshvanl
+func (c *connections) handleBroadcastAdd(req *loops.BroadcastAddJob) error {
+	trig, ok := c.triggerLoops[req.Job.GetKey()]
+	if !ok {
+		// TODO: @joshvanl: cache
+		trig = trigger.New(trigger.Options{
+			StreamPool: c.streamPool,
+		})
+		c.triggerLoops[req.Job.GetKey()] = trig
+
+		go trig.Run(context.TODO())
 	}
+
+	trig.Enqueue(req)
+	return nil
+}
+
+func (c *connections) handleBroadcastDelete(req *loops.BroadcastDeleteJob) error {
+	trig, ok := c.triggerLoops[req.Job.GetKey()]
+	if !ok {
+		// TODO: @joshvanl: cache
+		trig = trigger.New(trigger.Options{
+			StreamPool: c.streamPool,
+		})
+		c.triggerLoops[req.Job.GetKey()] = trig
+
+		go trig.Run(context.TODO())
+	}
+
+	trig.Enqueue(req)
+	return nil
 }

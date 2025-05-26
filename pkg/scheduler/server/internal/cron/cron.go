@@ -103,6 +103,7 @@ func (c *cron) Run(ctx context.Context) error {
 		return err
 	}
 
+	consumerSink := make(chan *api.InformerEvent, 10)
 	c.etcdcron, err = etcdcron.New(etcdcron.Options{
 		Client:          client,
 		Namespace:       "dapr",
@@ -110,13 +111,15 @@ func (c *cron) Run(ctx context.Context) error {
 		TriggerFn:       c.triggerHandler,
 		ReplicaData:     hostAny,
 		WatchLeadership: watchLeadershipCh,
+		ConsumerSink:    consumerSink,
 	})
 	if err != nil {
 		return fmt.Errorf("fail to create etcd-cron: %s", err)
 	}
 
 	c.connectionPool = pool.New(pool.Options{
-		Cron: c.etcdcron,
+		Cron:         c.etcdcron,
+		ConsumerSink: consumerSink,
 	})
 
 	return concurrency.NewRunnerManager(

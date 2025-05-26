@@ -21,8 +21,10 @@ import (
 
 	internalsv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 	schedulerv1pb "github.com/dapr/dapr/pkg/proto/scheduler/v1"
+	"github.com/dapr/dapr/pkg/scheduler/server/internal/pool/informer"
 	"github.com/dapr/dapr/pkg/scheduler/server/internal/pool/loops"
 	"github.com/dapr/dapr/pkg/scheduler/server/internal/pool/loops/connections"
+	"github.com/dapr/dapr/pkg/scheduler/server/internal/pool/loops/jobs"
 	"github.com/dapr/kit/concurrency"
 	"github.com/dapr/kit/events/loop"
 	"github.com/dapr/kit/logger"
@@ -36,13 +38,15 @@ var respChPool = sync.Pool{New: func() any {
 }}
 
 type Options struct {
-	Cron api.Interface
+	Cron         api.Interface
+	ConsumerSink <-chan *api.InformerEvent
 }
 
 // Pool represents a connection pool for namespace/appID separation of sidecars
 // to schedulers.
 type Pool struct {
-	cron api.Interface
+	cron         api.Interface
+	consumerSink <-chan *api.InformerEvent
 
 	connsLoop loop.Interface[loops.Event]
 	readyCh   chan struct{}
@@ -50,8 +54,9 @@ type Pool struct {
 
 func New(opts Options) *Pool {
 	return &Pool{
-		readyCh: make(chan struct{}),
-		cron:    opts.Cron,
+		consumerSink: opts.ConsumerSink,
+		readyCh:      make(chan struct{}),
+		cron:         opts.Cron,
 	}
 }
 
@@ -62,6 +67,15 @@ func (p *Pool) Run(ctx context.Context) error {
 		CancelPool: cancel,
 	})
 
+	jobsLoop := jobs.New(jobs.Options{
+		ConnectionsLoop: p.connsLoop,
+	})
+
+	informer := informer.New(informer.Options{
+		ConsumerSink: p.consumerSink,
+		JobsLoop:     jobsLoop,
+	})
+
 	close(p.readyCh)
 
 	return concurrency.NewRunnerManager(
@@ -70,8 +84,17 @@ func (p *Pool) Run(ctx context.Context) error {
 			return err
 		},
 		func(ctx context.Context) error {
+			err := jobsLoop.Run(ctx)
+			return err
+		},
+		func(ctx context.Context) error {
+			err := informer.Run(ctx)
+			return err
+		},
+		func(ctx context.Context) error {
 			<-ctx.Done()
 			log.Info("Connection pool shutting down")
+			jobsLoop.Close(new(loops.Shutdown))
 			p.connsLoop.Close(new(loops.Shutdown))
 			return nil
 		},
@@ -105,7 +128,11 @@ func (p *Pool) Trigger(ctx context.Context, job *internalsv1pb.JobEvent) api.Tri
 		},
 	})
 
-	resp := <-respCh
-	respChPool.Put(respCh)
-	return resp
+	select {
+	case resp := <-respCh:
+		respChPool.Put(respCh)
+		return resp
+	case <-ctx.Done():
+		return api.TriggerResponseResult_UNDELIVERABLE
+	}
 }
