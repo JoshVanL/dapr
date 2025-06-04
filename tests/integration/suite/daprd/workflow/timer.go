@@ -24,7 +24,6 @@ import (
 	"github.com/dapr/dapr/tests/integration/framework"
 	"github.com/dapr/dapr/tests/integration/framework/process/workflow"
 	"github.com/dapr/dapr/tests/integration/suite"
-	"github.com/dapr/durabletask-go/api"
 	"github.com/dapr/durabletask-go/task"
 )
 
@@ -47,24 +46,42 @@ func (i *timer) Setup(t *testing.T) []framework.Option {
 func (i *timer) Run(t *testing.T, ctx context.Context) {
 	i.workflow.WaitUntilRunning(t, ctx)
 
+	var now time.Time
 	i.workflow.Registry().AddOrchestratorN("timer", func(ctx *task.OrchestrationContext) (any, error) {
-		if err := ctx.CreateTimer(time.Second * 4).Await(nil); err != nil {
+		if !ctx.IsReplaying {
+			now = time.Now()
+		}
+		if err := ctx.CreateTimer(time.Second * 10).Await(nil); err != nil {
 			return nil, err
 		}
-		require.NoError(t, ctx.CallActivity("abc", task.WithActivityInput("abc")).Await(nil))
 		return nil, nil
 	})
-	i.workflow.Registry().AddActivityN("abc", func(ctx task.ActivityContext) (any, error) {
-		var f string
-		require.NoError(t, ctx.GetInput(&f))
-		return nil, nil
-	})
+
 	client := i.workflow.BackendClient(t, ctx)
 
-	now := time.Now()
-	id, err := client.ScheduleNewOrchestration(ctx, "timer", api.WithInstanceID("timer"))
+	id, err := client.ScheduleNewOrchestration(ctx, "timer")
 	require.NoError(t, err)
 	_, err = client.WaitForOrchestrationCompletion(ctx, id)
 	require.NoError(t, err)
-	assert.GreaterOrEqual(t, time.Since(now).Seconds(), 4.0)
+	assert.InDelta(t, time.Since(now).Seconds(), 10.0, 1)
+
+	id, err = client.ScheduleNewOrchestration(ctx, "timer")
+	require.NoError(t, err)
+	time.Sleep(time.Second)
+	require.NoError(t, client.SuspendOrchestration(ctx, id, "foo"))
+	time.Sleep(time.Second * 5)
+	require.NoError(t, client.ResumeOrchestration(ctx, id, "bar"))
+	_, err = client.WaitForOrchestrationCompletion(ctx, id)
+	require.NoError(t, err)
+	assert.InDelta(t, time.Since(now).Seconds(), 10.0, 0.25)
+
+	id, err = client.ScheduleNewOrchestration(ctx, "timer")
+	require.NoError(t, err)
+	time.Sleep(time.Second)
+	require.NoError(t, client.SuspendOrchestration(ctx, id, "foo"))
+	time.Sleep(time.Second * 14)
+	require.NoError(t, client.ResumeOrchestration(ctx, id, "bar"))
+	_, err = client.WaitForOrchestrationCompletion(ctx, id)
+	require.NoError(t, err)
+	assert.InDelta(t, time.Since(now).Seconds(), 15.0, 0.25)
 }
