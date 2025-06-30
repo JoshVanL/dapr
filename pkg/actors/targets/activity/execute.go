@@ -31,7 +31,7 @@ import (
 	"github.com/dapr/durabletask-go/backend"
 )
 
-func (a *activity) executeActivity(ctx context.Context, name string, taskEvent *backend.HistoryEvent) (todo.RunCompleted, error) {
+func (a *activity) execute(ctx context.Context, name string, taskEvent *backend.HistoryEvent) (todo.RunCompleted, error) {
 	activityName := ""
 	if ts := taskEvent.GetTaskScheduled(); ts != nil {
 		activityName = ts.GetName()
@@ -49,7 +49,7 @@ func (a *activity) executeActivity(ctx context.Context, name string, taskEvent *
 		SequenceNumber: int64(taskEvent.GetEventId()),
 		InstanceID:     api.InstanceID(workflowID),
 		NewEvent:       taskEvent,
-		Properties:     make(map[string]any),
+		CallbackCh:     make(chan bool, 1),
 	}
 
 	// Executing activity code is a one-way operation. We must wait for the app code to report its completion, which
@@ -57,8 +57,6 @@ func (a *activity) executeActivity(ctx context.Context, name string, taskEvent *
 	// TODO: Need to come up with a design for timeouts. Some activities may need to run for hours but we also need
 	//       to handle the case where the app crashes and never responds to the workflow. It may be necessary to
 	//       introduce some kind of heartbeat protocol to help identify such cases.
-	callback := make(chan bool, 1)
-	wi.Properties[todo.CallbackChannelProperty] = callback
 	log.Debugf("Activity actor '%s': scheduling activity '%s' for workflow with instanceId '%s'", a.actorID, name, wi.InstanceID)
 	elapsed := float64(0)
 	start := time.Now()
@@ -75,58 +73,61 @@ func (a *activity) executeActivity(ctx context.Context, name string, taskEvent *
 	diag.DefaultWorkflowMonitoring.ActivityOperationEvent(ctx, activityName, diag.StatusSuccess, elapsed)
 
 	// Activity execution started
-	start = time.Now()
-	executionStatus := ""
-	elapsed = float64(0)
 	// Record metrics on exit
-	defer func() {
-		if executionStatus != "" {
-			diag.DefaultWorkflowMonitoring.ActivityExecutionEvent(ctx, activityName, executionStatus, elapsed)
-		}
-	}()
+	//	defer func() {
+	//		if executionStatus != "" {
+	//		}
+	//	}()
 
-	select {
-	case <-ctx.Done():
+	err = a.waitForResponse(ctx, wi)
+	elapsed = diag.ElapsedSince(start)
+	if err != nil {
 		// Activity execution failed with recoverable error
-		elapsed = diag.ElapsedSince(start)
-		executionStatus = diag.StatusRecoverable
-		return todo.RunCompletedFalse, ctx.Err() // will be retried
-	case completed := <-callback:
-		elapsed = diag.ElapsedSince(start)
-		if !completed {
-			// Activity execution failed with recoverable error
-			executionStatus = diag.StatusRecoverable
-			return todo.RunCompletedFalse, wferrors.NewRecoverable(todo.ErrExecutionAborted) // AbandonActivityWorkItem was called
-		}
+		diag.DefaultWorkflowMonitoring.ActivityExecutionEvent(ctx, activityName, diag.StatusRecoverable, elapsed)
+		return todo.RunCompletedFalse, err
 	}
+
 	log.Debugf("Activity actor '%s': activity completed for workflow with instanceId '%s' activityName '%s'", a.actorID, wi.InstanceID, name)
 
+	runCompl, status, err := a.sendCompleteResponse(ctx, wi)
+	diag.DefaultWorkflowMonitoring.ActivityExecutionEvent(ctx, activityName, status, elapsed)
+	return runCompl, err
+}
+
+func (a *activity) sendCompleteResponse(ctx context.Context, wi *backend.ActivityWorkItem) (todo.RunCompleted, string, error) {
 	// publish the result back to the workflow actor as a new event to be processed
 	resultData, err := proto.Marshal(wi.Result)
 	if err != nil {
-		// Returning non-recoverable error
-		executionStatus = diag.StatusFailed
-		return todo.RunCompletedTrue, err
+		return todo.RunCompletedTrue, diag.StatusFailed, err
 	}
 
 	req := internalsv1pb.
 		NewInternalInvokeRequest(todo.AddWorkflowEventMethod).
-		WithActor(a.workflowActorType, workflowID).
+		WithActor(a.workflowActorType, wi.InstanceID.String()).
 		WithData(resultData).
 		WithContentType(invokev1.ProtobufContentType)
 
 	_, err = a.router.Call(ctx, req)
 	switch {
 	case err != nil:
-		// Returning recoverable error, record metrics
-		executionStatus = diag.StatusRecoverable
-		return todo.RunCompletedFalse, wferrors.NewRecoverable(fmt.Errorf("failed to invoke '%s' method on workflow actor: %w", todo.AddWorkflowEventMethod, err))
+		return todo.RunCompletedFalse, diag.StatusRecoverable, wferrors.NewRecoverable(fmt.Errorf("failed to invoke '%s' method on workflow actor: %w", todo.AddWorkflowEventMethod, err))
 	case wi.Result.GetTaskCompleted() != nil:
 		// Activity execution completed successfully
-		executionStatus = diag.StatusSuccess
-	case wi.Result.GetTaskFailed() != nil:
+		return todo.RunCompletedTrue, diag.StatusSuccess, nil
+	default:
 		// Activity execution failed
-		executionStatus = diag.StatusFailed
+		return todo.RunCompletedTrue, diag.StatusFailed, nil
 	}
-	return todo.RunCompletedTrue, nil
+}
+
+func (a *activity) waitForResponse(ctx context.Context, wi *backend.ActivityWorkItem) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case completed := <-wi.CallbackCh:
+		if !completed {
+			return wferrors.NewRecoverable(todo.ErrExecutionAborted) // AbandonActivityWorkItem was called
+		}
+		return nil
+	}
 }

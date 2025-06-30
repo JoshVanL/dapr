@@ -22,6 +22,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
+	"github.com/dapr/dapr/pkg/actors/targets/activity"
 	invokev1 "github.com/dapr/dapr/pkg/messaging/v1"
 	internalsv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 	"github.com/dapr/dapr/pkg/runtime/wfengine/todo"
@@ -74,14 +75,14 @@ func (w *workflow) callActivity(ctx context.Context, e *backend.HistoryEvent, ge
 		return err
 	}
 
-	targetActorID := buildActivityActorID(w.actorID, e.GetEventId(), generation)
+	targetActorID := BuildActivityActorID(w.actorID, e.GetEventId(), generation)
 
 	w.activityResultAwaited.Store(true)
 
 	log.Debugf("Workflow actor '%s': invoking execute method on activity actor '%s'", w.actorID, targetActorID)
 
 	_, err = w.router.Call(ctx, internalsv1pb.
-		NewInternalInvokeRequest("Execute").
+		NewInternalInvokeRequest(activity.InvokeMethodExecute).
 		WithActor(w.activityActorType, targetActorID).
 		WithData(eventData).
 		WithContentType(invokev1.ProtobufContentType),
@@ -93,7 +94,7 @@ func (w *workflow) callActivity(ctx context.Context, e *backend.HistoryEvent, ge
 	return nil
 }
 
-func buildActivityActorID(workflowID string, taskID int32, generation uint64) string {
+func BuildActivityActorID(workflowID string, taskID int32, generation uint64) string {
 	// An activity can be identified by its name followed by its task ID and generation. Example: SayHello::0::1, SayHello::1::1, etc.
 	return workflowID + "::" + strconv.Itoa(int(taskID)) + "::" + strconv.FormatUint(generation, 10)
 }

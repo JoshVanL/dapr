@@ -11,7 +11,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package continueasnew
+package loadbalance
 
 import (
 	"context"
@@ -22,36 +22,37 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/dapr/dapr/tests/integration/framework"
+	"github.com/dapr/dapr/tests/integration/framework/grpc"
+	"github.com/dapr/dapr/tests/integration/framework/iowriter/logger"
 	"github.com/dapr/dapr/tests/integration/framework/process/workflow"
 	"github.com/dapr/dapr/tests/integration/suite"
 	"github.com/dapr/durabletask-go/api"
+	"github.com/dapr/durabletask-go/client"
 	"github.com/dapr/durabletask-go/task"
 )
 
 func init() {
-	suite.Register(new(base))
+	suite.Register(new(continueasnew))
 }
 
-type base struct {
+type continueasnew struct {
 	workflow *workflow.Workflow
 }
 
-func (b *base) Setup(t *testing.T) []framework.Option {
-	b.workflow = workflow.New(t)
+func (c *continueasnew) Setup(t *testing.T) []framework.Option {
+	c.workflow = workflow.New(t, workflow.WithDaprds(2))
 
 	return []framework.Option{
-		framework.WithProcesses(b.workflow),
+		framework.WithProcesses(c.workflow),
 	}
 }
 
-func (b *base) Run(t *testing.T, ctx context.Context) {
-	b.workflow.WaitUntilRunning(t, ctx)
+func (c *continueasnew) Run(t *testing.T, ctx context.Context) {
+	c.workflow.WaitUntilRunning(t, ctx)
 
 	var cont atomic.Bool
-	var called atomic.Int64
-	b.workflow.Registry().AddOrchestratorN("can", func(ctx *task.OrchestrationContext) (any, error) {
-		defer called.Add(1)
-
+	reg := c.workflow.Registry()
+	require.NoError(t, reg.AddOrchestratorN("can", func(ctx *task.OrchestrationContext) (any, error) {
 		var input string
 		require.NoError(t, ctx.GetInput(&input))
 		if cont.Load() {
@@ -63,18 +64,22 @@ func (b *base) Run(t *testing.T, ctx context.Context) {
 		if cont.CompareAndSwap(false, true) {
 			ctx.ContinueAsNew("second call")
 		}
+
 		return nil, nil
-	})
+	}))
 
-	client := b.workflow.BackendClient(t, ctx)
+	client := client.NewTaskHubGrpcClient(grpc.LoadBalance(t,
+		c.workflow.DaprN(0).GRPCConn(t, ctx),
+		c.workflow.DaprN(1).GRPCConn(t, ctx),
+	), logger.New(t))
 
-	id, err := client.ScheduleNewOrchestration(ctx, "can",
-		api.WithInstanceID("cani"),
-		api.WithInput("first call"),
-	)
-	require.NoError(t, err)
-	_, err = client.WaitForOrchestrationCompletion(ctx, id)
-	require.NoError(t, err)
+	require.NoError(t, client.StartWorkItemListener(ctx, c.workflow.Registry()))
 
-	assert.Equal(t, int64(2), called.Load())
+	for range 10 {
+		cont.Store(false)
+		id, err := client.ScheduleNewOrchestration(ctx, "can", api.WithInput("first call"))
+		require.NoError(t, err)
+		_, err = client.WaitForOrchestrationCompletion(ctx, id)
+		require.NoError(t, err)
+	}
 }

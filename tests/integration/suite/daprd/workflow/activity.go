@@ -1,5 +1,5 @@
 /*
-Copyright 2025 The Dapr Authors
+Copyright 2023 The Dapr Authors
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
@@ -11,14 +11,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package continueasnew
+package workflow
 
 import (
 	"context"
-	"sync/atomic"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/dapr/dapr/tests/integration/framework"
@@ -29,52 +27,35 @@ import (
 )
 
 func init() {
-	suite.Register(new(base))
+	suite.Register(new(activity))
 }
 
-type base struct {
+type activity struct {
 	workflow *workflow.Workflow
 }
 
-func (b *base) Setup(t *testing.T) []framework.Option {
-	b.workflow = workflow.New(t)
+func (a *activity) Setup(t *testing.T) []framework.Option {
+	a.workflow = workflow.New(t)
 
 	return []framework.Option{
-		framework.WithProcesses(b.workflow),
+		framework.WithProcesses(a.workflow),
 	}
 }
 
-func (b *base) Run(t *testing.T, ctx context.Context) {
-	b.workflow.WaitUntilRunning(t, ctx)
+func (a *activity) Run(t *testing.T, ctx context.Context) {
+	a.workflow.WaitUntilRunning(t, ctx)
 
-	var cont atomic.Bool
-	var called atomic.Int64
-	b.workflow.Registry().AddOrchestratorN("can", func(ctx *task.OrchestrationContext) (any, error) {
-		defer called.Add(1)
-
-		var input string
-		require.NoError(t, ctx.GetInput(&input))
-		if cont.Load() {
-			assert.Equal(t, "second call", input)
-		} else {
-			assert.Equal(t, "first call", input)
-		}
-
-		if cont.CompareAndSwap(false, true) {
-			ctx.ContinueAsNew("second call")
-		}
+	a.workflow.Registry().AddOrchestratorN("activity", func(ctx *task.OrchestrationContext) (any, error) {
+		require.NoError(t, ctx.CallActivity("abc", task.WithActivityInput("abc")).Await(nil))
 		return nil, nil
 	})
+	a.workflow.Registry().AddActivityN("abc", func(ctx task.ActivityContext) (any, error) {
+		return nil, nil
+	})
+	client := a.workflow.BackendClient(t, ctx)
 
-	client := b.workflow.BackendClient(t, ctx)
-
-	id, err := client.ScheduleNewOrchestration(ctx, "can",
-		api.WithInstanceID("cani"),
-		api.WithInput("first call"),
-	)
+	id, err := client.ScheduleNewOrchestration(ctx, "activity", api.WithInstanceID("activity"))
 	require.NoError(t, err)
 	_, err = client.WaitForOrchestrationCompletion(ctx, id)
 	require.NoError(t, err)
-
-	assert.Equal(t, int64(2), called.Load())
 }

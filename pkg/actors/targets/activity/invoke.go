@@ -29,6 +29,11 @@ import (
 	"github.com/dapr/durabletask-go/backend"
 )
 
+const (
+	InvokeMethodExecute = "Execute"
+	InvokeMethodResult  = "Result"
+)
+
 // Activities are scheduled by workflows and can execute for arbitrary lengths of time. Instead of executing
 // activity logic directly, InvokeMethod creates a reminder that executes the activity logic. InvokeMethod
 // returns immediately after creating the reminder, enabling the workflow to continue processing other events
@@ -54,14 +59,14 @@ func (a *activity) handleInvoke(ctx context.Context, req *internalsv1pb.Internal
 }
 
 func (a *activity) handleReminder(ctx context.Context, reminder *actorapi.Reminder) error {
-	log.Debugf("Activity actor '%s': invoking reminder '%s'", a.actorID, reminder.Name)
+	log.Debugf("ActivitycalledCallback actor '%s': invoking reminder '%s'", a.actorID, reminder.Name)
 
 	var state backend.HistoryEvent
 	if err := reminder.Data.UnmarshalTo(&state); err != nil {
 		return fmt.Errorf("failed to decode activity reminder: %w", err)
 	}
 
-	completed, err := a.executeActivity(ctx, reminder.Name, &state)
+	completed, err := a.execute(ctx, reminder.Name, &state)
 	if completed == todo.RunCompletedTrue {
 		a.table.DeleteFromTableIn(a, 0)
 	}

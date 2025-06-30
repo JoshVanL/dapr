@@ -16,6 +16,7 @@ package activity
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"time"
 
 	"github.com/dapr/dapr/pkg/actors"
@@ -32,11 +33,29 @@ import (
 
 var log = logger.NewLogger("dapr.runtime.actors.targets.activity")
 
+const (
+	MethodExecute  = "Execute"
+	MethodComplete = "Complete"
+)
+
+type Options struct {
+	AppID              string
+	ActivityActorType  string
+	WorkflowActorType  string
+	ExecutorActorType  string
+	ReminderInterval   *time.Duration
+	Scheduler          todo.ActivityScheduler
+	Actors             actors.Interface
+	SchedulerReminders bool
+}
+
 type activity struct {
 	appID             string
 	actorID           string
 	actorType         string
 	workflowActorType string
+	executorActorType string
+	key               string
 
 	table     table.Interface
 	router    router.Interface
@@ -46,19 +65,13 @@ type activity struct {
 	scheduler          todo.ActivityScheduler
 	reminderInterval   time.Duration
 	schedulerReminders bool
+
+	completeCh     chan bool
+	completeCalled atomic.Bool
+	streamCalled   atomic.Bool
 }
 
-type ActivityOptions struct {
-	AppID              string
-	ActivityActorType  string
-	WorkflowActorType  string
-	ReminderInterval   *time.Duration
-	Scheduler          todo.ActivityScheduler
-	Actors             actors.Interface
-	SchedulerReminders bool
-}
-
-func ActivityFactory(ctx context.Context, opts ActivityOptions) (targets.Factory, error) {
+func Factory(ctx context.Context, opts Options) (targets.Factory, error) {
 	table, err := opts.Actors.Table(ctx)
 	if err != nil {
 		return nil, err
@@ -79,18 +92,19 @@ func ActivityFactory(ctx context.Context, opts ActivityOptions) (targets.Factory
 		return nil, err
 	}
 
+	reminderInterval := time.Minute * 1
+	if opts.ReminderInterval != nil {
+		reminderInterval = *opts.ReminderInterval
+	}
+
 	return func(actorID string) targets.Interface {
-		reminderInterval := time.Minute * 1
-
-		if opts.ReminderInterval != nil {
-			reminderInterval = *opts.ReminderInterval
-		}
-
 		return &activity{
 			appID:              opts.AppID,
 			actorID:            actorID,
 			actorType:          opts.ActivityActorType,
 			workflowActorType:  opts.WorkflowActorType,
+			executorActorType:  opts.ExecutorActorType,
+			key:                actorID + actorapi.DaprSeparator + opts.ActivityActorType,
 			reminderInterval:   reminderInterval,
 			table:              table,
 			router:             router,
@@ -98,6 +112,8 @@ func ActivityFactory(ctx context.Context, opts ActivityOptions) (targets.Factory
 			reminders:          reminders,
 			scheduler:          opts.Scheduler,
 			schedulerReminders: opts.SchedulerReminders,
+
+			completeCh: make(chan bool, 1),
 		}
 	}, nil
 }
@@ -133,7 +149,7 @@ func (a *activity) InvokeStream(context.Context, *internalsv1pb.InternalInvokeRe
 
 // Key returns the key for this unique actor.
 func (a *activity) Key() string {
-	return a.actorType + actorapi.DaprSeparator + a.actorID
+	return a.key
 }
 
 // Type returns the type of actor.

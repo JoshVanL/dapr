@@ -40,6 +40,19 @@ var log = logger.NewLogger("dapr.runtime.actors.targets.workflow")
 
 type EventSink func(*backend.OrchestrationMetadata)
 
+type Options struct {
+	AppID             string
+	WorkflowActorType string
+	ActivityActorType string
+	ReminderInterval  *time.Duration
+
+	Resiliency         resiliency.Provider
+	Actors             actors.Interface
+	Scheduler          todo.WorkflowScheduler
+	SchedulerReminders bool
+	EventSink          EventSink
+}
+
 type workflow struct {
 	appID             string
 	actorID           string
@@ -68,20 +81,7 @@ type workflow struct {
 	closed                atomic.Bool
 }
 
-type WorkflowOptions struct {
-	AppID             string
-	WorkflowActorType string
-	ActivityActorType string
-	ReminderInterval  *time.Duration
-
-	Resiliency         resiliency.Provider
-	Actors             actors.Interface
-	Scheduler          todo.WorkflowScheduler
-	SchedulerReminders bool
-	EventSink          EventSink
-}
-
-func WorkflowFactory(ctx context.Context, opts WorkflowOptions) (targets.Factory, error) {
+func Factory(ctx context.Context, opts Options) (targets.Factory, error) {
 	table, err := opts.Actors.Table(ctx)
 	if err != nil {
 		return nil, err

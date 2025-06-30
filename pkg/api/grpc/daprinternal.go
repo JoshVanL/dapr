@@ -337,6 +337,7 @@ func (a *api) CallActorStream(req *internalv1pb.InternalInvokeRequest, stream in
 	}
 	req.Metadata["X-Dapr-Remote"] = &internalv1pb.ListStringValue{Values: []string{"true"}}
 
+	// TODO: @joshvanl
 	ch := make(chan *internalv1pb.InternalInvokeResponse)
 
 	return concurrency.NewRunnerManager(

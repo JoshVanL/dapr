@@ -15,6 +15,7 @@ package reconnect
 
 import (
 	"context"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -63,11 +64,13 @@ func (c *crossactivity) Run(t *testing.T, ctx context.Context) {
 		return nil, ctx.CallActivity("xyz").Await(nil)
 	})
 	c.workflow.Registry().AddActivityN("bar", func(ctx task.ActivityContext) (any, error) {
+		fmt.Printf(">>CALLING BAR\n")
 		c.calledA.Add(1)
 		<-c.waitCh
 		return "", nil
 	})
 	c.workflow.Registry().AddActivityN("xyz", func(task.ActivityContext) (any, error) {
+		fmt.Printf(">>CALLING XYZ\n")
 		c.calledB.Add(1)
 		return "", nil
 	})

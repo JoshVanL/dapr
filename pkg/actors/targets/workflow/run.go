@@ -83,13 +83,11 @@ func (w *workflow) runWorkflow(ctx context.Context, reminder *actorapi.Reminder)
 		NewEvents:  state.Inbox,
 		RetryCount: -1, // TODO
 		State:      rs,
-		Properties: make(map[string]any, 1),
+		// Executing workflow code is a one-way operation. We must wait for the app
+		// code to report its completion, which will trigger this callback channel.
+		CallbackCh: make(chan bool, 1),
 	}
 
-	// Executing workflow code is a one-way operation. We must wait for the app code to report its completion, which
-	// will trigger this callback channel.
-	callback := make(chan bool, 1)
-	wi.Properties[todo.CallbackChannelProperty] = callback
 	// Setting executionStatus to failed by default to record metrics for non-recoverable errors.
 	executionStatus := diag.StatusFailed
 	if rs != nil && runtimestate.IsCompleted(rs) {
@@ -125,7 +123,7 @@ func (w *workflow) runWorkflow(ctx context.Context, reminder *actorapi.Reminder)
 		// Workflow execution failed with recoverable error
 		executionStatus = diag.StatusRecoverable
 		return todo.RunCompletedFalse, ctx.Err()
-	case completed := <-callback:
+	case completed := <-wi.CallbackCh:
 		if !completed {
 			// Workflow execution failed with recoverable error
 			executionStatus = diag.StatusRecoverable

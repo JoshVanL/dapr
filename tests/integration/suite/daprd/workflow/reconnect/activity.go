@@ -15,6 +15,7 @@ package reconnect
 
 import (
 	"context"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -68,6 +69,7 @@ func (a *activity) Run(t *testing.T, ctx context.Context) {
 	t.Cleanup(cancel)
 	require.NoError(t, client.StartWorkItemListener(cctx, a.workflow.Registry()))
 
+	fmt.Printf(">>HERE1\n")
 	id, err := client.ScheduleNewOrchestration(ctx, "foo")
 	require.NoError(t, err)
 
@@ -75,16 +77,24 @@ func (a *activity) Run(t *testing.T, ctx context.Context) {
 		assert.Equal(c, int64(1), a.called.Load())
 	}, time.Second*10, time.Millisecond*10)
 
+	fmt.Printf(">>HERE2\n")
 	cancel()
+	fmt.Printf(">>HERE3\n")
 	close(a.waitCh)
+	fmt.Printf(">>HERE4\n")
 
 	cctx, cancel = context.WithCancel(ctx)
 	t.Cleanup(cancel)
 	require.NoError(t, client.StartWorkItemListener(cctx, a.workflow.Registry()))
+	fmt.Printf(">>HERE5\n")
+
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.Equal(c, int64(2), a.called.Load())
+	}, time.Second*10, time.Millisecond*10)
 
 	meta, err := client.WaitForOrchestrationCompletion(ctx, id)
 	require.NoError(t, err)
 	assert.Equal(t, api.RUNTIME_STATUS_COMPLETED, meta.GetRuntimeStatus())
 
-	assert.Equal(t, int64(2), a.called.Load())
+	assert.Equal(t, int64(3), a.called.Load())
 }

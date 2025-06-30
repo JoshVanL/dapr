@@ -19,7 +19,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -32,6 +31,7 @@ import (
 	"github.com/dapr/dapr/pkg/actors"
 	"github.com/dapr/dapr/pkg/actors/table"
 	"github.com/dapr/dapr/pkg/actors/targets/activity"
+	"github.com/dapr/dapr/pkg/actors/targets/executor"
 	"github.com/dapr/dapr/pkg/actors/targets/workflow"
 	diag "github.com/dapr/dapr/pkg/diagnostics"
 	invokev1 "github.com/dapr/dapr/pkg/messaging/v1"
@@ -41,6 +41,7 @@ import (
 	"github.com/dapr/dapr/pkg/runtime/wfengine/todo"
 	"github.com/dapr/dapr/utils"
 	"github.com/dapr/durabletask-go/api"
+	"github.com/dapr/durabletask-go/api/protos"
 	"github.com/dapr/durabletask-go/backend"
 	"github.com/dapr/durabletask-go/backend/runtimestate"
 	"github.com/dapr/kit/concurrency"
@@ -54,6 +55,7 @@ const (
 	defaultNamespace     = "default"
 	WorkflowNameLabelKey = "workflow"
 	ActivityNameLabelKey = "activity"
+	ExecutorNameLabelKey = "executor"
 	ActorTypePrefix      = "dapr.internal."
 )
 
@@ -70,6 +72,7 @@ type Actors struct {
 	appID             string
 	workflowActorType string
 	activityActorType string
+	executorActorType string
 
 	defaultReminderInterval *time.Duration
 	resiliency              resiliency.Provider
@@ -79,9 +82,6 @@ type Actors struct {
 
 	orchestrationWorkItemChan chan *backend.OrchestrationWorkItem
 	activityWorkItemChan      chan *backend.ActivityWorkItem
-
-	registeredCh chan struct{}
-	lock         sync.RWMutex
 }
 
 func New(opts Options) *Actors {
@@ -89,12 +89,12 @@ func New(opts Options) *Actors {
 		appID:                     opts.AppID,
 		workflowActorType:         ActorTypePrefix + opts.Namespace + utils.DotDelimiter + opts.AppID + utils.DotDelimiter + WorkflowNameLabelKey,
 		activityActorType:         ActorTypePrefix + opts.Namespace + utils.DotDelimiter + opts.AppID + utils.DotDelimiter + ActivityNameLabelKey,
+		executorActorType:         ActorTypePrefix + opts.Namespace + utils.DotDelimiter + opts.AppID + utils.DotDelimiter + ExecutorNameLabelKey,
 		actors:                    opts.Actors,
 		resiliency:                opts.Resiliency,
 		schedulerReminders:        opts.SchedulerReminders,
 		orchestrationWorkItemChan: make(chan *backend.OrchestrationWorkItem, 1),
 		activityWorkItemChan:      make(chan *backend.ActivityWorkItem, 1),
-		registeredCh:              make(chan struct{}),
 		eventSink:                 opts.EventSink,
 	}
 }
@@ -108,7 +108,7 @@ func (abe *Actors) RegisterActors(ctx context.Context) error {
 		return err
 	}
 
-	workflowFactory, err := workflow.WorkflowFactory(ctx, workflow.WorkflowOptions{
+	workflowFactory, err := workflow.Factory(ctx, workflow.Options{
 		AppID:             abe.appID,
 		WorkflowActorType: abe.workflowActorType,
 		ActivityActorType: abe.activityActorType,
@@ -131,11 +131,12 @@ func (abe *Actors) RegisterActors(ctx context.Context) error {
 		return err
 	}
 
-	activityFactory, err := activity.ActivityFactory(ctx, activity.ActivityOptions{
+	activityFactory, err := activity.Factory(ctx, activity.Options{
 		AppID:             abe.appID,
 		ActivityActorType: abe.activityActorType,
 		WorkflowActorType: abe.workflowActorType,
 		ReminderInterval:  abe.defaultReminderInterval,
+		ExecutorActorType: abe.executorActorType,
 		Scheduler: func(ctx context.Context, wi *backend.ActivityWorkItem) error {
 			log.Debugf(
 				"%s: scheduling [%s#%d] activity execution with durabletask engine",
@@ -156,6 +157,11 @@ func (abe *Actors) RegisterActors(ctx context.Context) error {
 		return err
 	}
 
+	executorFactory := executor.Factory(executor.Options{
+		ActorType: abe.executorActorType,
+		Table:     atable,
+	})
+
 	atable.RegisterActorTypes(
 		table.RegisterActorTypeOptions{
 			Factories: []table.ActorTypeFactory{
@@ -167,11 +173,13 @@ func (abe *Actors) RegisterActors(ctx context.Context) error {
 					Factory: activityFactory,
 					Type:    abe.activityActorType,
 				},
+				{
+					Factory: executorFactory,
+					Type:    abe.executorActorType,
+				},
 			},
 		},
 	)
-
-	close(abe.registeredCh)
 
 	return nil
 }
@@ -182,28 +190,12 @@ func (abe *Actors) UnRegisterActors(ctx context.Context) error {
 		return err
 	}
 
-	defer func() {
-		abe.lock.Lock()
-		abe.registeredCh = make(chan struct{})
-		abe.lock.Unlock()
-	}()
-
 	return table.UnRegisterActorTypes(abe.workflowActorType, abe.activityActorType)
 }
 
 // RerunWorkflowFromEvent implements backend.Backend and reruns a workflow from
 // a specific event ID.
 func (abe *Actors) RerunWorkflowFromEvent(ctx context.Context, req *backend.RerunWorkflowFromEventRequest) (api.InstanceID, error) {
-	abe.lock.RLock()
-	ch := abe.registeredCh
-	abe.lock.RUnlock()
-
-	select {
-	case <-ch:
-	case <-ctx.Done():
-		return "", ctx.Err()
-	}
-
 	if len(req.GetSourceInstanceID()) == 0 {
 		return "", status.Error(codes.InvalidArgument, "rerun workflow source instance ID is required")
 	}
@@ -249,16 +241,6 @@ func (abe *Actors) RerunWorkflowFromEvent(ctx context.Context, req *backend.Reru
 // request is saved into the actor's "inbox" and then executed via a reminder thread. If the app is
 // scaled out across multiple replicas, the actor might get assigned to a replicas other than this one.
 func (abe *Actors) CreateOrchestrationInstance(ctx context.Context, e *backend.HistoryEvent, opts ...backend.OrchestrationIdReusePolicyOptions) error {
-	abe.lock.RLock()
-	ch := abe.registeredCh
-	abe.lock.RUnlock()
-
-	select {
-	case <-ch:
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-
 	var workflowInstanceID string
 	if es := e.GetExecutionStarted(); es == nil {
 		return errors.New("the history event must be an ExecutionStartedEvent")
@@ -340,13 +322,9 @@ func (abe *Actors) GetOrchestrationMetadata(ctx context.Context, id api.Instance
 
 // AbandonActivityWorkItem implements backend.Backend. It gets called by durabletask-go when there is
 // an unexpected failure in the workflow activity execution pipeline.
-func (*Actors) AbandonActivityWorkItem(ctx context.Context, wi *backend.ActivityWorkItem) error {
+func (a *Actors) AbandonActivityWorkItem(ctx context.Context, wi *backend.ActivityWorkItem) error {
 	log.Warnf("%s: aborting activity execution (::%d)", wi.InstanceID, wi.NewEvent.GetEventId())
-
-	// Sending false signals the waiting activity actor to abort the activity execution.
-	if channel, ok := wi.Properties[todo.CallbackChannelProperty]; ok {
-		channel.(chan bool) <- false
-	}
+	wi.CallbackCh <- false
 	return nil
 }
 
@@ -355,11 +333,9 @@ func (*Actors) AbandonActivityWorkItem(ctx context.Context, wi *backend.Activity
 func (*Actors) AbandonOrchestrationWorkItem(ctx context.Context, wi *backend.OrchestrationWorkItem) error {
 	log.Warnf("%s: aborting workflow execution", wi.InstanceID)
 
-	// Sending false signals the waiting workflow actor to abort the workflow execution.
-	// TODO: @joshvanl: remove
-	if channel, ok := wi.Properties[todo.CallbackChannelProperty]; ok {
-		channel.(chan bool) <- false
-	}
+	// Sending false signals the waiting workflow actor to abort the workflow
+	// execution.
+	wi.CallbackCh <- false
 	return nil
 }
 
@@ -396,17 +372,171 @@ func (abe *Actors) AddNewOrchestrationEvent(ctx context.Context, id api.Instance
 }
 
 // CompleteActivityWorkItem implements backend.Backend
-func (*Actors) CompleteActivityWorkItem(ctx context.Context, wi *backend.ActivityWorkItem) error {
-	// Sending true signals the waiting activity actor to complete the execution normally.
-	wi.Properties[todo.CallbackChannelProperty].(chan bool) <- true
+func (a *Actors) CompleteActivityWorkItem(ctx context.Context, wi *backend.ActivityWorkItem) error {
+	// Sending false signals the waiting workflow actor to abort the workflow
+	// execution.
+	wi.CallbackCh <- true
 	return nil
 }
 
 // CompleteOrchestrationWorkItem implements backend.Backend
 func (*Actors) CompleteOrchestrationWorkItem(ctx context.Context, wi *backend.OrchestrationWorkItem) error {
-	// Sending true signals the waiting workflow actor to complete the execution normally.
-	wi.Properties[todo.CallbackChannelProperty].(chan bool) <- true
+	// Sending true signals the waiting workflow actor to complete the execution
+	// normally.
+	wi.CallbackCh <- true
 	return nil
+}
+
+func (a *Actors) CompleteOrchestratorTask(ctx context.Context, resp *protos.OrchestratorResponse) error {
+	router, err := a.actors.Router(ctx)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf(">>COMPLETEACTIVITY RESULT: '%s'\n", resp.InstanceId)
+	fmt.Printf(">>EXECUTIONID RET: len(%d) %#+v\n", len(resp.GetActions()), resp)
+	data, err := proto.Marshal(resp)
+	if err != nil {
+		return err
+	}
+
+	req := internalsv1pb.
+		NewInternalInvokeRequest(executor.MethodComplete).
+		WithActor(a.executorActorType, resp.GetInstanceId()).
+		WithData(data).
+		WithContentType(invokev1.ProtobufContentType)
+
+	_, err = router.Call(ctx, req)
+	return err
+}
+
+func (a *Actors) WaitForOrchestratorCompletion(ctx context.Context, req *protos.OrchestratorRequest) (*protos.OrchestratorResponse, error) {
+	router, err := a.actors.Router(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	fmt.Printf(">>EXECUTIONID: len(%d) %#+v\n", len(req.PastEvents), req)
+
+	sreq := internalsv1pb.
+		NewInternalInvokeRequest(executor.MethodWatchComplete).
+		WithActor(a.executorActorType, req.GetInstanceId()).
+		WithContentType(invokev1.ProtobufContentType)
+
+	var ch chan *internalsv1pb.InternalInvokeResponse
+	for {
+		ch = make(chan *internalsv1pb.InternalInvokeResponse, 1)
+		err = router.CallStream(ctx, sreq, ch)
+		if err == nil {
+			break
+		}
+
+		if ctx.Err() != nil {
+			return nil, err
+		}
+
+		log.Errorf("Failed to wait for orchestrator completion: %s", err)
+
+		//// TODO: @joshvanl
+		//if err != nil {
+		//	return nil, err
+		//}
+		//if err == nil {
+		//	break
+		//}
+		//log.Errorf("Failed to wait for orchestrator completion: %s", err)
+		select {
+		case <-time.After(time.Second / 2):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+
+	var resp protos.OrchestratorResponse
+	if err = proto.Unmarshal((<-ch).GetMessage().GetData().GetValue(), &resp); err != nil {
+		return nil, err
+	}
+
+	return &resp, nil
+}
+
+func (a *Actors) CompleteActivityTask(ctx context.Context, resp *protos.ActivityResponse) error {
+	router, err := a.actors.Router(ctx)
+	if err != nil {
+		return err
+	}
+
+	key := backend.GetActivityExecutionKey(
+		resp.GetInstanceId(),
+		resp.GetTaskId(),
+	)
+
+	fmt.Printf(">>COMPLETEACTIVITY RESULT: '%s'\n", resp.InstanceId)
+	data, err := proto.Marshal(resp)
+	if err != nil {
+		return err
+	}
+	fmt.Printf(">>COMPLETEACTIVITY RESULT DATA: %s\n", data)
+
+	req := internalsv1pb.
+		NewInternalInvokeRequest(executor.MethodComplete).
+		WithActor(a.executorActorType, key).
+		WithData(data).
+		WithContentType(invokev1.ProtobufContentType)
+
+	_, err = router.Call(ctx, req)
+	return err
+}
+
+func (a *Actors) WaitForActivityCompletion(ctx context.Context, req *protos.ActivityRequest) (*protos.ActivityResponse, error) {
+	router, err := a.actors.Router(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	fmt.Printf(">>VERSION: %d\n", req.GetVersion())
+
+	key := backend.GetActivityExecutionKey(
+		req.GetOrchestrationInstance().GetInstanceId(),
+		req.GetTaskId(),
+	)
+	sreq := internalsv1pb.
+		NewInternalInvokeRequest(executor.MethodWatchComplete).
+		WithActor(a.executorActorType, key).
+		WithContentType(invokev1.ProtobufContentType)
+
+	var ch chan *internalsv1pb.InternalInvokeResponse
+	for {
+		ch = make(chan *internalsv1pb.InternalInvokeResponse, 1)
+		err = router.CallStream(ctx, sreq, ch)
+		if err == nil {
+			break
+		}
+
+		if ctx.Err() != nil {
+			return nil, err
+		}
+		//if err != nil {
+		//	return nil, err
+		//}
+		//// TODO: @joshvanl
+		//if err == nil {
+		//	break
+		//}
+		log.Errorf("Failed to wait for activity completion: %s", err)
+		select {
+		case <-time.After(time.Second / 2):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+
+	var resp protos.ActivityResponse
+	if err = proto.Unmarshal((<-ch).GetMessage().GetData().GetValue(), &resp); err != nil {
+		return nil, err
+	}
+
+	return &resp, nil
 }
 
 // CreateTaskHub implements backend.Backend
