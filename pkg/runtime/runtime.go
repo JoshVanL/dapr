@@ -232,7 +232,6 @@ func newDaprRuntime(ctx context.Context,
 		Port:      runtimeConfig.internalGRPCPort,
 		// TODO: @joshvanl
 		PlacementAddresses: strings.Split(strings.TrimPrefix(runtimeConfig.actorsService, "placement:"), ","),
-		SchedulerReminders: globalConfig.IsFeatureEnabled(config.SchedulerReminders),
 		HealthEndpoint:     channels.AppHTTPEndpoint(),
 		Resiliency:         resiliencyProvider,
 		Security:           sec,
@@ -304,22 +303,20 @@ func newDaprRuntime(ctx context.Context,
 		Spec:                      globalConfig.Spec.WorkflowSpec,
 		BackendManager:            processor.WorkflowBackend(),
 		Resiliency:                resiliencyProvider,
-		SchedulerReminders:        globalConfig.IsFeatureEnabled(config.SchedulerReminders),
 		EventSink:                 runtimeConfig.workflowEventSink,
 		EnableClusteredDeployment: globalConfig.IsFeatureEnabled(config.WorkflowsClusteredDeployment),
 	})
 
 	jobsManager, err := scheduler.New(scheduler.Options{
-		Namespace:          namespace,
-		AppID:              runtimeConfig.id,
-		Channels:           channels,
-		Actors:             actors,
-		Addresses:          runtimeConfig.schedulerAddress,
-		Security:           sec,
-		WFEngine:           wfe,
-		Healthz:            runtimeConfig.healthz,
-		SchedulerReminders: globalConfig.IsFeatureEnabled(config.SchedulerReminders),
-		SchedulerStreams:   runtimeConfig.schedulerStreams,
+		Namespace:        namespace,
+		AppID:            runtimeConfig.id,
+		Channels:         channels,
+		Actors:           actors,
+		Addresses:        runtimeConfig.schedulerAddress,
+		Security:         sec,
+		WFEngine:         wfe,
+		Healthz:          runtimeConfig.healthz,
+		SchedulerStreams: runtimeConfig.schedulerStreams,
 	})
 	if err != nil {
 		return nil, err
@@ -819,14 +816,13 @@ func (a *DaprRuntime) appHealthChanged(ctx context.Context, status *apphealth.St
 		}
 
 		if err := a.actors.RegisterHosted(hostconfig.Config{
-			EntityConfigs:              a.appConfig.EntityConfigs,
-			DrainRebalancedActors:      a.appConfig.DrainRebalancedActors,
-			DrainOngoingCallTimeout:    a.appConfig.DrainOngoingCallTimeout,
-			RemindersStoragePartitions: a.appConfig.RemindersStoragePartitions,
-			HostedActorTypes:           a.appConfig.Entities,
-			DefaultIdleTimeout:         a.appConfig.ActorIdleTimeout,
-			Reentrancy:                 a.appConfig.Reentrancy,
-			AppChannel:                 a.channels.AppChannel(),
+			EntityConfigs:           a.appConfig.EntityConfigs,
+			DrainRebalancedActors:   a.appConfig.DrainRebalancedActors,
+			DrainOngoingCallTimeout: a.appConfig.DrainOngoingCallTimeout,
+			HostedActorTypes:        a.appConfig.Entities,
+			DefaultIdleTimeout:      a.appConfig.ActorIdleTimeout,
+			Reentrancy:              a.appConfig.Reentrancy,
+			AppChannel:              a.channels.AppChannel(),
 		}); err != nil {
 			log.Warnf("Failed to register hosted actors: %s", err)
 		}
