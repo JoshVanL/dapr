@@ -24,10 +24,10 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/dapr/dapr/pkg/actors/api"
 	actorerrors "github.com/dapr/dapr/pkg/actors/errors"
 	"github.com/dapr/dapr/pkg/actors/router"
 	diag "github.com/dapr/dapr/pkg/diagnostics"
+	internalsv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 	schedulerv1pb "github.com/dapr/dapr/pkg/proto/scheduler/v1"
 	"github.com/dapr/dapr/pkg/runtime/channels"
 	"github.com/dapr/dapr/pkg/runtime/wfengine"
@@ -206,13 +206,13 @@ func (s *streamer) invokeActorReminder(ctx context.Context, job *schedulerv1pb.W
 
 	actor := job.GetMetadata().GetTarget().GetActor()
 
-	err := s.actors.CallReminder(ctx, &api.Reminder{
-		Name:      job.GetName(),
+	err := s.actors.CallReminder(ctx, &internalsv1pb.Reminder{
+		ActorId:   actor.GetId(),
 		ActorType: actor.GetType(),
-		ActorID:   actor.GetId(),
+		Name:      job.GetName(),
 		Data:      job.GetData(),
 		SkipLock:  actor.GetType() == s.wfengine.ActivityActorType(),
-	})
+	}, router.CallReminderOptions{})
 	diag.DefaultMonitoring.ActorReminderFired(actor.GetType(), err == nil)
 	if err != nil {
 		return err

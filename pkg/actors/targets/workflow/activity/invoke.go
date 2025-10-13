@@ -20,7 +20,6 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	actorapi "github.com/dapr/dapr/pkg/actors/api"
 	invokev1 "github.com/dapr/dapr/pkg/messaging/v1"
 	internalsv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 	wferrors "github.com/dapr/dapr/pkg/runtime/wfengine/errors"
@@ -51,7 +50,7 @@ func (a *activity) handleInvoke(ctx context.Context, req *internalsv1pb.Internal
 	return nil, a.createReminder(ctx, &his)
 }
 
-func (a *activity) handleReminder(ctx context.Context, reminder *actorapi.Reminder) error {
+func (a *activity) handleReminder(ctx context.Context, reminder *internalsv1pb.Reminder) error {
 	log.Debugf("Activity actor '%s': invoking reminder '%s'", a.actorID, reminder.Name)
 
 	var state backend.HistoryEvent

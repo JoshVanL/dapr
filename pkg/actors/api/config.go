@@ -31,24 +31,22 @@ var log = logger.NewLogger("dapr.runtime.actor.config")
 
 // Remap of config.EntityConfig.
 type EntityConfig struct {
-	Entities                   []string
-	ActorIdleTimeout           time.Duration
-	DrainOngoingCallTimeout    time.Duration
-	DrainRebalancedActors      bool
-	ReentrancyConfig           config.ReentrancyConfig
-	RemindersStoragePartitions int
+	Entities                []string
+	ActorIdleTimeout        time.Duration
+	DrainOngoingCallTimeout time.Duration
+	DrainRebalancedActors   bool
+	ReentrancyConfig        config.ReentrancyConfig
 }
 
 // TranslateEntityConfig converts a user-defined configuration into a
 // domain-specific EntityConfig.
 func TranslateEntityConfig(appConfig config.EntityConfig) EntityConfig {
 	domainConfig := EntityConfig{
-		Entities:                   appConfig.Entities,
-		ActorIdleTimeout:           DefaultIdleTimeout,
-		DrainOngoingCallTimeout:    DefaultOngoingCallTimeout,
-		DrainRebalancedActors:      appConfig.DrainRebalancedActors,
-		ReentrancyConfig:           appConfig.Reentrancy,
-		RemindersStoragePartitions: appConfig.RemindersStoragePartitions,
+		Entities:                appConfig.Entities,
+		ActorIdleTimeout:        DefaultIdleTimeout,
+		DrainOngoingCallTimeout: DefaultOngoingCallTimeout,
+		DrainRebalancedActors:   appConfig.DrainRebalancedActors,
+		ReentrancyConfig:        appConfig.Reentrancy,
 	}
 
 	var idleDuration time.Duration

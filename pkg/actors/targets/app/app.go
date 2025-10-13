@@ -29,6 +29,7 @@ import (
 	"github.com/dapr/dapr/pkg/actors/api"
 	actorerrors "github.com/dapr/dapr/pkg/actors/errors"
 	"github.com/dapr/dapr/pkg/actors/internal/key"
+	"github.com/dapr/dapr/pkg/actors/reminders"
 	"github.com/dapr/dapr/pkg/actors/targets/app/lock"
 	diag "github.com/dapr/dapr/pkg/diagnostics"
 	invokev1 "github.com/dapr/dapr/pkg/messaging/v1"
@@ -149,7 +150,7 @@ func (a *app) doInvokeMethod(ctx context.Context, req *internalv1pb.InternalInvo
 	return res, nil
 }
 
-func (a *app) InvokeReminder(ctx context.Context, reminder *api.Reminder) error {
+func (a *app) InvokeReminder(ctx context.Context, reminder *internalv1pb.Reminder) error {
 	ctx, cancel, err := a.lock.Lock(ctx)
 	if err != nil {
 		return err
@@ -162,23 +163,26 @@ func (a *app) InvokeReminder(ctx context.Context, reminder *api.Reminder) error 
 	invokeMethod := "remind/" + reminder.Name
 	data, err := json.Marshal(&api.ReminderResponse{
 		DueTime: reminder.DueTime,
-		Period:  reminder.Period.String(),
+		Period:  reminder.GetPeriod(),
 		Data:    reminder.Data,
 	})
 	if err != nil {
 		return err
 	}
-	log.Debug("Executing reminder for actor " + reminder.Key())
+
+	key := reminders.Key(reminder)
+
+	log.Debug("Executing reminder for actor " + key)
 
 	req := internalv1pb.NewInternalInvokeRequest(invokeMethod).
-		WithActor(reminder.ActorType, reminder.ActorID).
+		WithActor(reminder.GetActorType(), reminder.GetActorId()).
 		WithData(data).
 		WithContentType(internalv1pb.JSONContentType)
 
 	_, err = a.doInvokeMethod(ctx, req)
 	if err != nil {
 		if !errors.Is(err, actorerrors.ErrReminderCanceled) {
-			log.Errorf("Error executing reminder for actor %s: %v", reminder.Key(), err)
+			log.Errorf("Error executing reminder for actor %s: %v", key, err)
 		}
 		return err
 	}
@@ -186,7 +190,7 @@ func (a *app) InvokeReminder(ctx context.Context, reminder *api.Reminder) error 
 	return nil
 }
 
-func (a *app) InvokeTimer(ctx context.Context, reminder *api.Reminder) error {
+func (a *app) InvokeTimer(ctx context.Context, reminder *internalv1pb.Reminder, callback string) error {
 	ctx, cancel, err := a.lock.Lock(ctx)
 	if err != nil {
 		return err
@@ -195,26 +199,27 @@ func (a *app) InvokeTimer(ctx context.Context, reminder *api.Reminder) error {
 
 	invokeMethod := "timer/" + reminder.Name
 	data, err := json.Marshal(&api.TimerResponse{
-		Callback: reminder.Callback,
+		Callback: callback,
 		Data:     reminder.Data,
 		DueTime:  reminder.DueTime,
-		Period:   reminder.Period.String(),
+		Period:   reminder.Period,
 	})
 	if err != nil {
 		return err
 	}
 
-	log.Debug("Executing timer for actor " + reminder.Key())
+	key := reminders.Key(reminder)
+	log.Debug("Executing timer for actor " + key)
 
 	req := internalv1pb.NewInternalInvokeRequest(invokeMethod).
-		WithActor(reminder.ActorType, reminder.ActorID).
+		WithActor(reminder.GetActorType(), reminder.GetActorId()).
 		WithData(data).
 		WithContentType(internalv1pb.JSONContentType)
 
 	_, err = a.doInvokeMethod(ctx, req)
 	if err != nil {
 		if !errors.Is(err, actorerrors.ErrReminderCanceled) {
-			log.Errorf("Error executing timer for actor %s: %v", reminder.Key(), err)
+			log.Errorf("Error executing timer for actor %s: %v", key, err)
 		}
 		return err
 	}

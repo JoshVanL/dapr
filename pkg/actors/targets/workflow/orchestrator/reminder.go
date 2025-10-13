@@ -21,10 +21,9 @@ import (
 	"io"
 	"time"
 
+	internalsv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
-
-	actorapi "github.com/dapr/dapr/pkg/actors/api"
 )
 
 func (o *orchestrator) createReminder(ctx context.Context, namePrefix string, data proto.Message, start *time.Time, targetAppID string) (string, error) {
@@ -52,12 +51,11 @@ func (o *orchestrator) createReminder(ctx context.Context, namePrefix string, da
 	actorType := o.actorTypeBuilder.Workflow(targetAppID)
 	log.Debugf("Workflow actor '%s||%s': creating '%s' reminder with DueTime = '%s'", actorType, o.actorID, reminderName, dueTime)
 
-	return reminderName, o.reminders.Create(ctx, &actorapi.CreateReminderRequest{
+	return reminderName, o.reminders.Create(ctx, &internalsv1pb.Reminder{
 		ActorType: actorType,
-		ActorID:   o.actorID,
+		ActorId:   o.actorID,
 		Data:      adata,
 		DueTime:   dueTime,
 		Name:      reminderName,
-		IsOneShot: true,
-	})
+	}, true)
 }

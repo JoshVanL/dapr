@@ -47,7 +47,7 @@ func (a *activity) InvokeMethod(ctx context.Context, req *internalsv1pb.Internal
 }
 
 // InvokeReminder implements actors.InternalActor and executes the activity logic.
-func (a *activity) InvokeReminder(ctx context.Context, reminder *actorapi.Reminder) error {
+func (a *activity) InvokeReminder(ctx context.Context, reminder *internalsv1pb.Reminder) error {
 	if !reminder.SkipLock {
 		unlock, err := a.lock.ContextLock(ctx)
 		if err != nil {
@@ -64,7 +64,7 @@ func (a *activity) InvokeReminder(ctx context.Context, reminder *actorapi.Remind
 }
 
 // InvokeTimer implements actors.InternalActor
-func (a *activity) InvokeTimer(ctx context.Context, reminder *actorapi.Reminder) error {
+func (a *activity) InvokeTimer(ctx context.Context, reminder *internalsv1pb.Reminder, callback string) error {
 	return errors.New("timers are not implemented")
 }
 

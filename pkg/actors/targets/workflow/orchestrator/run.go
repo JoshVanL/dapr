@@ -22,8 +22,8 @@ import (
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	actorapi "github.com/dapr/dapr/pkg/actors/api"
 	diag "github.com/dapr/dapr/pkg/diagnostics"
+	internalsv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 	wferrors "github.com/dapr/dapr/pkg/runtime/wfengine/errors"
 	wfenginestate "github.com/dapr/dapr/pkg/runtime/wfengine/state"
 	"github.com/dapr/dapr/pkg/runtime/wfengine/todo"
@@ -33,7 +33,7 @@ import (
 	"github.com/dapr/durabletask-go/backend/runtimestate"
 )
 
-func (o *orchestrator) runWorkflow(ctx context.Context, reminder *actorapi.Reminder) (todo.RunCompleted, error) {
+func (o *orchestrator) runWorkflow(ctx context.Context, reminder *internalsv1pb.Reminder) (todo.RunCompleted, error) {
 	state, _, err := o.loadInternalState(ctx)
 	if err != nil {
 		return todo.RunCompletedTrue, fmt.Errorf("error loading internal state: %w", err)

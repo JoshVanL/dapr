@@ -22,7 +22,6 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	"google.golang.org/protobuf/types/known/anypb"
 
-	actorapi "github.com/dapr/dapr/pkg/actors/api"
 	"github.com/dapr/dapr/pkg/messages"
 	invokev1 "github.com/dapr/dapr/pkg/messaging/v1"
 	commonv1pb "github.com/dapr/dapr/pkg/proto/common/v1"
@@ -94,7 +93,7 @@ func (o *orchestrator) executeMethod(ctx context.Context, methodName string, req
 	}
 }
 
-func (o *orchestrator) handleReminder(ctx context.Context, reminder *actorapi.Reminder) error {
+func (o *orchestrator) handleReminder(ctx context.Context, reminder *internalsv1pb.Reminder) error {
 	log.Debugf("Workflow actor '%s': invoking reminder '%s'", o.actorID, reminder.Name)
 
 	completed, err := o.runWorkflow(ctx, reminder)

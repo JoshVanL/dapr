@@ -20,6 +20,7 @@ import (
 	"github.com/dapr/dapr/pkg/actors/api"
 	"github.com/dapr/dapr/pkg/actors/internal/scheduler"
 	"github.com/dapr/dapr/pkg/actors/table"
+	internalsv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 )
 
 // TODO: @joshvanl: move errors package
@@ -30,18 +31,22 @@ var (
 
 type Interface interface {
 	// Get retrieves an actor reminder.
-	Get(ctx context.Context, req *api.GetReminderRequest) (*api.Reminder, error)
+	Get(ctx context.Context, actorType, actorID, name string) (*internalsv1pb.Reminder, error)
 
 	// Create creates an actor reminder.
-	Create(ctx context.Context, req *api.CreateReminderRequest) error
+	Create(ctx context.Context, reminder *internalsv1pb.Reminder, isOneShot bool) error
 
 	// Delete deletes an actor reminder.
-	Delete(ctx context.Context, req *api.DeleteReminderRequest) error
+	Delete(ctx context.Context, actorType, actorID, name string) error
 }
 
 type Options struct {
 	Scheduler scheduler.Interface
 	Table     table.Interface
+}
+
+func Key(reminder *internalsv1pb.Reminder) string {
+	return reminder.GetActorType() + api.DaprSeparator + reminder.GetActorId() + api.DaprSeparator + reminder.GetName()
 }
 
 type reminders struct {
@@ -55,39 +60,38 @@ func New(opts Options) Interface {
 		table:     opts.Table,
 	}
 }
-
-func (r *reminders) Get(ctx context.Context, req *api.GetReminderRequest) (*api.Reminder, error) {
+func (r *reminders) Get(ctx context.Context, actorType, actorID, name string) (*internalsv1pb.Reminder, error) {
 	if r.scheduler == nil {
 		return nil, ErrReminderStorageNotSet
 	}
 
-	if !r.table.IsActorTypeHosted(req.ActorType) {
+	if !r.table.IsActorTypeHosted(actorType) {
 		return nil, ErrReminderOpActorNotHosted
 	}
 
-	return r.scheduler.Get(ctx, req)
+	return r.scheduler.Get(ctx, actorType, actorID, name)
 }
 
-func (r *reminders) Create(ctx context.Context, req *api.CreateReminderRequest) error {
+func (r *reminders) Create(ctx context.Context, reminder *internalsv1pb.Reminder, isOneShot bool) error {
 	if r.scheduler == nil {
 		return ErrReminderStorageNotSet
 	}
 
-	if !r.table.IsActorTypeHosted(req.ActorType) {
+	if !r.table.IsActorTypeHosted(reminder.GetActorType()) {
 		return ErrReminderOpActorNotHosted
 	}
 
-	return r.scheduler.Create(ctx, req)
+	return r.scheduler.Create(ctx, reminder, isOneShot)
 }
 
-func (r *reminders) Delete(ctx context.Context, req *api.DeleteReminderRequest) error {
+func (r *reminders) Delete(ctx context.Context, actorType, actorID, name string) error {
 	if r.scheduler == nil {
 		return ErrReminderStorageNotSet
 	}
 
-	if !r.table.IsActorTypeHosted(req.ActorType) {
+	if !r.table.IsActorTypeHosted(actorType) {
 		return ErrReminderOpActorNotHosted
 	}
 
-	return r.scheduler.Delete(ctx, req)
+	return r.scheduler.Delete(ctx, actorType, actorID, name)
 }

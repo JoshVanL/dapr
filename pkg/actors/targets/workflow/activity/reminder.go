@@ -18,7 +18,7 @@ import (
 
 	"google.golang.org/protobuf/types/known/anypb"
 
-	actorapi "github.com/dapr/dapr/pkg/actors/api"
+	internalsv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 	"github.com/dapr/durabletask-go/backend"
 )
 
@@ -32,12 +32,11 @@ func (a *activity) createReminder(ctx context.Context, his *backend.HistoryEvent
 	}
 
 	// The activity actor should always create reminders for its own actor type and ID
-	return a.reminders.Create(ctx, &actorapi.CreateReminderRequest{
+	return a.reminders.Create(ctx, &internalsv1pb.Reminder{
 		ActorType: a.actorType,
-		ActorID:   a.actorID,
+		ActorId:   a.actorID,
 		DueTime:   "0s",
 		Name:      reminderName,
-		IsOneShot: true,
 		Data:      anydata,
-	})
+	}, true)
 }

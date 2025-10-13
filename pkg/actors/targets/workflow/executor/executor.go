@@ -89,11 +89,11 @@ func (e *executor) cancel() error {
 	return nil
 }
 
-func (e *executor) InvokeReminder(ctx context.Context, reminder *actorapi.Reminder) error {
+func (e *executor) InvokeReminder(ctx context.Context, reminder *internalsv1pb.Reminder) error {
 	return errors.New("reminders are not implemented")
 }
 
-func (e *executor) InvokeTimer(ctx context.Context, reminder *actorapi.Reminder) error {
+func (e *executor) InvokeTimer(ctx context.Context, reminder *internalsv1pb.Reminder, callback string) error {
 	return errors.New("timers are not implemented")
 }
 

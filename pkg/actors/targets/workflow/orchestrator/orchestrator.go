@@ -72,7 +72,7 @@ func (o *orchestrator) InvokeMethod(ctx context.Context, req *internalsv1pb.Inte
 }
 
 // InvokeReminder implements actors.InternalActor
-func (o *orchestrator) InvokeReminder(ctx context.Context, reminder *actorapi.Reminder) error {
+func (o *orchestrator) InvokeReminder(ctx context.Context, reminder *internalsv1pb.Reminder) error {
 	o.wg.Add(1)
 	defer o.wg.Done()
 
@@ -86,7 +86,7 @@ func (o *orchestrator) InvokeReminder(ctx context.Context, reminder *actorapi.Re
 }
 
 // InvokeTimer implements actors.InternalActor
-func (o *orchestrator) InvokeTimer(ctx context.Context, reminder *actorapi.Reminder) error {
+func (o *orchestrator) InvokeTimer(ctx context.Context, reminder *internalsv1pb.Reminder, callback string) error {
 	return errors.New("timers are not implemented")
 }
 

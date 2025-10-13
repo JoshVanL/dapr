@@ -23,10 +23,11 @@ import (
 
 	"k8s.io/utils/clock"
 
-	"github.com/dapr/dapr/pkg/actors/api"
 	"github.com/dapr/dapr/pkg/actors/internal/timers"
+	"github.com/dapr/dapr/pkg/actors/internal/timers/inmemory/item"
 	"github.com/dapr/dapr/pkg/actors/router"
 	diag "github.com/dapr/dapr/pkg/diagnostics"
+	internalsv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 	"github.com/dapr/kit/events/queue"
 	"github.com/dapr/kit/logger"
 )
@@ -45,7 +46,7 @@ type inmemory struct {
 	activeTimersCount     map[string]*int64
 	activeTimersCountLock sync.RWMutex
 	runningCh             chan struct{}
-	processor             *queue.Processor[string, *api.Reminder]
+	processor             *queue.Processor[string, *item.Item]
 }
 
 // New returns a TimerProvider.
@@ -57,7 +58,7 @@ func New(opts Options) timers.Storage {
 		activeTimersCount: make(map[string]*int64),
 		runningCh:         make(chan struct{}),
 	}
-	i.processor = queue.NewProcessor[string, *api.Reminder](queue.Options[string, *api.Reminder]{
+	i.processor = queue.NewProcessor[string, *item.Item](queue.Options[string, *item.Item]{
 		ExecuteFn: i.processorExecuteFn,
 	})
 	return i
@@ -71,8 +72,11 @@ func (i *inmemory) Close() error {
 }
 
 // processorExecuteFn is invoked when the processor executes a reminder.
-func (i *inmemory) processorExecuteFn(reminder *api.Reminder) {
-	err := i.router.CallReminder(context.TODO(), reminder)
+func (i *inmemory) processorExecuteFn(item *item.Item) {
+	reminder := item.Reminder()
+	err := i.router.CallReminder(context.TODO(), reminder, router.CallReminderOptions{
+		TimerCallback: item.Callback(),
+	})
 	diag.DefaultMonitoring.ActorTimerFired(reminder.ActorType, err == nil)
 	if err != nil {
 		// Successful and non-successful executions are treated as the same in
@@ -81,35 +85,40 @@ func (i *inmemory) processorExecuteFn(reminder *api.Reminder) {
 	}
 
 	// If TickExecuted returns true, it means the timer has no more repetitions left
-	if reminder.TickExecuted() {
-		log.Infof("Timer %s has been completed", reminder.Key())
-		if i.activeTimers.CompareAndDelete(reminder.Key(), reminder) {
+	if item.TickExecuted() {
+		log.Infof("Timer %s has been completed", item.Key())
+		if i.activeTimers.CompareAndDelete(item.Key(), item) {
 			i.updateActiveTimersCount(reminder.ActorType, -1)
 		}
 		return
 	}
 
 	// If active is false, then the timer has expired
-	if _, active := reminder.NextTick(); !active {
-		log.Infof("Timer %s has expired", reminder.Key())
-		if i.activeTimers.CompareAndDelete(reminder.Key(), reminder) {
-			i.updateActiveTimersCount(reminder.ActorType, -1)
+	if _, active := item.NextTick(); !active {
+		log.Infof("Timer %s has expired", item.Key())
+		if i.activeTimers.CompareAndDelete(item.Key(), item) {
+			i.updateActiveTimersCount(reminder.GetActorType(), -1)
 		}
 		return
 	}
 
 	// Re-enqueue the timer for its next repetition
-	i.processor.Enqueue(reminder)
+	i.processor.Enqueue(item)
 }
 
-func (i *inmemory) Create(ctx context.Context, reminder *api.Reminder) error {
-	timerKey := reminder.Key()
+func (i *inmemory) Create(ctx context.Context, reminder *internalsv1pb.Reminder, callback string) error {
+	it, err := item.New(reminder, callback)
+	if err != nil {
+		return err
+	}
 
-	log.Debugf("Create timer: %s", reminder.String())
+	timerKey := it.Key()
+
+	log.Debugf("Create timer: %s", timerKey)
 
 	// Multiple goroutines could be trying to store this timer, so we need to repeat until we succeed or context is canceled
 	for {
-		_, loaded := i.activeTimers.LoadOrStore(timerKey, reminder)
+		_, loaded := i.activeTimers.LoadOrStore(timerKey, it)
 		if !loaded {
 			// If we stored the value, all good - let's continue
 			break
@@ -118,8 +127,8 @@ func (i *inmemory) Create(ctx context.Context, reminder *api.Reminder) error {
 		// If there's already a timer with the same key, stop it so we can replace it
 		prev, loaded := i.activeTimers.LoadAndDelete(timerKey)
 		if loaded && prev != nil {
-			i.processor.Dequeue(prev.(*api.Reminder).Key())
-			i.updateActiveTimersCount(reminder.ActorType, -1)
+			i.processor.Dequeue(prev.(*item.Item).Key())
+			i.updateActiveTimersCount(reminder.ActorType, -2)
 		}
 
 		// Wait a bit (with some jitter) and re-try
@@ -132,15 +141,15 @@ func (i *inmemory) Create(ctx context.Context, reminder *api.Reminder) error {
 	}
 
 	// Check if the reminder hasn't expired, then enqueue it
-	_, active := reminder.NextTick()
+	_, active := it.NextTick()
 	if !active {
 		log.Infof("Timer %s has expired", timerKey)
-		i.removeTimerMatching(reminder)
+		i.removeTimerMatching(it)
 		return nil
 	}
 
-	i.processor.Enqueue(reminder)
-	i.updateActiveTimersCount(reminder.ActorType, 1)
+	i.processor.Enqueue(it)
+	i.updateActiveTimersCount(reminder.GetActorType(), 1)
 
 	return nil
 }
@@ -148,11 +157,11 @@ func (i *inmemory) Create(ctx context.Context, reminder *api.Reminder) error {
 // removeTimerMatching removes a timer from the processor by removing a Reminder objec.
 // This is different from DeleteTimer as it removes the timer only if it's the same object.
 // It is used by CreateTimer.
-func (i *inmemory) removeTimerMatching(reminder *api.Reminder) {
+func (i *inmemory) removeTimerMatching(item *item.Item) {
 	// Delete the timer from the table
 	// We can't just call `DeleteTimer` as that could cause a race condition if the timer is also being replaced
-	key := reminder.Key()
-	if i.activeTimers.CompareAndDelete(key, reminder) {
+	key := item.Key()
+	if i.activeTimers.CompareAndDelete(key, item) {
 		i.processor.Dequeue(key)
 	}
 }
@@ -160,9 +169,9 @@ func (i *inmemory) removeTimerMatching(reminder *api.Reminder) {
 func (i *inmemory) Delete(_ context.Context, timerKey string) {
 	reminderAny, exists := i.activeTimers.LoadAndDelete(timerKey)
 	if exists {
-		reminder := reminderAny.(*api.Reminder)
-		i.updateActiveTimersCount(reminder.ActorType, -1)
-		i.processor.Dequeue(reminder.Key())
+		item := reminderAny.(*item.Item)
+		i.updateActiveTimersCount(item.Reminder().GetActorType(), -1)
+		i.processor.Dequeue(item.Key())
 	}
 }
 

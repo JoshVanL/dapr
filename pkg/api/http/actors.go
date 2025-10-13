@@ -23,7 +23,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	actorapi "github.com/dapr/dapr/pkg/actors/api"
 	actorerrors "github.com/dapr/dapr/pkg/actors/errors"
@@ -35,6 +37,7 @@ import (
 	internalsv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 	runtimev1pb "github.com/dapr/dapr/pkg/proto/runtime/v1"
 	"github.com/dapr/dapr/pkg/resiliency"
+	kittime "github.com/dapr/kit/time"
 )
 
 var endpointGroupActorV1State = &endpoints.EndpointGroup{
@@ -172,7 +175,7 @@ func (a *api) constructActorEndpoints() []endpoints.Endpoint {
 func (a *api) onCreateActorReminder(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	var req actorapi.CreateReminderRequest
+	var req internalsv1pb.HTTPCreateReminderRequest
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
 		msg := messages.ErrMalformedRequest.WithFormat(err)
@@ -181,9 +184,38 @@ func (a *api) onCreateActorReminder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Name = chi.URLParamFromCtx(ctx, nameParam)
-	req.ActorType = chi.URLParamFromCtx(ctx, actorTypeParam)
-	req.ActorID = chi.URLParamFromCtx(ctx, actorIDParam)
+	var data *anypb.Any
+	if req.Data != nil {
+		data, err = anypb.New(req.Data)
+		if err != nil {
+			msg := messages.ErrMalformedRequest.WithFormat(err)
+			respondWithError(w, msg)
+			log.Debug(msg)
+			return
+		}
+	}
+	var exp *timestamppb.Timestamp
+	if ttl := req.GetTtl(); len(ttl) > 0 {
+		tx, err := kittime.ParseTime(ttl, nil)
+		if err != nil {
+			msg := messages.ErrMalformedRequest.WithFormat(err)
+			respondWithError(w, msg)
+			log.Debug(msg)
+			return
+		}
+		exp = timestamppb.New(tx)
+	}
+
+	reminder := &internalsv1pb.Reminder{
+		Name:           chi.URLParamFromCtx(ctx, nameParam),
+		ActorId:        chi.URLParamFromCtx(ctx, actorIDParam),
+		ActorType:      chi.URLParamFromCtx(ctx, actorTypeParam),
+		Data:           data,
+		DueTime:        req.GetDueTime(),
+		Period:         req.GetPeriod(),
+		ExpirationTime: exp,
+		RegisteredTime: timestamppb.Now(),
+	}
 
 	rem, err := a.universal.ActorReminders(ctx)
 	if err != nil {
@@ -191,7 +223,7 @@ func (a *api) onCreateActorReminder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = rem.Create(ctx, &req)
+	err = rem.Create(ctx, reminder, false)
 	if err != nil {
 		if errors.Is(err, reminders.ErrReminderOpActorNotHosted) {
 			msg := messages.ErrActorReminderOpActorNotHosted
@@ -212,7 +244,7 @@ func (a *api) onCreateActorReminder(w http.ResponseWriter, r *http.Request) {
 func (a *api) onCreateActorTimer(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	var req actorapi.CreateTimerRequest
+	var req internalsv1pb.HTTPCreateTimerRequest
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
 		msg := messages.ErrMalformedRequest.WithFormat(err)
@@ -221,9 +253,39 @@ func (a *api) onCreateActorTimer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Name = chi.URLParamFromCtx(ctx, nameParam)
-	req.ActorType = chi.URLParamFromCtx(ctx, actorTypeParam)
-	req.ActorID = chi.URLParamFromCtx(ctx, actorIDParam)
+	var data *anypb.Any
+	if req.Data != nil {
+		data, err = anypb.New(req.Data)
+		if err != nil {
+			msg := messages.ErrMalformedRequest.WithFormat(err)
+			respondWithError(w, msg)
+			log.Debug(msg)
+			return
+		}
+	}
+	var exp *timestamppb.Timestamp
+	if ttl := req.GetTtl(); len(ttl) > 0 {
+		tx, err := kittime.ParseTime(ttl, nil)
+		if err != nil {
+			msg := messages.ErrMalformedRequest.WithFormat(err)
+			respondWithError(w, msg)
+			log.Debug(msg)
+			return
+		}
+		exp = timestamppb.New(tx)
+	}
+
+	timer := &internalsv1pb.Reminder{
+		Name:           chi.URLParamFromCtx(ctx, nameParam),
+		ActorId:        chi.URLParamFromCtx(ctx, actorIDParam),
+		ActorType:      chi.URLParamFromCtx(ctx, actorTypeParam),
+		Data:           data,
+		DueTime:        req.GetDueTime(),
+		Period:         req.GetPeriod(),
+		ExpirationTime: exp,
+		RegisteredTime: timestamppb.Now(),
+		IsTimer:        true,
+	}
 
 	timers, err := a.universal.ActorTimers(ctx)
 	if err != nil {
@@ -231,7 +293,7 @@ func (a *api) onCreateActorTimer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = timers.Create(ctx, &req)
+	err = timers.Create(ctx, timer, req.GetCallback())
 	if err != nil {
 		msg := messages.ErrActorTimerCreate.WithFormat(err)
 		respondWithError(w, msg)
@@ -311,11 +373,11 @@ func (a *api) onGetActorReminder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := rem.Get(ctx, &actorapi.GetReminderRequest{
-		ActorType: chi.URLParamFromCtx(ctx, actorTypeParam),
-		ActorID:   chi.URLParamFromCtx(ctx, actorIDParam),
-		Name:      chi.URLParamFromCtx(ctx, nameParam),
-	})
+	resp, err := rem.Get(ctx,
+		chi.URLParamFromCtx(ctx, actorTypeParam),
+		chi.URLParamFromCtx(ctx, actorIDParam),
+		chi.URLParamFromCtx(ctx, nameParam),
+	)
 	if err != nil {
 		if errors.Is(err, reminders.ErrReminderOpActorNotHosted) {
 			msg := messages.ErrActorReminderOpActorNotHosted

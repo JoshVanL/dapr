@@ -23,10 +23,10 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/durationpb"
 
-	"github.com/dapr/dapr/pkg/actors/api"
 	"github.com/dapr/dapr/pkg/actors/table"
 	apierrors "github.com/dapr/dapr/pkg/api/errors"
 	commonv1pb "github.com/dapr/dapr/pkg/proto/common/v1"
+	internalsv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 	schedulerv1pb "github.com/dapr/dapr/pkg/proto/scheduler/v1"
 	"github.com/dapr/kit/logger"
 	"github.com/dapr/kit/ptr"
@@ -40,10 +40,10 @@ var log = logger.NewLogger("dapr.runtime.actor.reminders.scheduler")
 type Interface interface {
 	io.Closer
 
-	Get(ctx context.Context, req *api.GetReminderRequest) (*api.Reminder, error)
-	Create(ctx context.Context, req *api.CreateReminderRequest) error
-	Delete(ctx context.Context, req *api.DeleteReminderRequest) error
-	List(ctx context.Context, req *api.ListRemindersRequest) ([]*api.Reminder, error)
+	Get(ctx context.Context, actorType, actorID, name string) (*internalsv1pb.Reminder, error)
+	Create(ctx context.Context, req *internalsv1pb.Reminder, isOneShot bool) error
+	Delete(ctx context.Context, actorType, actorID, name string) error
+	List(ctx context.Context, actorType string) ([]*internalsv1pb.Reminder, error)
 }
 
 type Options struct {
@@ -70,14 +70,14 @@ func New(opts Options) Interface {
 	}
 }
 
-func (s *scheduler) Create(ctx context.Context, reminder *api.CreateReminderRequest) error {
+func (s *scheduler) Create(ctx context.Context, reminder *internalsv1pb.Reminder, isOneShot bool) error {
 	var dueTime *string
 	if len(reminder.DueTime) > 0 {
 		dueTime = ptr.Of(reminder.DueTime)
 	}
 	var ttl *string
-	if len(reminder.TTL) > 0 {
-		ttl = ptr.Of(reminder.TTL)
+	if reminder.ExpirationTime != nil {
+		ttl = ptr.Of(reminder.ExpirationTime.AsTime().Format(time.RFC3339))
 	}
 
 	schedule, repeats, err := scheduleFromPeriod(reminder.Period)
@@ -86,7 +86,7 @@ func (s *scheduler) Create(ctx context.Context, reminder *api.CreateReminderRequ
 	}
 
 	var failurePolicy *commonv1pb.JobFailurePolicy
-	if reminder.IsOneShot {
+	if isOneShot {
 		failurePolicy = &commonv1pb.JobFailurePolicy{
 			Policy: &commonv1pb.JobFailurePolicy_Constant{
 				Constant: &commonv1pb.JobFailurePolicyConstant{
@@ -114,8 +114,8 @@ func (s *scheduler) Create(ctx context.Context, reminder *api.CreateReminderRequ
 			Target: &schedulerv1pb.JobTargetMetadata{
 				Type: &schedulerv1pb.JobTargetMetadata_Actor{
 					Actor: &schedulerv1pb.TargetActorReminder{
-						Id:   reminder.ActorID,
-						Type: reminder.ActorType,
+						Id:   reminder.GetActorId(),
+						Type: reminder.GetActorType(),
 					},
 				},
 			},
@@ -159,17 +159,17 @@ func (s *scheduler) Close() error {
 	return nil
 }
 
-func (s *scheduler) Get(ctx context.Context, req *api.GetReminderRequest) (*api.Reminder, error) {
+func (s *scheduler) Get(ctx context.Context, actorType, actorID, name string) (*internalsv1pb.Reminder, error) {
 	internalGetJobReq := &schedulerv1pb.GetJobRequest{
-		Name: req.Name,
+		Name: name,
 		Metadata: &schedulerv1pb.JobMetadata{
 			AppId:     s.appID,
 			Namespace: s.namespace,
 			Target: &schedulerv1pb.JobTargetMetadata{
 				Type: &schedulerv1pb.JobTargetMetadata_Actor{
 					Actor: &schedulerv1pb.TargetActorReminder{
-						Id:   req.ActorID,
-						Type: req.ActorType,
+						Id:   actorID,
+						Type: actorType,
 					},
 				},
 			},
@@ -183,37 +183,36 @@ func (s *scheduler) Get(ctx context.Context, req *api.GetReminderRequest) (*api.
 			"namespace": s.namespace,
 			"jobType":   "reminder",
 		}
-		log.Debugf("Error getting reminder job %s due to: %s", req.Name, err)
+		log.Debugf("Error getting reminder job %s due to: %s", name, err)
 
 		if status, ok := status.FromError(err); ok && status.Code() == codes.NotFound {
-			return new(api.Reminder), nil
+			return nil, nil
 		}
 
 		return nil, apierrors.SchedulerGetJob(errMetadata, err)
 	}
 
-	reminder := &api.Reminder{
-		ActorID:   req.ActorID,
-		ActorType: req.ActorType,
+	return &internalsv1pb.Reminder{
+		Name:      name,
+		ActorId:   actorID,
+		ActorType: actorType,
 		Data:      job.GetJob().GetData(),
-		Period:    api.NewSchedulerReminderPeriod(job.GetJob().GetSchedule(), job.GetJob().GetRepeats()),
+		Period:    job.GetJob().GetSchedule(),
 		DueTime:   job.GetJob().GetDueTime(),
-	}
-
-	return reminder, nil
+	}, nil
 }
 
-func (s *scheduler) Delete(ctx context.Context, req *api.DeleteReminderRequest) error {
+func (s *scheduler) Delete(ctx context.Context, actorType, actorID, name string) error {
 	internalDeleteJobReq := &schedulerv1pb.DeleteJobRequest{
-		Name: req.Name,
+		Name: name,
 		Metadata: &schedulerv1pb.JobMetadata{
 			AppId:     s.appID,
 			Namespace: s.namespace,
 			Target: &schedulerv1pb.JobTargetMetadata{
 				Type: &schedulerv1pb.JobTargetMetadata_Actor{
 					Actor: &schedulerv1pb.TargetActorReminder{
-						Id:   req.ActorID,
-						Type: req.ActorType,
+						Id:   actorID,
+						Type: actorType,
 					},
 				},
 			},
@@ -222,14 +221,14 @@ func (s *scheduler) Delete(ctx context.Context, req *api.DeleteReminderRequest) 
 
 	_, err := s.client.DeleteJob(ctx, internalDeleteJobReq)
 	if err != nil {
-		log.Errorf("Error deleting reminder job %s due to: %s", req.Name, err)
+		log.Errorf("Error deleting reminder job %s due to: %s", name, err)
 		return err
 	}
 
 	return nil
 }
 
-func (s *scheduler) List(ctx context.Context, req *api.ListRemindersRequest) ([]*api.Reminder, error) {
+func (s *scheduler) List(ctx context.Context, actorType string) ([]*internalsv1pb.Reminder, error) {
 	resp, err := s.client.ListJobs(ctx, &schedulerv1pb.ListJobsRequest{
 		Metadata: &schedulerv1pb.JobMetadata{
 			AppId:     s.appID,
@@ -237,7 +236,7 @@ func (s *scheduler) List(ctx context.Context, req *api.ListRemindersRequest) ([]
 			Target: &schedulerv1pb.JobTargetMetadata{
 				Type: &schedulerv1pb.JobTargetMetadata_Actor{
 					Actor: &schedulerv1pb.TargetActorReminder{
-						Type: req.ActorType,
+						Type: actorType,
 					},
 				},
 			},
@@ -246,7 +245,7 @@ func (s *scheduler) List(ctx context.Context, req *api.ListRemindersRequest) ([]
 	if err != nil {
 		return nil, err
 	}
-	reminders := make([]*api.Reminder, len(resp.GetJobs()))
+	reminders := make([]*internalsv1pb.Reminder, len(resp.GetJobs()))
 	for i, named := range resp.GetJobs() {
 		actor := named.GetMetadata().GetTarget().GetActor()
 		if actor == nil {
@@ -256,12 +255,12 @@ func (s *scheduler) List(ctx context.Context, req *api.ListRemindersRequest) ([]
 
 		job := named.GetJob()
 
-		reminders[i] = &api.Reminder{
+		reminders[i] = &internalsv1pb.Reminder{
 			Name:      named.GetName(),
-			ActorID:   actor.GetId(),
+			ActorId:   actor.GetId(),
 			ActorType: actor.GetType(),
 			Data:      job.GetData(),
-			Period:    api.NewSchedulerReminderPeriod(job.GetSchedule(), job.GetRepeats()),
+			Period:    job.GetSchedule(),
 			DueTime:   job.GetDueTime(),
 		}
 	}

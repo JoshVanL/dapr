@@ -25,6 +25,10 @@ const (
 	DaprSeparator = "||"
 )
 
+func ToKey(actorType, actorID, name string) string {
+	return actorType + DaprSeparator + actorID + DaprSeparator + name
+}
+
 // ActorHostedRequest is the request object for checking if an actor is hosted on this instance.
 type ActorHostedRequest struct {
 	ActorID   string `json:"actorId"`

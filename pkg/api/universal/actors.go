@@ -20,12 +20,15 @@ import (
 
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	"github.com/dapr/dapr/pkg/actors/api"
 	"github.com/dapr/dapr/pkg/actors/reminders"
 	"github.com/dapr/dapr/pkg/messages"
+	internalsv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 	runtimev1pb "github.com/dapr/dapr/pkg/proto/runtime/v1"
+	kittime "github.com/dapr/kit/time"
 )
 
 func (a *Universal) RegisterActorTimer(ctx context.Context, in *runtimev1pb.RegisterActorTimerRequest) (*emptypb.Empty, error) {
@@ -51,18 +54,31 @@ func (a *Universal) RegisterActorTimer(ctx context.Context, in *runtimev1pb.Regi
 		}
 	}
 
-	req := &api.CreateTimerRequest{
-		Name:      in.GetName(),
-		ActorID:   in.GetActorId(),
-		ActorType: in.GetActorType(),
-		DueTime:   in.GetDueTime(),
-		Period:    in.GetPeriod(),
-		TTL:       in.GetTtl(),
-		Callback:  in.GetCallback(),
-		Data:      data,
+	var exp *timestamppb.Timestamp
+	if ttl := in.GetTtl(); len(ttl) > 0 {
+		tx, err := kittime.ParseTime(ttl, nil)
+		if err != nil {
+			err = messages.ErrActorTimerCreate.WithFormat(err)
+			a.logger.Debug(err)
+			return nil, err
+		}
+
+		exp = timestamppb.New(tx)
 	}
 
-	err = timers.Create(ctx, req)
+	req := &internalsv1pb.Reminder{
+		Name:           in.GetName(),
+		ActorId:        in.GetActorId(),
+		ActorType:      in.GetActorType(),
+		DueTime:        in.GetDueTime(),
+		Period:         in.GetPeriod(),
+		Data:           data,
+		ExpirationTime: exp,
+		RegisteredTime: timestamppb.Now(),
+		IsTimer:        true,
+	}
+
+	err = timers.Create(ctx, req, in.GetCallback())
 	if err != nil {
 		err = messages.ErrActorTimerCreate.WithFormat(err)
 		a.logger.Debug(err)
@@ -77,13 +93,7 @@ func (a *Universal) UnregisterActorTimer(ctx context.Context, in *runtimev1pb.Un
 		return nil, err
 	}
 
-	req := &api.DeleteTimerRequest{
-		Name:      in.GetName(),
-		ActorID:   in.GetActorId(),
-		ActorType: in.GetActorType(),
-	}
-
-	timers.Delete(ctx, req)
+	timers.Delete(ctx, api.ToKey(in.GetActorType(), in.GetActorId(), in.GetName()))
 	return nil, nil
 }
 
@@ -110,17 +120,28 @@ func (a *Universal) RegisterActorReminder(ctx context.Context, in *runtimev1pb.R
 		}
 	}
 
-	req := &api.CreateReminderRequest{
-		Name:      in.GetName(),
-		ActorID:   in.GetActorId(),
-		ActorType: in.GetActorType(),
-		DueTime:   in.GetDueTime(),
-		Period:    in.GetPeriod(),
-		TTL:       in.GetTtl(),
-		Data:      data,
+	var exp *timestamppb.Timestamp
+	if ttl := in.GetTtl(); len(ttl) > 0 {
+		tx, err := kittime.ParseTime(ttl, nil)
+		if err != nil {
+			err = messages.ErrActorTimerCreate.WithFormat(err)
+			a.logger.Debug(err)
+			return nil, err
+		}
+
+		exp = timestamppb.New(tx)
 	}
 
-	err = r.Create(ctx, req)
+	err = r.Create(ctx, &internalsv1pb.Reminder{
+		Name:           in.GetName(),
+		ActorId:        in.GetActorId(),
+		ActorType:      in.GetActorType(),
+		DueTime:        in.GetDueTime(),
+		RegisteredTime: timestamppb.Now(),
+		ExpirationTime: exp,
+		Period:         in.GetPeriod(),
+		Data:           data,
+	}, false)
 	if err != nil {
 		if errors.Is(err, reminders.ErrReminderOpActorNotHosted) {
 			a.logger.Debug(messages.ErrActorReminderOpActorNotHosted)
@@ -140,13 +161,7 @@ func (a *Universal) UnregisterActorReminder(ctx context.Context, in *runtimev1pb
 		return nil, err
 	}
 
-	req := &api.DeleteReminderRequest{
-		Name:      in.GetName(),
-		ActorID:   in.GetActorId(),
-		ActorType: in.GetActorType(),
-	}
-
-	err = r.Delete(ctx, req)
+	err = r.Delete(ctx, in.GetActorType(), in.GetActorId(), in.GetName())
 	if err != nil {
 		if errors.Is(err, reminders.ErrReminderOpActorNotHosted) {
 			a.logger.Debug(messages.ErrActorReminderOpActorNotHosted)

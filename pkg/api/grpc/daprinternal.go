@@ -25,8 +25,8 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/dapr/dapr/pkg/acl"
-	actorapi "github.com/dapr/dapr/pkg/actors/api"
 	actorerrors "github.com/dapr/dapr/pkg/actors/errors"
+	"github.com/dapr/dapr/pkg/actors/router"
 	"github.com/dapr/dapr/pkg/api/grpc/metadata"
 	diag "github.com/dapr/dapr/pkg/diagnostics"
 	diagConsts "github.com/dapr/dapr/pkg/diagnostics/consts"
@@ -310,23 +310,13 @@ func (a *api) CallActor(ctx context.Context, in *internalv1pb.InternalInvokeRequ
 
 // CallActorReminder invokes an internal virtual actor.
 func (a *api) CallActorReminder(ctx context.Context, in *internalv1pb.Reminder) (*emptypb.Empty, error) {
-	router, err := a.ActorRouter(ctx)
+	r, err := a.ActorRouter(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	period, _ := actorapi.NewReminderPeriod(in.GetPeriod())
-	return nil, router.CallReminder(ctx, &actorapi.Reminder{
-		Name:           in.GetName(),
-		ActorType:      in.GetActorType(),
-		ActorID:        in.GetActorId(),
-		Data:           in.GetData(),
-		DueTime:        in.GetDueTime(),
-		Period:         period,
-		ExpirationTime: in.GetExpirationTime().AsTime(),
-		IsTimer:        in.GetIsTimer(),
-		IsRemote:       true,
-		SkipLock:       in.GetSkipLock(),
+	return nil, r.CallReminder(ctx, in, router.CallReminderOptions{
+		IsRemote: true,
 	})
 }
 

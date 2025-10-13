@@ -164,7 +164,9 @@ func (h *hdata) Run(t *testing.T, ctx context.Context) {
 
 			resp, err := client.Do(req)
 			require.NoError(t, err)
-			require.NoError(t, resp.Body.Close())
+			bbody, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			require.NoError(t, resp.Body.Close(), bbody)
 			assert.Equal(t, http.StatusNoContent, resp.StatusCode)
 			select {
 			case <-time.After(time.Second * 10):

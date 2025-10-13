@@ -17,11 +17,11 @@ import (
 	"context"
 	"io"
 
-	"github.com/dapr/dapr/pkg/actors/api"
+	internalsv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 )
 
 type Storage interface {
 	io.Closer
-	Create(ctx context.Context, reminder *api.Reminder) error
+	Create(ctx context.Context, reminder *internalsv1pb.Reminder, callback string) error
 	Delete(ctx context.Context, timerKey string)
 }

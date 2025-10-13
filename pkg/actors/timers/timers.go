@@ -19,14 +19,15 @@ import (
 
 	"k8s.io/utils/clock"
 
-	"github.com/dapr/dapr/pkg/actors/api"
 	internaltimers "github.com/dapr/dapr/pkg/actors/internal/timers"
+	"github.com/dapr/dapr/pkg/actors/reminders"
 	"github.com/dapr/dapr/pkg/actors/table"
+	internalsv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 )
 
 type Interface interface {
-	Create(ctx context.Context, req *api.CreateTimerRequest) error
-	Delete(ctx context.Context, req *api.DeleteTimerRequest)
+	Create(ctx context.Context, reminder *internalsv1pb.Reminder, callback string) error
+	Delete(ctx context.Context, timerKey string)
 }
 
 type Options struct {
@@ -49,21 +50,14 @@ func New(opts Options) Interface {
 	}
 }
 
-func (t *timers) Create(ctx context.Context, req *api.CreateTimerRequest) error {
-	if !t.table.IsActorTypeHosted(req.ActorType) {
-		return fmt.Errorf("can't create timer for actor %s: actor type not registered", req.ActorKey())
+func (t *timers) Create(ctx context.Context, reminder *internalsv1pb.Reminder, callback string) error {
+	if !t.table.IsActorTypeHosted(reminder.GetActorType()) {
+		return fmt.Errorf("can't create timer for actor %s: actor type not registered", reminders.Key(reminder))
 	}
 
-	reminder, err := req.NewReminder(t.clock.Now(), false)
-	if err != nil {
-		return err
-	}
-
-	reminder.IsTimer = true
-
-	return t.storage.Create(ctx, reminder)
+	return t.storage.Create(ctx, reminder, callback)
 }
 
-func (t *timers) Delete(ctx context.Context, req *api.DeleteTimerRequest) {
-	t.storage.Delete(ctx, req.Key())
+func (t *timers) Delete(ctx context.Context, timerKey string) {
+	t.storage.Delete(ctx, timerKey)
 }
