@@ -17,26 +17,29 @@ import (
 	"sync"
 	"sync/atomic"
 
-	rtv1pb "github.com/dapr/dapr/pkg/proto/runtime/v1"
 	rtpubsub "github.com/dapr/dapr/pkg/runtime/pubsub"
 )
 
-type conn struct {
+type req interface {
+	GetId() string
+}
+
+type conn[T any, K req] struct {
 	lock             sync.RWMutex
 	streamLock       sync.Mutex
-	stream           rtv1pb.Dapr_SubscribeTopicEventsAlpha1Server
+	stream           T
 	closeCh          chan struct{}
 	closed           atomic.Bool
 	connectionID     rtpubsub.ConnectionID
-	publishResponses PublishResponses
+	publishResponses PublishResponses[K]
 }
 
-func (c *conn) registerPublishResponse(id string) (chan *rtv1pb.SubscribeTopicEventsRequestProcessedAlpha1, func()) {
-	ch := make(chan *rtv1pb.SubscribeTopicEventsRequestProcessedAlpha1, 1)
+func (c *conn[T, K]) registerPublishResponse(id string) (chan K, func()) {
+	ch := make(chan K, 1)
 	c.lock.Lock()
 
 	if c.publishResponses[id] == nil {
-		c.publishResponses[id] = make(ConnectionChannel)
+		c.publishResponses[id] = make(ConnectionChannel[K])
 	}
 	c.publishResponses[id][c.connectionID] = ch
 
@@ -59,7 +62,7 @@ func (c *conn) registerPublishResponse(id string) (chan *rtv1pb.SubscribeTopicEv
 	}
 }
 
-func (c *conn) notifyPublishResponse(resp *rtv1pb.SubscribeTopicEventsRequestProcessedAlpha1) {
+func (c *conn[T, K]) notifyPublishResponse(resp K) {
 	c.lock.RLock()
 	ch, ok := c.publishResponses[resp.GetId()][c.connectionID]
 	c.lock.RUnlock()

@@ -102,3 +102,96 @@ func (a *api) SubscribeTopicEventsAlpha1(stream runtimev1pb.Dapr_SubscribeTopicE
 
 	return a.pubsubAdapterStreamer.Subscribe(stream, req, connectionID)
 }
+
+func (a *api) BulkSubscribeTopicEventsAlpha1(stream runtimev1pb.Dapr_BulkSubscribeTopicEventsAlpha1Server) error {
+	errCh := make(chan error, 2)
+
+	a.wg.Add(2)
+	go func() {
+		defer a.wg.Done()
+		select {
+		case <-stream.Context().Done():
+			errCh <- stream.Context().Err()
+		case <-a.closeCh:
+			errCh <- errors.New("api server closed")
+		}
+	}()
+
+	var ireq *runtimev1pb.BulkSubscribeTopicEventsRequestAlpha1
+	var err error
+	go func() {
+		defer a.wg.Done()
+		ireq, err = stream.Recv()
+		errCh <- err
+	}()
+
+	if cerr := <-errCh; cerr != nil {
+		return cerr
+	}
+
+	req := ireq.GetInitialRequest()
+
+	if req == nil {
+		return errors.New("initial request is required")
+	}
+
+	if len(req.GetPubsubName()) == 0 {
+		return errors.New("pubsubName is required")
+	}
+
+	if len(req.GetTopic()) == 0 {
+		return errors.New("topic is required")
+	}
+
+	key := a.pubsubAdapterStreamer.StreamerKey(req.GetPubsubName(), req.GetTopic())
+
+	var maxDurMS int32 = 1000
+	if req.MaxWaitDuration != nil {
+		maxDurMS = int32(req.MaxWaitDuration.AsDuration().Milliseconds())
+	}
+	var maxMessageCount int32 = 100
+	if req.MaxMessagesCount != nil {
+		maxMessageCount = req.GetMaxMessagesCount()
+	}
+
+	sub := &subapi.Subscription{
+		ObjectMeta: metav1.ObjectMeta{Name: key},
+		Spec: subapi.SubscriptionSpec{
+			Pubsubname:      req.GetPubsubName(),
+			Topic:           req.GetTopic(),
+			Metadata:        req.GetMetadata(),
+			DeadLetterTopic: req.GetDeadLetterTopic(),
+			Routes:          subapi.Routes{Default: "/"},
+			BulkSubscribe: subapi.BulkSubscribe{
+				Enabled:            true,
+				MaxMessagesCount:   maxMessageCount,
+				MaxAwaitDurationMs: maxDurMS,
+			},
+		},
+	}
+	connectionID := a.Universal.CompStore().NextSubscriberIndex()
+	err = a.Universal.CompStore().AddStreamSubscription(sub, connectionID)
+	if err != nil {
+		return err
+	}
+
+	if err = a.processor.Subscriber().StartStreamerSubscription(sub, connectionID); err != nil {
+		a.Universal.CompStore().DeleteStreamSubscription(sub)
+		return err
+	}
+
+	defer func() {
+		a.processor.Subscriber().StopStreamerSubscription(sub, connectionID)
+		a.Universal.CompStore().DeleteStreamSubscription(sub)
+	}()
+
+	if err = stream.Send(&runtimev1pb.BulkSubscribeTopicEventsResponseAlpha1{
+		SubscribeTopicEventsResponseType: &runtimev1pb.BulkSubscribeTopicEventsResponseAlpha1_InitialResponse{
+			InitialResponse: new(runtimev1pb.BulkSubscribeTopicEventsResponseInitialAlpha1),
+		},
+	}); err != nil {
+		return err
+	}
+
+	return a.pubsubAdapterStreamer.BulkSubscribe(stream, req, connectionID)
+}

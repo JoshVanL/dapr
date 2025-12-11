@@ -15,6 +15,7 @@ syntax = "proto3";
 
 package dapr.proto.runtime.v1;
 
+import "google/protobuf/duration.proto";
 import "dapr/proto/runtime/v1/appcallback.proto";
 
 option csharp_namespace = "Dapr.Client.Autogen.Grpc.v1";
@@ -142,3 +143,61 @@ message SubscribeTopicEventsResponseAlpha1 {
 // SubscribeTopicEventsResponseInitialAlpha1 is the initial response from daprd
 // when subscribing to a topic.
 message SubscribeTopicEventsResponseInitialAlpha1 {}
+
+message BulkSubscribeTopicEventsRequestAlpha1 {
+  oneof subscribe_topic_events_request_type {
+    BulkSubscribeTopicEventsRequestInitialAlpha1 initial_request = 1;
+    BulkSubscribeTopicEventsRequestProcessedAlpha1 event_processed = 2;
+  }
+}
+
+// BulkSubscribeTopicEventsRequestInitialAlpha1 is the initial message
+// containing the details for bulk subscribing to a topic via streaming.
+message BulkSubscribeTopicEventsRequestInitialAlpha1 {
+  // The name of the pubsub component
+  string pubsub_name = 1;
+
+  // The pubsub topic
+  string topic = 2;
+
+  // The metadata passing to pub components metadata property:
+  // - key : the key of the message.
+  map<string, string> metadata = 3;
+
+  // dead_letter_topic is the topic to which messages that fail to be processed
+  // are sent.
+  optional string dead_letter_topic = 4;
+
+  // Optional max number of messages to be sent in a single bulk request.
+  // Defaults to 100.
+  optional int32 max_messages_count = 5;
+
+  // Optional max duration to wait for messages to be sent in a single
+  // bulk request. Defaults to 1000 ms.
+  optional google.protobuf.Duration max_wait_duration = 6;
+}
+
+
+// BulkSubscribeTopicEventsRequestProcessedAlpha1 is the message containing the
+// bulk subscription to a topic.
+message BulkSubscribeTopicEventsRequestProcessedAlpha1 {
+  // id is the unique identifier for the subscription request.
+  string id = 1;
+
+  // status is the result of the subscription request.
+  repeated TopicEventResponse status = 2;
+}
+
+
+// BulkSubscribeTopicEventsResponseAlpha1 is a message returned from daprd when
+// subscribing to a topic via streaming.
+message BulkSubscribeTopicEventsResponseAlpha1 {
+  oneof subscribe_topic_events_response_type {
+    BulkSubscribeTopicEventsResponseInitialAlpha1 initial_response = 1;
+    TopicEventBulkRequest event_message = 2;
+  }
+}
+
+// BulkSubscribeTopicEventsResponseInitialAlpha1 is the initial response from
+// daprd when subscribing to a topic.
+message BulkSubscribeTopicEventsResponseInitialAlpha1 {}

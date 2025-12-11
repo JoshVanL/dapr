@@ -73,6 +73,7 @@ service Dapr {
   // SubscribeTopicEventsAlpha1 subscribes to a PubSub topic and receives topic
   // events from it.
   rpc SubscribeTopicEventsAlpha1(stream SubscribeTopicEventsRequestAlpha1) returns (stream SubscribeTopicEventsResponseAlpha1) {}
+  rpc BulkSubscribeTopicEventsAlpha1(stream BulkSubscribeTopicEventsRequestAlpha1) returns (stream BulkSubscribeTopicEventsResponseAlpha1) {}
 
   // Invokes binding data to specific output bindings
   rpc InvokeBinding(InvokeBindingRequest) returns (InvokeBindingResponse) {}

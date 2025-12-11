@@ -38,17 +38,20 @@ type Options struct {
 	TracingSpec *config.TracingSpec
 }
 
-type Connections map[rtpubsub.ConnectionID]*conn
+type Connections map[rtpubsub.ConnectionID]*conn[rtv1pb.Dapr_SubscribeTopicEventsAlpha1Server, *rtv1pb.SubscribeTopicEventsRequestProcessedAlpha1]
+type ConnectionsBulk map[rtpubsub.ConnectionID]*conn[rtv1pb.Dapr_BulkSubscribeTopicEventsAlpha1Server, *rtv1pb.BulkSubscribeTopicEventsRequestProcessedAlpha1]
 
 type Subscribers map[string]Connections
+type BulkSubscribers map[string]ConnectionsBulk
 
-type ConnectionChannel map[rtpubsub.ConnectionID]chan *rtv1pb.SubscribeTopicEventsRequestProcessedAlpha1
+type ConnectionChannel[T req] map[rtpubsub.ConnectionID]chan T
 
-type PublishResponses map[string]ConnectionChannel
+type PublishResponses[T req] map[string]ConnectionChannel[T]
 
 type streamer struct {
-	tracingSpec *config.TracingSpec
-	subscribers Subscribers
+	tracingSpec     *config.TracingSpec
+	subscribers     Subscribers
+	bulkSubscribers BulkSubscribers
 
 	lock    sync.RWMutex
 	closeCh <-chan struct{}
@@ -69,11 +72,11 @@ func (s *streamer) Subscribe(stream rtv1pb.Dapr_SubscribeTopicEventsAlpha1Server
 	s.lock.Lock()
 	key := s.StreamerKey(req.GetPubsubName(), req.GetTopic())
 
-	connection := &conn{
+	connection := &conn[rtv1pb.Dapr_SubscribeTopicEventsAlpha1Server, *rtv1pb.SubscribeTopicEventsRequestProcessedAlpha1]{
 		stream:           stream,
 		connectionID:     connectionID,
 		closeCh:          make(chan struct{}),
-		publishResponses: make(PublishResponses),
+		publishResponses: make(PublishResponses[*rtv1pb.SubscribeTopicEventsRequestProcessedAlpha1]),
 	}
 	if s.subscribers[key] == nil {
 		s.subscribers[key] = make(Connections)
@@ -136,7 +139,7 @@ func (s *streamer) Subscribe(stream rtv1pb.Dapr_SubscribeTopicEventsAlpha1Server
 func (s *streamer) recvLoop(
 	stream rtv1pb.Dapr_SubscribeTopicEventsAlpha1Server,
 	req *rtv1pb.SubscribeTopicEventsRequestInitialAlpha1,
-	conn *conn,
+	conn *conn[rtv1pb.Dapr_SubscribeTopicEventsAlpha1Server, *rtv1pb.SubscribeTopicEventsRequestProcessedAlpha1],
 ) error {
 	for {
 		resp, err := stream.Recv()

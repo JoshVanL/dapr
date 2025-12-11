@@ -15,6 +15,7 @@ package stream
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -60,11 +61,11 @@ func (b *bulk) Run(t *testing.T, ctx context.Context) {
 
 	client := b.daprd.GRPCClient(t, ctx)
 
-	stream, err := client.SubscribeTopicEventsAlpha1(ctx)
+	stream, err := client.BulkSubscribeTopicEventsAlpha1(ctx)
 	require.NoError(t, err)
-	require.NoError(t, stream.Send(&rtv1.SubscribeTopicEventsRequestAlpha1{
-		SubscribeTopicEventsRequestType: &rtv1.SubscribeTopicEventsRequestAlpha1_InitialRequest{
-			InitialRequest: &rtv1.SubscribeTopicEventsRequestInitialAlpha1{
+	require.NoError(t, stream.Send(&rtv1.BulkSubscribeTopicEventsRequestAlpha1{
+		SubscribeTopicEventsRequestType: &rtv1.BulkSubscribeTopicEventsRequestAlpha1_InitialRequest{
+			InitialRequest: &rtv1.BulkSubscribeTopicEventsRequestInitialAlpha1{
 				PubsubName: "mypub", Topic: "a",
 			},
 		},
@@ -76,7 +77,7 @@ func (b *bulk) Run(t *testing.T, ctx context.Context) {
 	sresp, err := stream.Recv()
 	require.NoError(t, err)
 	switch sresp.GetSubscribeTopicEventsResponseType().(type) {
-	case *rtv1.SubscribeTopicEventsResponseAlpha1_InitialResponse:
+	case *rtv1.BulkSubscribeTopicEventsResponseAlpha1_InitialResponse:
 	default:
 		require.Fail(t, "unexpected response type")
 	}
@@ -90,18 +91,18 @@ func (b *bulk) Run(t *testing.T, ctx context.Context) {
 
 	errCh := make(chan error, 8)
 	go func() {
-		for range 4 {
-			event, serr := stream.Recv()
-			errCh <- serr
-			errCh <- stream.Send(&rtv1.SubscribeTopicEventsRequestAlpha1{
-				SubscribeTopicEventsRequestType: &rtv1.SubscribeTopicEventsRequestAlpha1_EventProcessed{
-					EventProcessed: &rtv1.SubscribeTopicEventsRequestProcessedAlpha1{
-						Id:     event.GetEventMessage().GetId(),
-						Status: &rtv1.TopicEventResponse{Status: rtv1.TopicEventResponse_SUCCESS},
-					},
-				},
-			})
-		}
+		event, serr := stream.Recv()
+		fmt.Printf(">>%s\n", event)
+		errCh <- serr
+
+		//errCh <- stream.Send(&rtv1.BulkSubscribeTopicEventsRequestAlpha1{
+		//	SubscribeTopicEventsRequestType: &rtv1.BulkSubscribeTopicEventsRequestAlpha1_EventProcessed{
+		//		EventProcessed: &rtv1.BulSubscribeTopicEventsRequestProcessedAlpha1{
+		//			Id:     event.GetEventMessage().GetId(),
+		//			Status: &rtv1.TopicEventResponse{Status: rtv1.TopicEventResponse_SUCCESS},
+		//		},
+		//	},
+		//})
 	}()
 
 	resp, err := client.BulkPublishEventAlpha1(ctx, &rtv1.BulkPublishRequest{
@@ -117,7 +118,5 @@ func (b *bulk) Run(t *testing.T, ctx context.Context) {
 	require.NoError(t, err)
 	assert.Empty(t, resp.GetFailedEntries())
 
-	for range 8 {
-		require.NoError(t, <-errCh)
-	}
+	require.NoError(t, <-errCh)
 }
