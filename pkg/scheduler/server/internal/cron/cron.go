@@ -18,7 +18,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -32,12 +31,19 @@ import (
 	"github.com/dapr/dapr/pkg/scheduler/monitoring"
 	"github.com/dapr/dapr/pkg/scheduler/server/internal/etcd"
 	"github.com/dapr/dapr/pkg/scheduler/server/internal/pool"
+	"github.com/dapr/dapr/pkg/scheduler/server/internal/serialize"
 	"github.com/dapr/kit/concurrency"
 	"github.com/dapr/kit/events/broadcaster"
 	"github.com/dapr/kit/logger"
 )
 
 var log = logger.NewLogger("dapr.scheduler.server.cron")
+
+var (
+	responseSuccess       = &api.TriggerResponse{Result: api.TriggerResponseResult_SUCCESS}
+	responseFailed        = &api.TriggerResponse{Result: api.TriggerResponseResult_FAILED}
+	responseUndeliverable = &api.TriggerResponse{Result: api.TriggerResponseResult_UNDELIVERABLE}
+)
 
 type Options struct {
 	ID      string
@@ -103,6 +109,10 @@ func (c *cron) Run(ctx context.Context) error {
 		return err
 	}
 
+	// Consumer sink has a length of 0 so we don't buffer any events. Buffering
+	// is handled by control loops.
+	consumerSink := make(chan *api.InformerEvent)
+
 	c.etcdcron, err = etcdcron.New(etcdcron.Options{
 		Client:          client,
 		Namespace:       "dapr",
@@ -110,13 +120,15 @@ func (c *cron) Run(ctx context.Context) error {
 		TriggerFn:       c.triggerHandler,
 		ReplicaData:     hostAny,
 		WatchLeadership: watchLeadershipCh,
+		ConsumerSink:    consumerSink,
 	})
 	if err != nil {
 		return fmt.Errorf("fail to create etcd-cron: %s", err)
 	}
 
 	c.connectionPool = pool.New(pool.Options{
-		Cron: c.etcdcron,
+		Cron:         c.etcdcron,
+		ConsumerSink: consumerSink,
 	})
 
 	return concurrency.NewRunnerManager(
@@ -234,22 +246,30 @@ func (c *cron) triggerHandler(ctx context.Context, req *api.TriggerRequest) *api
 }
 
 func (c *cron) triggerJob(ctx context.Context, req *api.TriggerRequest) (time.Duration, *api.TriggerResponse) {
+	fmt.Printf(">>TRIGGERING: %s\n", req.Name)
 	var meta schedulerv1pb.JobMetadata
 	if err := req.GetMetadata().UnmarshalTo(&meta); err != nil {
 		log.Errorf("Error unmarshalling metadata: %s", err)
-		return 0, &api.TriggerResponse{Result: api.TriggerResponseResult_UNDELIVERABLE}
+		return 0, responseUndeliverable
 	}
 
-	idx := strings.LastIndex(req.GetName(), "||")
-	if idx == -1 || len(req.GetName()) <= idx+2 {
-		log.Errorf("Job name is malformed: %s", req.GetName())
-		return 0, &api.TriggerResponse{Result: api.TriggerResponseResult_UNDELIVERABLE}
+	// Broadcast jobs are returns as SUCCESS immediately. This will cause them to
+	// be deleted, and handled appropriately.
+	if meta.GetTarget().GetBroadcast() != nil {
+		fmt.Printf(">>TRIGGERED: %s\n", req.GetName())
+		return 0, responseSuccess
+	}
+
+	jobName, err := serialize.JobNameFromKey(req.GetName())
+	if err != nil {
+		log.Error(err.Error())
+		return 0, responseUndeliverable
 	}
 
 	start := time.Now()
 	result := c.connectionPool.Trigger(ctx, &internalsv1pb.JobEvent{
 		Key:      req.GetName(),
-		Name:     req.GetName()[idx+2:],
+		Name:     jobName,
 		Data:     req.GetPayload(),
 		Metadata: &meta,
 	})

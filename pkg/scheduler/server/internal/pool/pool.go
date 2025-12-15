@@ -22,6 +22,7 @@ import (
 	internalsv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 	schedulerv1pb "github.com/dapr/dapr/pkg/proto/scheduler/v1"
 	"github.com/dapr/dapr/pkg/scheduler/server/internal/pool/loops"
+	"github.com/dapr/dapr/pkg/scheduler/server/internal/pool/loops/broadcasts"
 	"github.com/dapr/dapr/pkg/scheduler/server/internal/pool/loops/namespaces"
 	"github.com/dapr/kit/concurrency"
 	"github.com/dapr/kit/events/loop"
@@ -36,7 +37,8 @@ var respChPool = sync.Pool{New: func() any {
 }}
 
 type Options struct {
-	Cron api.Interface
+	Cron         api.Interface
+	ConsumerSink <-chan *api.InformerEvent
 }
 
 // Pool represents a connection pool for namespace/appID separation of sidecars
@@ -44,14 +46,18 @@ type Options struct {
 type Pool struct {
 	cron api.Interface
 
-	nsLoop  loop.Interface[loops.Event]
+	nsLoop       loop.Interface[loops.Event]
+	broadcasts   *broadcasts.Broadcasts
+	consumerSink <-chan *api.InformerEvent
+
 	readyCh chan struct{}
 }
 
 func New(opts Options) *Pool {
 	return &Pool{
-		readyCh: make(chan struct{}),
-		cron:    opts.Cron,
+		cron:         opts.Cron,
+		consumerSink: opts.ConsumerSink,
+		readyCh:      make(chan struct{}),
 	}
 }
 
@@ -62,13 +68,16 @@ func (p *Pool) Run(ctx context.Context) error {
 		CancelPool: cancel,
 	})
 
+	p.broadcasts = broadcasts.New(broadcasts.Options{
+		NamespaceLoop: p.nsLoop,
+		ConsumerSink:  p.consumerSink,
+	})
+
 	close(p.readyCh)
 
 	return concurrency.NewRunnerManager(
-		func(ctx context.Context) error {
-			err := p.nsLoop.Run(ctx)
-			return err
-		},
+		p.nsLoop.Run,
+		p.broadcasts.Run,
 		func(ctx context.Context) error {
 			<-ctx.Done()
 			log.Info("Connection pool shutting down")

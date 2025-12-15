@@ -1,0 +1,62 @@
+syntax = "proto3";
+
+package dapr.proto.scheduler.v1;
+
+import "google/protobuf/any.proto";
+
+option go_package = "github.com/dapr/dapr/pkg/proto/scheduler/v1;scheduler";
+
+// BroadcastJobEventType is the type of the event why this job is being
+// broadcast.
+enum BroadcastJobEventType {
+  // BROADCAST_JOB_EVENT_TYPE_UNKNOWN is the default unknown event type.
+  // It should not be used.
+  BROADCAST_JOB_EVENT_TYPE_UNKNOWN = 0;
+
+  // BROADCAST_JOB_EVENT_PUT is the event type for a job being created or
+  // updated.
+  BROADCAST_JOB_EVENT_PUT = 1;
+
+  // BROADCAST_JOB_EVENT_DELETE is the event type for a job being deleted.
+  BROADCAST_JOB_EVENT_DELETE = 2;
+
+  // BROADCAST_JOB_EVENT_DROP_ALL is the event type for all jobs being deleted.
+  BROADCAST_JOB_EVENT_DROP_ALL = 3;
+}
+
+// BroadcastJobDataWrapper is a canonical wrapper for the data of a broadcast
+// job which is sent to clients from the Scheduler. Contains CRUD events for
+// the broadcast job.
+// This message will set on the data field of the job when being broadcast from
+// Scheduler to compatible clients.
+message BroadcastJobDataWrapper {
+  // type is the type of the event which is causing this job to be send to the
+  // client.
+  BroadcastJobEventType type = 1;
+
+  // data contains the actual data of the job. It may be wrapped in another
+  // message, depending on the type of broadcast job.
+  google.protobuf.Any data = 2;
+}
+
+// TargetBroadcast are job types which are "broadcast", meaning they are sent
+// to all clients who support this target on connection, and when the job is
+// created. On delete, the job is signalled to all matching clients that the
+// job has been deleted with an empty data payload.
+message TargetBroadcast {
+  oneof broadcast {
+    // TargetDurableActorID is the message which holds broadcast durable actor
+    // ID.
+    // The data field of the job must be of type `common.InvokeRequest`, where
+    // the `.HttpExtension.Verb` will always be ignored, in favour of a POST
+    // when the durable actor is invoked.
+    TargetDurableActorID durable_actor_id = 2;
+  }
+}
+
+// TargetDurableActorID is the message which holds broadcast durable actor ID
+// jobs.
+message TargetDurableActorID {
+  // type is the actor type.
+  string type = 1;
+}

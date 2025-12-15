@@ -1,4 +1,4 @@
-/*
+/*l
 Copyright 2025 The Dapr Authors
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/dapr/dapr/pkg/scheduler/monitoring"
 	"github.com/dapr/dapr/pkg/scheduler/server/internal/pool/loops"
@@ -22,15 +23,18 @@ import (
 )
 
 type Options struct {
-	Loop       loop.Interface[loops.Event]
-	AppID      *string
-	ActorTypes []string
+	Loop            loop.Interface[loops.Event]
+	AppID           *string
+	ActorTypes      []string
+	DurableActorIDs bool
 }
 
-// TODO: sync.Pool
+// TODO: @joshvanl: Move store routing into stream.
 type Store struct {
 	appIDs     *instance
 	actorTypes *instance
+
+	durableActorIDs []loop.Interface[loops.Event]
 }
 
 func New() *Store {
@@ -53,14 +57,31 @@ func (s *Store) Add(opts Options) context.CancelFunc {
 		fns = append(fns, s.actorTypes.add(actorType, opts.Loop))
 	}
 
+	if opts.DurableActorIDs {
+		s.durableActorIDs = append(s.durableActorIDs, opts.Loop)
+	}
+
+	fmt.Printf(">>>%p STORE ADDED LOOP. DURABLE LOOPS COUNT: %d\n", s, len(s.durableActorIDs))
+
 	monitoring.RecordSidecarsConnectedCount(1)
 	return func() {
+		fmt.Printf(">>>%p STORE REMOVING LOOP. DURABLE LOOPS COUNT BEFORE: %d\n", s, len(s.durableActorIDs))
+		if opts.DurableActorIDs {
+			for i := range s.durableActorIDs {
+				if s.durableActorIDs[i] == opts.Loop {
+					s.durableActorIDs = append(s.durableActorIDs[:i], s.durableActorIDs[i+1:]...)
+					break
+				}
+			}
+		}
+
 		for _, fn := range fns {
 			fn()
 		}
 
 		opts.Loop.Close(new(loops.StreamShutdown))
 		monitoring.RecordSidecarsConnectedCount(-1)
+		fmt.Printf(">>>STORE REMOVED LOOP. DURABLE LOOPS COUNT AFTER: %d\n", len(s.durableActorIDs))
 	}
 }
 
@@ -70,4 +91,9 @@ func (s *Store) AppID(id string) (loop.Interface[loops.Event], bool) {
 
 func (s *Store) ActorType(actorType string) (loop.Interface[loops.Event], bool) {
 	return s.actorTypes.get(actorType)
+}
+
+func (s *Store) DurableActorIDs() []loop.Interface[loops.Event] {
+	fmt.Printf(">>>%p STORE RETURNING DURABLE LOOPS: %d\n", s, len(s.durableActorIDs))
+	return s.durableActorIDs
 }

@@ -17,6 +17,7 @@ import (
 	"context"
 
 	"github.com/diagridio/go-etcd-cron/api"
+	"google.golang.org/protobuf/types/known/anypb"
 
 	internalsv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 	schedulerv1pb "github.com/dapr/dapr/pkg/proto/scheduler/v1"
@@ -39,6 +40,8 @@ type ConnAdd struct {
 	Channel schedulerv1pb.Scheduler_WatchJobsServer
 	Request *schedulerv1pb.WatchJobsRequestInitial
 	Cancel  context.CancelCauseFunc
+
+	DurableActorIDs []*BroadcastJob
 }
 
 // ConnCloseStream is the event for closing a connection to the scheduler from
@@ -50,3 +53,16 @@ type ConnCloseStream struct {
 
 // Shutdown is the event for shutting down the scheduler loops.
 type Shutdown struct{}
+
+// BroadcastJobEvent is the event for broadcasting a job event to all
+// connections in a namespace.
+type BroadcastJobEvent struct {
+	Event schedulerv1pb.BroadcastJobEventType
+	Job   *BroadcastJob
+}
+
+type BroadcastJob struct {
+	Name     string
+	Metadata *schedulerv1pb.JobMetadata
+	Payload  *anypb.Any
+}

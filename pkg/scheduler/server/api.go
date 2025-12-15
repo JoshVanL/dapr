@@ -42,6 +42,10 @@ func (s *Server) ScheduleJob(ctx context.Context, req *schedulerv1pb.ScheduleJob
 		return nil, err
 	}
 
+	if err = serialize.ValidateSchedule(req); err != nil {
+		return nil, err
+	}
+
 	job := req.GetJob()
 
 	//nolint:protogetter

@@ -27,6 +27,7 @@ func PrefixesFromNamespace(namespace string) []string {
 	return []string{
 		"actorreminder||" + namespace,
 		"app||" + namespace,
+		"durableactorid||" + namespace,
 	}
 }
 
@@ -34,7 +35,9 @@ func PrefixesFromNamespace(namespace string) []string {
 func MetadataFromKey(key string) (*schedulerv1pb.JobMetadata, error) {
 	seg := strings.Split(key, "||")
 
-	if len(seg) >= 5 && path.Base(seg[len(seg)-5]) == "actorreminder" {
+	switch {
+
+	case len(seg) >= 5 && path.Base(seg[len(seg)-5]) == "actorreminder":
 		seg = seg[len(seg)-4:]
 		return &schedulerv1pb.JobMetadata{
 			Namespace: seg[0],
@@ -47,9 +50,8 @@ func MetadataFromKey(key string) (*schedulerv1pb.JobMetadata, error) {
 				},
 			},
 		}, nil
-	}
 
-	if len(seg) >= 4 && path.Base(seg[len(seg)-4]) == "app" {
+	case len(seg) >= 4 && path.Base(seg[len(seg)-4]) == "app":
 		seg = seg[len(seg)-3:]
 		return &schedulerv1pb.JobMetadata{
 			Namespace: seg[0],
@@ -58,7 +60,34 @@ func MetadataFromKey(key string) (*schedulerv1pb.JobMetadata, error) {
 				Type: new(schedulerv1pb.JobTargetMetadata_Job),
 			},
 		}, nil
+
+	case len(seg) >= 4 && path.Base(seg[len(seg)-4]) == "durableactorid":
+		seg = seg[len(seg)-3:]
+		return &schedulerv1pb.JobMetadata{
+			Namespace: seg[0],
+			Target: &schedulerv1pb.JobTargetMetadata{
+				Type: &schedulerv1pb.JobTargetMetadata_Broadcast{
+					Broadcast: &schedulerv1pb.TargetBroadcast{
+						Broadcast: &schedulerv1pb.TargetBroadcast_DurableActorId{
+							DurableActorId: &schedulerv1pb.TargetDurableActorID{
+								Type: seg[1],
+							},
+						},
+					},
+				},
+			},
+		}, nil
+
+	default:
+		return nil, fmt.Errorf("invalid key: %s", key)
+	}
+}
+
+func JobNameFromKey(key string) (string, error) {
+	idx := strings.LastIndex(key, "||")
+	if idx == -1 || len(key) <= idx+2 {
+		return "", fmt.Errorf("Job name is malformed: %s", key)
 	}
 
-	return nil, fmt.Errorf("invalid key: %s", key)
+	return key[idx+2:], nil
 }

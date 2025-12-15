@@ -15,14 +15,13 @@ package namespaces
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 
 	"github.com/diagridio/go-etcd-cron/api"
 
 	"github.com/dapr/dapr/pkg/scheduler/server/internal/pool/loops"
-	"github.com/dapr/dapr/pkg/scheduler/server/internal/pool/loops/connections"
+	"github.com/dapr/dapr/pkg/scheduler/server/internal/pool/loops/namespaces/store"
 	"github.com/dapr/kit/events/loop"
 	"github.com/dapr/kit/logger"
 )
@@ -34,11 +33,6 @@ type Options struct {
 	CancelPool context.CancelCauseFunc
 }
 
-type connectionLoop struct {
-	connections uint64
-	loop        loop.Interface[loops.Event]
-}
-
 // namespaces is the main control loop for managing stream
 // connections for each namespace.
 type namespaces struct {
@@ -47,6 +41,7 @@ type namespaces struct {
 
 	// connections holds the active namespace connections.
 	connections map[string]*connectionLoop
+	jobStore    *store.Store
 	loop        loop.Interface[loops.Event]
 
 	wg sync.WaitGroup
@@ -56,6 +51,7 @@ func New(opts Options) loop.Interface[loops.Event] {
 	ns := &namespaces{
 		cron:        opts.Cron,
 		cancelPool:  opts.CancelPool,
+		jobStore:    store.New(),
 		connections: make(map[string]*connectionLoop),
 	}
 
@@ -64,81 +60,26 @@ func New(opts Options) loop.Interface[loops.Event] {
 }
 
 func (n *namespaces) Handle(ctx context.Context, event loops.Event) error {
+	fmt.Printf(">>NAMESPACE HANDLE: %v\n", event)
 	switch e := event.(type) {
 	case *loops.ConnAdd:
 		return n.handleAdd(ctx, e)
+
 	case *loops.ConnCloseStream:
 		return n.handleCloseStream(e)
+
 	case *loops.TriggerRequest:
 		return n.handleTriggerRequest(e)
+
+	case *loops.BroadcastJobEvent:
+		return n.handleBroadcastJob(ctx, e)
+
 	case *loops.Shutdown:
 		return n.handleShutdown(e)
+
 	default:
 		return fmt.Errorf("unknown connections event type: %T", e)
 	}
-}
-
-// handleAdd adds a connection to the pool for a given namespace/appID.
-func (n *namespaces) handleAdd(ctx context.Context, add *loops.ConnAdd) error {
-	connLoop, ok := n.connections[add.Request.GetNamespace()]
-	if !ok {
-		loop := connections.New(connections.Options{
-			Cron:          n.cron,
-			NamespaceLoop: n.loop,
-		})
-
-		n.wg.Add(1)
-		go func() {
-			defer n.wg.Done()
-			err := loop.Run(ctx)
-			if err != nil && !errors.Is(err, context.Canceled) {
-				log.Errorf("Error running stream loop: %v", err)
-				n.cancelPool(err)
-			}
-		}()
-
-		connLoop = &connectionLoop{
-			loop:        loop,
-			connections: 0,
-		}
-
-		n.connections[add.Request.GetNamespace()] = connLoop
-	}
-
-	connLoop.connections++
-	connLoop.loop.Enqueue(add)
-
-	return nil
-}
-
-// handleCloseStream handles a close stream request.
-func (n *namespaces) handleCloseStream(closeStream *loops.ConnCloseStream) error {
-	connLoop, ok := n.connections[closeStream.Namespace]
-	if !ok {
-		return nil
-	}
-
-	connLoop.connections--
-	connLoop.loop.Enqueue(closeStream)
-
-	if connLoop.connections == 0 {
-		delete(n.connections, closeStream.Namespace)
-		connLoop.loop.Close(new(loops.Shutdown))
-	}
-
-	return nil
-}
-
-// handleTriggerRequest handles a trigger request for a job.
-func (n *namespaces) handleTriggerRequest(req *loops.TriggerRequest) error {
-	loop, ok := n.connections[req.Job.GetMetadata().GetNamespace()]
-	if !ok {
-		req.ResultFn(api.TriggerResponseResult_UNDELIVERABLE)
-		return nil
-	}
-
-	loop.loop.Enqueue(req)
-	return nil
 }
 
 // handleShutdown handles the shutdown of the connections.

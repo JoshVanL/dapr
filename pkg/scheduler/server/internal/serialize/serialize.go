@@ -78,6 +78,7 @@ func (s *Serializer) KeyFromMetadata(ctx context.Context, req *schedulerv1pb.Job
 		return "", err
 	}
 
+	// TODO: @joshvanl: test list for broadcast job type.
 	var str string
 	switch t := req.GetTarget(); t.GetType().(type) {
 	case *schedulerv1pb.JobTargetMetadata_Actor:
@@ -143,6 +144,14 @@ func buildJobName(req Request) (string, error) {
 		return joinStrings("actorreminder", meta.GetNamespace(), actor.GetType(), actor.GetId(), name), nil
 	case *schedulerv1pb.JobTargetMetadata_Job:
 		return joinStrings("app", meta.GetNamespace(), meta.GetAppId(), name), nil
+	case *schedulerv1pb.JobTargetMetadata_Broadcast:
+		switch b := t.GetBroadcast().GetBroadcast().(type) {
+		case *schedulerv1pb.TargetBroadcast_DurableActorId:
+			actor := b.DurableActorId
+			return joinStrings("durableactorid", meta.GetNamespace(), actor.GetType(), name), nil
+		default:
+			return "", fmt.Errorf("unknown broadcast target type: %v", b)
+		}
 	default:
 		return "", fmt.Errorf("unknown job type: %v", t)
 	}

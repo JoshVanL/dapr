@@ -47,7 +47,6 @@ type Options struct {
 
 // connections is a control loop that creates and manages stream connections,
 // piping trigger requests.
-// TODO: @joshvanl: use a sync.Pool cache
 type connections struct {
 	cron   api.Interface
 	nsLoop loop.Interface[loops.Event]
@@ -73,13 +72,20 @@ func New(opts Options) loop.Interface[loops.Event] {
 func (c *connections) Handle(ctx context.Context, event loops.Event) error {
 	switch e := event.(type) {
 	case *loops.ConnAdd:
+
 		return c.handleAdd(ctx, e)
 	case *loops.ConnCloseStream:
 		c.handleCloseStream(e)
+
 	case *loops.TriggerRequest:
 		c.handleTriggerRequest(e)
+
+	case *loops.BroadcastJobEvent:
+		c.handleBroadcast(e)
+
 	case *loops.Shutdown:
 		c.handleShutdown()
+
 	default:
 		return fmt.Errorf("unknown connections event type: %T", e)
 	}
@@ -105,20 +111,47 @@ func (c *connections) handleAdd(ctx context.Context, add *loops.ConnAdd) error {
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
+		// streamLoop never returns an error so can be safely ignored.
 		_ = streamLoop.Run(ctx)
 	}()
 
 	var appID *string
 	ts := add.Request.GetAcceptJobTypes()
-	if len(ts) == 0 || slices.Contains(add.Request.GetAcceptJobTypes(), schedulerv1pb.JobTargetType_JOB_TARGET_TYPE_JOB) {
+	if len(ts) == 0 || slices.Contains(
+		add.Request.GetAcceptJobTypes(),
+		schedulerv1pb.JobTargetType_JOB_TARGET_TYPE_JOB,
+	) {
 		appID = ptr.Of(add.Request.GetAppId())
 	}
 
+	isDurableActorIDs := slices.Contains(
+		add.Request.GetAcceptJobTypes(),
+		schedulerv1pb.JobTargetType_JOB_TARGET_TYPE_BROADCAST_DURABLE_ACTOR_ID,
+	)
+
 	c.streams[streamIDx] = c.streamPool.Add(store.Options{
-		Loop:       streamLoop,
-		AppID:      appID,
-		ActorTypes: add.Request.GetActorTypes(),
+		Loop:            streamLoop,
+		AppID:           appID,
+		ActorTypes:      add.Request.GetActorTypes(),
+		DurableActorIDs: isDurableActorIDs,
 	})
+
+	// Send existing broadcast jobs to new stream.
+	if isDurableActorIDs {
+		for _, job := range add.DurableActorIDs {
+			streamLoop.Enqueue(&loops.BroadcastJobEvent{
+				Event: schedulerv1pb.BroadcastJobEventType_BROADCAST_JOB_EVENT_PUT,
+				Job:   job,
+			})
+		}
+	}
+
+	fmt.Printf(">>ADDED CONNECTION STREAM %d FOR APPID %q ACTOR TYPES %v DURABLE ACTOR IDS %v\n",
+		streamIDx,
+		add.Request.GetAppId(),
+		add.Request.GetActorTypes(),
+		isDurableActorIDs,
+	)
 
 	return nil
 }

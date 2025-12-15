@@ -102,6 +102,8 @@ func (s *stream) Handle(ctx context.Context, event loops.Event) error {
 	switch e := event.(type) {
 	case *loops.TriggerRequest:
 		s.handleTriggerRequest(e)
+	case *loops.BroadcastJobEvent:
+		s.handleBroadcast(ctx, e)
 	case *loops.StreamShutdown:
 		s.handleShutdown()
 	default:

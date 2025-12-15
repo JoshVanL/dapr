@@ -20,13 +20,11 @@ import (
 	"github.com/dapr/kit/events/loop"
 )
 
-// TODO: sync.Pool
 type entry struct {
 	nextConn uint64
 	conns    []loop.Interface[loops.Event]
 }
 
-// TODO: sync.Pool
 type instance struct {
 	entries map[string]*entry
 }
