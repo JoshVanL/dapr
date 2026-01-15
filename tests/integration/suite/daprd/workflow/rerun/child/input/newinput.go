@@ -67,7 +67,7 @@ func (n *newinput) Run(t *testing.T, ctx context.Context) {
 	require.NoError(t, err)
 
 	_, err = client.RerunWorkflowFromEvent(ctx, "abc", 0,
-		dworkflow.WithRerunNewInstanceID("hello"),
+		dworkflow.WithRerunInput("hello"),
 		dworkflow.WithRerunInput("a-different-input"),
 	)
 	require.NoError(t, err)

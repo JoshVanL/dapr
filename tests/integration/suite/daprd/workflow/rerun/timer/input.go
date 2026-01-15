@@ -61,6 +61,6 @@ func (i *input) Run(t *testing.T, ctx context.Context) {
 	_, err = client.WaitForOrchestrationCompletion(ctx, id)
 	require.NoError(t, err)
 
-	_, err = client.RerunWorkflowFromEvent(ctx, id, 0, api.WithRerunInput("hello"))
+	_, err = client.RerunWorkflowFromEvent(ctx, id, 0, api.WithRerunFromInput("hello"))
 	assert.Equal(t, status.Error(codes.InvalidArgument, "cannot write input to timer event '0'"), err)
 }

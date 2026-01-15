@@ -67,7 +67,7 @@ func (n *nullinput) Run(t *testing.T, ctx context.Context) {
 	assert.Equal(t, "helloworld", *input.Load())
 
 	var nullstring *string
-	newID, err := client.RerunWorkflowFromEvent(ctx, api.InstanceID("abc"), 0, api.WithRerunInput(nullstring))
+	newID, err := client.RerunWorkflowFromEvent(ctx, api.InstanceID("abc"), 0, api.WithRerunFromInput(nullstring))
 	require.NoError(t, err)
 	_, err = client.WaitForOrchestrationCompletion(ctx, newID)
 	require.NoError(t, err)

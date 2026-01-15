@@ -68,7 +68,7 @@ func (n *newinputactivity) Run(t *testing.T, ctx context.Context) {
 	require.NoError(t, err)
 	assert.Equal(t, "helloworld", *input.Load())
 
-	newID, err := client.RerunWorkflowFromEvent(ctx, api.InstanceID("abc"), 0, api.WithRerunInput("newinput"))
+	newID, err := client.RerunWorkflowFromEvent(ctx, api.InstanceID("abc"), 0, api.WithRerunFromInput("newinput"))
 	require.NoError(t, err)
 	_, err = client.WaitForOrchestrationCompletion(ctx, newID)
 	require.NoError(t, err)

@@ -15,6 +15,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"google.golang.org/protobuf/types/known/anypb"
@@ -212,7 +213,7 @@ func (o *orchestrator) purgeWorkflowState(ctx context.Context, meta map[string]*
 	}
 
 	if o.rstate.Stalled != nil {
-		return api.ErrStalled
+		return errors.New("api.ErrStalled")
 	}
 
 	// If the workflow is required to complete but it's not yet completed then

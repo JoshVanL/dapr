@@ -280,6 +280,46 @@ func (abe *Actors) RerunWorkflowFromEvent(ctx context.Context, req *backend.Reru
 	return api.InstanceID(req.GetNewInstanceID()), nil
 }
 
+func (abe *Actors) RerunWorkflowAfterEvent(ctx context.Context, req *backend.RerunWorkflowAfterEventRequest) (api.InstanceID, error) {
+	if len(req.GetSourceInstanceID()) == 0 {
+		return "", status.Error(codes.InvalidArgument, "rerun workflow source instance ID is required")
+	}
+
+	if req.NewInstanceID == nil {
+		u, err := uuid.NewRandom()
+		if err != nil {
+			return "", fmt.Errorf("failed to generate instance ID: %w", err)
+		}
+		req.NewInstanceID = ptr.Of(u.String())
+	}
+
+	if req.GetSourceInstanceID() == req.GetNewInstanceID() {
+		return "", status.Error(codes.InvalidArgument, "rerun workflow instance ID must be different from the original instance ID")
+	}
+
+	requestBytes, err := proto.Marshal(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal RerunWorkflowFromEvent: %w", err)
+	}
+
+	areq := internalsv1pb.NewInternalInvokeRequest(todo.ForkWorkflowHistoryAfter).
+		WithActor(abe.workflowActorType, req.GetSourceInstanceID()).
+		WithData(requestBytes).
+		WithContentType(invokev1.ProtobufContentType)
+
+	engine, err := abe.actors.Router(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	_, err = engine.Call(ctx, areq)
+	if err != nil {
+		return "", err
+	}
+
+	return api.InstanceID(req.GetNewInstanceID()), nil
+}
+
 // CreateOrchestrationInstance implements backend.Backend and creates a new workflow instance.
 //
 // Internally, creating a workflow instance also creates a new actor with the same ID. The create

@@ -34,7 +34,7 @@ import (
 	"github.com/dapr/durabletask-go/backend"
 )
 
-func (o *orchestrator) forkWorkflowHistory(ctx context.Context, request []byte) error {
+func (o *orchestrator) forkWorkflowHistoryFrom(ctx context.Context, request []byte) error {
 	var rerunReq backend.RerunWorkflowFromEventRequest
 	if err := proto.Unmarshal(request, &rerunReq); err != nil {
 		return fmt.Errorf("failed to unmarshal rerun workflow request: %w", err)
@@ -60,7 +60,7 @@ func (o *orchestrator) forkWorkflowHistory(ctx context.Context, request []byte) 
 
 	defer o.factory.deactivate(o)
 
-	fork := fork.New(fork.Options{
+	fork := fork.NewFrom(fork.FromOptions{
 		InstanceID:                 o.actorID,
 		NewInstanceID:              rerunReq.GetNewInstanceID(),
 		NewChildWorkflowInstanceID: rerunReq.NewChildWorkflowInstanceID,
@@ -73,6 +73,67 @@ func (o *orchestrator) forkWorkflowHistory(ctx context.Context, request []byte) 
 		OverwriteInput: rerunReq.GetOverwriteInput(),
 		Input:          rerunReq.Input,
 		OldState:       state,
+	})
+
+	newState, err := fork.Build()
+	if err != nil {
+		return err
+	}
+
+	data, err := proto.Marshal(newState.ToWorkflowState())
+	if err != nil {
+		return err
+	}
+
+	// Call target instance ID to execute workflow rerun.
+	_, err = o.router.Call(ctx, internalsv1pb.
+		NewInternalInvokeRequest(todo.RerunWorkflowInstance).
+		WithActor(o.actorType, rerunReq.GetNewInstanceID()).
+		WithData(data).
+		WithContentType(invokev1.ProtobufContentType),
+	)
+
+	return err
+}
+
+func (o *orchestrator) forkWorkflowHistoryAfter(ctx context.Context, request []byte) error {
+	var rerunReq backend.RerunWorkflowAfterEventRequest
+	if err := proto.Unmarshal(request, &rerunReq); err != nil {
+		return fmt.Errorf("failed to unmarshal rerun workflow request: %w", err)
+	}
+
+	state, ometa, err := o.loadInternalState(ctx)
+	if err != nil {
+		return err
+	}
+
+	if state == nil {
+		defer o.factory.deactivate(o)
+		return status.Errorf(codes.NotFound, "workflow instance does not exist with ID '%s'", o.actorID)
+	}
+
+	if !api.OrchestrationMetadataIsComplete(ometa) {
+		return status.Errorf(codes.InvalidArgument, "'%s' is not in a terminal state", o.actorID)
+	}
+
+	if len(ometa.ParentInstanceId) > 0 {
+		return status.Errorf(codes.InvalidArgument, "'%s': cannot rerun from child-workflows", o.actorID)
+	}
+
+	defer o.factory.deactivate(o)
+
+	fork := fork.NewAfter(fork.AfterOptions{
+		InstanceID:        o.actorID,
+		NewInstanceID:     rerunReq.GetNewInstanceID(),
+		AppID:             o.appID,
+		ActorType:         o.actorType,
+		ActivityActorType: o.activityActorType,
+		//nolint:gosec
+		TargetEventID: int32(rerunReq.GetEventID()),
+
+		OverwriteOutput: rerunReq.GetOverwriteOutput(),
+		Output:          rerunReq.Output,
+		OldState:        state,
 	})
 
 	newState, err := fork.Build()

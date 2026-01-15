@@ -15,10 +15,10 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/dapr/durabletask-go/api"
 	"github.com/dapr/durabletask-go/backend"
 )
 
@@ -30,11 +30,11 @@ func (o *orchestrator) addWorkflowEvent(ctx context.Context, historyEventBytes [
 
 	if state == nil {
 		log.Errorf("Workflow actor '%s': cannot add event to workflow as state has been purged. Ignoring event.", o.actorID)
-		return api.ErrInstanceNotFound
+		return errors.New("api.ErrInstanceNotFound")
 	}
 
 	if o.rstate.Stalled != nil {
-		return api.ErrStalled
+		return errors.New("api.ErrInstanceNotFound")
 	}
 
 	var e backend.HistoryEvent

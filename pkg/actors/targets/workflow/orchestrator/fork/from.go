@@ -25,7 +25,7 @@ import (
 	"github.com/dapr/durabletask-go/backend"
 )
 
-type Options struct {
+type FromOptions struct {
 	AppID             string
 	ActorType         string
 	ActivityActorType string
@@ -40,7 +40,7 @@ type Options struct {
 	OldState *state.State
 }
 
-type Fork struct {
+type From struct {
 	instanceID    string
 	newInstanceID string
 
@@ -57,8 +57,8 @@ type Fork struct {
 	unfinishedChildWorkflows map[int32]*backend.HistoryEvent
 }
 
-func New(opts Options) *Fork {
-	return &Fork{
+func NewFrom(opts FromOptions) *From {
+	return &From{
 		instanceID:    opts.InstanceID,
 		newInstanceID: opts.NewInstanceID,
 		oldState:      opts.OldState,
@@ -77,7 +77,7 @@ func New(opts Options) *Fork {
 	}
 }
 
-func (f *Fork) Build() (*state.State, error) {
+func (f *From) Build() (*state.State, error) {
 	var found *protos.HistoryEvent
 	for i, his := range f.oldState.History {
 		if his.GetEventId() != f.targetEventID {
@@ -125,7 +125,7 @@ func (f *Fork) Build() (*state.State, error) {
 	return f.newState, nil
 }
 
-func (f *Fork) handleBefore(his *backend.HistoryEvent) {
+func (f *From) handleBefore(his *backend.HistoryEvent) {
 	// Track activities which have not been completed yet so they are also
 	// rerun.
 	switch his.GetEventType().(type) {
@@ -163,7 +163,7 @@ func (f *Fork) handleBefore(his *backend.HistoryEvent) {
 	}
 }
 
-func (f *Fork) handleFound(i int, his *backend.HistoryEvent) (*protos.HistoryEvent, error) {
+func (f *From) handleFound(i int, his *backend.HistoryEvent) (*protos.HistoryEvent, error) {
 	switch his.GetEventType().(type) {
 	case *protos.HistoryEvent_TaskScheduled:
 		sched := his.GetTaskScheduled()

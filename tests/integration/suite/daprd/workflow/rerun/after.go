@@ -29,46 +29,61 @@ import (
 )
 
 func init() {
-	suite.Register(new(newinput))
+	suite.Register(new(after))
 }
 
-type newinput struct {
+type after struct {
 	workflow *workflow.Workflow
 }
 
-func (n *newinput) Setup(t *testing.T) []framework.Option {
-	n.workflow = workflow.New(t)
+func (b *after) Setup(t *testing.T) []framework.Option {
+	b.workflow = workflow.New(t)
 
 	return []framework.Option{
-		framework.WithProcesses(n.workflow),
+		framework.WithProcesses(b.workflow),
 	}
 }
 
-func (n *newinput) Run(t *testing.T, ctx context.Context) {
-	n.workflow.WaitUntilRunning(t, ctx)
+func (b *after) Run(t *testing.T, ctx context.Context) {
+	b.workflow.WaitUntilRunning(t, ctx)
 
-	var input atomic.Pointer[string]
-	n.workflow.Registry().AddOrchestratorN("foo", func(ctx *task.OrchestrationContext) (any, error) {
-		require.NoError(t, ctx.CallActivity("bar", task.WithActivityInput("helloworld")).Await(nil))
+	var act atomic.Int64
+	b.workflow.Registry().AddOrchestratorN("foo", func(ctx *task.OrchestrationContext) (any, error) {
+		for range 5 {
+			require.NoError(t, ctx.CallActivity("bar").Await(nil))
+		}
 		return nil, nil
 	})
-	n.workflow.Registry().AddActivityN("bar", func(ctx task.ActivityContext) (any, error) {
-		var got string
-		require.NoError(t, ctx.GetInput(&got))
-		input.Store(&got)
+	b.workflow.Registry().AddActivityN("bar", func(ctx task.ActivityContext) (any, error) {
+		act.Add(1)
 		return nil, nil
 	})
-	client := n.workflow.BackendClient(t, ctx)
+	client := b.workflow.BackendClient(t, ctx)
 
 	id, err := client.ScheduleNewOrchestration(ctx, "foo", api.WithInstanceID("abc"))
 	require.NoError(t, err)
 	_, err = client.WaitForOrchestrationCompletion(ctx, id)
 	require.NoError(t, err)
-	assert.Equal(t, "helloworld", *input.Load())
+	assert.Equal(t, int64(5), act.Load())
+	act.Store(0)
 
-	newID, err := client.RerunWorkflowFromEvent(ctx, api.InstanceID("abc"), 0, api.WithRerunFromInput("newinput"))
+	newID, err := client.RerunWorkflowAfterEvent(ctx, api.InstanceID("abc"), 0, api.WithRerunAfterNewInstanceID("rerun1"))
 	require.NoError(t, err)
+	assert.NotEqual(t, id, newID)
+
 	_, err = client.WaitForOrchestrationCompletion(ctx, newID)
 	require.NoError(t, err)
-	assert.Equal(t, "newinput", *input.Load())
+	assert.Equal(t, int64(4), act.Load())
+
+	//for i := range uint32(5) {
+	//	act.Store(0)
+
+	//	newID, err := client.RerunWorkflowFromEvent(ctx, api.InstanceID("abc"), i)
+	//	require.NoError(t, err)
+	//	assert.NotEqual(t, id, newID)
+
+	//	_, err = client.WaitForOrchestrationCompletion(ctx, newID)
+	//	require.NoError(t, err)
+	//	assert.Equal(t, int64(5-i), act.Load())
+	//}
 }
