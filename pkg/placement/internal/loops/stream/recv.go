@@ -62,17 +62,22 @@ func (s *stream) handleRecive(resp *v1pb.Host) {
 		return
 	}
 
-	fmt.Printf(">>GOT HOST WHICH NEEDS REPORTING: %+v\n", resp.Entities)
+	fmt.Printf(">>GOT HOST WHICH NEEDS REPORTING %d: %+v\n", s.idx, resp.Entities)
 
 	s.host = resp
 	s.nsLoop.Enqueue(&loops.ReportedHost{
-		Host:      resp,
-		StreamIDx: s.idx,
+		Host:p,
+		StreamIDx:
 	})
 }
 
 func (s *stream) shouldReport(h *v1pb.Host) bool {
-	if v := h.Version; v != nil && *v != s.currentVersion {
+	if s.currentVersion == nil {
+		return true
+	}
+
+	// TODO: @joshvanl
+	if v := h.Version; v != nil && *v < *s.currentVersion {
 		// Ignore reports of old operation versions.
 		return false
 	}
@@ -86,14 +91,14 @@ func (s *stream) shouldReport(h *v1pb.Host) bool {
 		}
 
 		// Always report non-report operations.
-		if *op != v1pb.HostOperation_Report {
+		if *op != v1pb.HostOperation_UNLOCK {
 			return true
 		}
 	}
 
 	// Always return true if we are in a locking operation to account for old
 	// clients.
-	if s.currentOperation != v1pb.HostOperation_Report {
+	if s.currentOperation != v1pb.HostOperation_UNLOCK {
 		return true
 	}
 

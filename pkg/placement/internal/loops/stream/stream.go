@@ -58,7 +58,7 @@ type stream struct {
 	host *v1pb.Host
 
 	currentOperation v1pb.HostOperation
-	currentVersion   uint64
+	currentVersion   *uint64
 
 	addr string
 	wg   sync.WaitGroup
@@ -81,8 +81,8 @@ func New(ctx context.Context, opts Options) loop.Interface[loops.Event] {
 	stream.ns = opts.Add.InitialHost.GetNamespace()
 	stream.idx = opts.IDx
 
-	stream.currentOperation = v1pb.HostOperation_Report
-	stream.currentVersion = 0
+	stream.currentOperation = v1pb.HostOperation_UNLOCK
+	stream.currentVersion = nil
 
 	stream.addr = addr
 

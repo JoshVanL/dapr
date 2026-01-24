@@ -16,6 +16,7 @@ package app
 import (
 	"context"
 	"os"
+	"time"
 
 	"github.com/dapr/dapr/cmd/placement/options"
 	"github.com/dapr/dapr/pkg/buildinfo"
@@ -23,7 +24,7 @@ import (
 	healthzserver "github.com/dapr/dapr/pkg/healthz/server"
 	"github.com/dapr/dapr/pkg/metrics"
 	"github.com/dapr/dapr/pkg/modes"
-	"github.com/dapr/dapr/pkg/placement/josh"
+	"github.com/dapr/dapr/pkg/placement"
 	"github.com/dapr/dapr/pkg/placement/monitoring"
 	"github.com/dapr/dapr/pkg/security"
 	"github.com/dapr/kit/concurrency"
@@ -91,7 +92,7 @@ func Run() {
 				return serr
 			}
 
-			place, err := josh.New(josh.Options{
+			place, err := placement.New(placement.Options{
 				NodeID:            opts.RaftID,
 				Port:              opts.PlacementPort,
 				ListenAddress:     opts.PlacementListenAddress,
@@ -101,6 +102,9 @@ func Run() {
 				KeepAliveTimeout:  opts.KeepAliveTimeout,
 				ReplicationFactor: int64(opts.ReplicationFactor),
 				Peers:             opts.RaftPeers,
+				//DisseminateTimeout: opts.DisseminateTimeout,
+				// TODO: @joshvanl
+				DisseminateTimeout: time.Second * 5,
 			})
 			if err != nil {
 				return err

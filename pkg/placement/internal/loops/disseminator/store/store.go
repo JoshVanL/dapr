@@ -14,6 +14,9 @@ limitations under the License.
 package store
 
 import (
+	"fmt"
+	"strconv"
+
 	v1pb "github.com/dapr/dapr/pkg/proto/placement/v1"
 )
 
@@ -35,23 +38,27 @@ func New(opts Options) *Store {
 	}
 }
 
-func (s *Store) PlacementTables() *v1pb.PlacementTables {
+func (s *Store) PlacementTables(version uint64) *v1pb.PlacementTables {
 	t := &v1pb.PlacementTables{
 		ReplicationFactor: s.replicationFactor,
 		Entries:           make(map[string]*v1pb.PlacementTable),
+		Version:           strconv.FormatUint(version, 10),
 	}
 
-	for _, host := range s.hosts {
+	for streamID, host := range s.hosts {
+		fmt.Printf(">>RETURNING TABLE WITH HOST: %d:%s\n", streamID, host.Name)
 		for _, entity := range host.Entities {
 			if t.Entries[entity] == nil {
 				t.Entries[entity] = &v1pb.PlacementTable{
-					HostMap: make(map[string]*v1pb.Host),
+					LoadMap: make(map[string]*v1pb.Host),
 				}
 			}
 
-			t.Entries[entity].HostMap[*host.Name] = host
+			t.Entries[entity].LoadMap[host.Name] = host
 		}
 	}
+
+	fmt.Printf(">>--------------\n")
 
 	return t
 }

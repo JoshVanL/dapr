@@ -30,8 +30,8 @@ type ConnAdd struct {
 }
 
 type ReportedHost struct {
-	Host      *v1pb.Host
-	StreamIDx uint64
+	Hostpb.Host
+	StreamIDx
 }
 
 type DisseminateLock struct {

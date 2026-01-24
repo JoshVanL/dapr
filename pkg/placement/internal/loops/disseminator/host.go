@@ -15,10 +15,8 @@ package disseminator
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/dapr/dapr/pkg/placement/internal/loops"
-	"github.com/dapr/dapr/pkg/placement/internal/loops/disseminator/timeout"
 	v1pb "github.com/dapr/dapr/pkg/proto/placement/v1"
 	"github.com/dapr/kit/ptr"
 )
@@ -33,27 +31,25 @@ func (d *disseminator) handleReportedHost(report *loops.ReportedHost) {
 	}
 
 	switch *op {
-	case v1pb.HostOperation_Report:
+	case v1pb.HostOperation_UNLOCK:
 		d.handleReportedReport(report.StreamIDx, report.Host)
 
-	case v1pb.HostOperation_Lock:
+	case v1pb.HostOperation_LOCK:
 		d.handleReportedLock(report.StreamIDx)
 
-	case v1pb.HostOperation_Update:
+	case v1pb.HostOperation_UPDATE:
 		d.handleReportedUpdate(report.StreamIDx)
 	}
 }
 
 func (d *disseminator) handleReportedReport(streamIDx uint64, host *v1pb.Host) {
 	d.currentVersion++
-	d.currentOperation = v1pb.HostOperation_Lock
+	d.currentOperation = v1pb.HostOperation_LOCK
 	d.store.Set(streamIDx, host)
-
-	// TODO: @joshvanl: make timeout duration configurable.
-	d.timeoutQ.Enqueue(timeout.NewTimeout(d.currentVersion, time.Second*5))
+	d.timeoutQ.Enqueue(d.currentVersion)
 
 	for _, s := range d.streams {
-		s.currentState = ptr.Of(v1pb.HostOperation_Lock)
+		s.currentState = ptr.Of(v1pb.HostOperation_LOCK)
 		s.loop.Enqueue(&loops.DisseminateLock{
 			Version: d.currentVersion,
 		})
@@ -67,17 +63,17 @@ func (d *disseminator) handleReportedLock(streamIDx uint64) {
 		return
 	}
 
-	stream.currentState = ptr.Of(v1pb.HostOperation_Lock)
+	stream.currentState = ptr.Of(v1pb.HostOperation_LOCK)
 
-	if d.allStreamsHaveState(v1pb.HostOperation_Lock) {
+	if d.allStreamsHaveState(v1pb.HostOperation_LOCK) {
 		// All streams have locked, move to update phase.
-		d.currentOperation = v1pb.HostOperation_Update
+		d.currentOperation = v1pb.HostOperation_UPDATE
 
 		for _, s := range d.streams {
-			s.currentState = ptr.Of(v1pb.HostOperation_Update)
+			s.currentState = ptr.Of(v1pb.HostOperation_UPDATE)
 			s.loop.Enqueue(&loops.DisseminateUpdate{
 				Version: d.currentVersion,
-				Tables:  d.store.PlacementTables(),
+				Tables:  d.store.PlacementTables(d.currentVersion),
 			})
 		}
 	}
@@ -89,17 +85,17 @@ func (d *disseminator) handleReportedUpdate(streamIDx uint64) {
 		return
 	}
 
-	stream.currentState = ptr.Of(v1pb.HostOperation_Update)
+	stream.currentState = ptr.Of(v1pb.HostOperation_UPDATE)
 
-	if d.allStreamsHaveState(v1pb.HostOperation_Update) {
+	if d.allStreamsHaveState(v1pb.HostOperation_UPDATE) {
 		// All streams have updated, dissemination is complete, send out unlocks.
 		// TODO: @joshvanl: rename "Report" to "Unlock" to be more clear.
-		d.currentOperation = v1pb.HostOperation_Report
+		d.currentOperation = v1pb.HostOperation_UNLOCK
 
 		d.timeoutQ.Dequeue(d.currentVersion)
 
 		for _, s := range d.streams {
-			s.currentState = ptr.Of(v1pb.HostOperation_Report)
+			s.currentState = ptr.Of(v1pb.HostOperation_UNLOCK)
 			s.currentVersion = ptr.Of(d.currentVersion)
 			s.loop.Enqueue(&loops.DisseminateUnlock{
 				Version: d.currentVersion,

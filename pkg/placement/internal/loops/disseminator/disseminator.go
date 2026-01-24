@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/dapr/dapr/pkg/placement/internal/authorizer"
 	"github.com/dapr/dapr/pkg/placement/internal/loops"
@@ -25,9 +26,11 @@ import (
 	"github.com/dapr/dapr/pkg/placement/internal/loops/stream"
 	v1pb "github.com/dapr/dapr/pkg/proto/placement/v1"
 	"github.com/dapr/kit/events/loop"
-	"github.com/dapr/kit/events/queue"
+	"github.com/dapr/kit/logger"
 	"github.com/dapr/kit/ptr"
 )
+
+var log = logger.NewLogger("dapr.placement.server.loops.disseminator")
 
 var (
 	loopFactory = loop.New[loops.Event](1024)
@@ -39,11 +42,10 @@ var (
 )
 
 type Options struct {
-	NamespaceLoop     loop.Interface[loops.Event]
-	ReplicationFactor int64
-	Authorizer        *authorizer.Authorizer
-
-	Namespace string
+	NamespaceLoop        loop.Interface[loops.Event]
+	ReplicationFactor    int64
+	Authorizer           *authorizer.Authorizer
+	DisseminationTimeout time.Duration
 }
 
 type streamConn struct {
@@ -59,7 +61,7 @@ type disseminator struct {
 	loop       loop.Interface[loops.Event]
 	authorizer *authorizer.Authorizer
 
-	timeoutQ *queue.Processor[uint64, *timeout.Dissemination]
+	timeoutQ *timeout.Timeout
 
 	streams   map[uint64]*streamConn
 	store     *store.Store
@@ -76,7 +78,7 @@ func New(opts Options) loop.Interface[loops.Event] {
 	diss.nsLoop = opts.NamespaceLoop
 	diss.authorizer = opts.Authorizer
 	diss.streamIDx = 0
-	diss.currentOperation = v1pb.HostOperation_Report
+	diss.currentOperation = v1pb.HostOperation_UNLOCK
 	diss.currentVersion = 0
 
 	if diss.store == nil {
@@ -88,7 +90,8 @@ func New(opts Options) loop.Interface[loops.Event] {
 	diss.loop = loopFactory.NewLoop(diss)
 
 	diss.timeoutQ = timeout.New(timeout.Options{
-		Loop: diss.loop,
+		Loop:    diss.loop,
+		Timeout: opts.DisseminationTimeout,
 	})
 
 	return diss.loop
@@ -104,7 +107,7 @@ func (d *disseminator) Handle(ctx context.Context, event loops.Event) error {
 		d.handleCloseStream(e)
 	case *loops.Shutdown:
 		d.handleShutdown()
-	case *timeout.Dissemination:
+	case *loops.DisseminationTimeout:
 		d.handleTimeout(e)
 	default:
 		return fmt.Errorf("unknown disseminator event type: %T", e)
@@ -156,9 +159,9 @@ func (d *disseminator) handleCloseStream(closeStream *loops.ConnCloseStream) {
 	stream.loop.Close(new(loops.StreamShutdown))
 
 	d.currentVersion++
-	d.currentOperation = v1pb.HostOperation_Lock
+	d.currentOperation = v1pb.HostOperation_LOCK
 	for _, s := range d.streams {
-		s.currentState = ptr.Of(v1pb.HostOperation_Lock)
+		s.currentState = ptr.Of(v1pb.HostOperation_LOCK)
 		s.loop.Enqueue(&loops.DisseminateLock{
 			Version: d.currentVersion,
 		})
@@ -181,14 +184,13 @@ func (d *disseminator) handleShutdown() {
 	dissCache.Put(d)
 }
 
-func (d *disseminator) handleTimeout(timeout *timeout.Dissemination) {
-	version := timeout.Key()
-
+func (d *disseminator) handleTimeout(timeout *loops.DisseminationTimeout) {
+	log.Warnf("Dissemination timeout for version %d", timeout.Version)
 	for idx, stream := range d.streams {
-		if stream.currentVersion == nil || *stream.currentVersion < version {
+		if stream.currentVersion == nil || *stream.currentVersion < timeout.Version {
 			d.handleCloseStream(&loops.ConnCloseStream{
 				StreamIDx: idx,
-				Error:     fmt.Errorf("dissemination timeout for version %d", version),
+				Error:     fmt.Errorf("dissemination timeout for version %d", timeout.Version),
 			})
 		}
 	}

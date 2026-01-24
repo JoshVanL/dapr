@@ -1,2 +1,0 @@
-Adds a timeout processor queable which reconciles the disseminator loop.
-Checks if any streams have not done their dissemination to completion and closes the stream.

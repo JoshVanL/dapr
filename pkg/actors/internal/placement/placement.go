@@ -16,6 +16,7 @@ package placement
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,6 +24,7 @@ import (
 	"time"
 
 	"github.com/dapr/dapr/pkg/actors/api"
+	"github.com/dapr/dapr/pkg/actors/internal/apilevel"
 	"github.com/dapr/dapr/pkg/actors/internal/placement/client"
 	"github.com/dapr/dapr/pkg/actors/table"
 	diag "github.com/dapr/dapr/pkg/diagnostics"
@@ -38,7 +40,6 @@ import (
 	"github.com/dapr/kit/concurrency/fifo"
 	"github.com/dapr/kit/concurrency/lock"
 	"github.com/dapr/kit/logger"
-	"github.com/dapr/kit/ptr"
 )
 
 var log = logger.NewLogger("dapr.runtime.actors.placement")
@@ -67,6 +68,7 @@ type Options struct {
 	Addresses []string
 
 	Scheduler schedclient.Reloader
+	APILevel  *apilevel.APILevel
 	Security  security.Handler
 	Table     table.Interface
 	Healthz   healthz.Healthz
@@ -76,6 +78,7 @@ type Options struct {
 type placement struct {
 	client     *client.Client
 	actorTable table.Interface
+	apiLevel   *apilevel.APILevel
 	htarget    healthz.Target
 
 	scheduler         schedclient.Reloader
@@ -111,8 +114,9 @@ func New(opts Options) (Interface, error) {
 		Healthz:   opts.Healthz,
 		Mode:      opts.Mode,
 		BaseHost: &v1pb.Host{
-			Name:      ptr.Of(opts.Hostname + ":" + strconv.Itoa(opts.Port)),
+			Name:      opts.Hostname + ":" + strconv.Itoa(opts.Port),
 			Id:        opts.AppID,
+			ApiLevel:  20,
 			Namespace: opts.Namespace,
 		},
 	})
@@ -132,6 +136,7 @@ func New(opts Options) (Interface, error) {
 		namespace:     opts.Namespace,
 		hostname:      opts.Hostname,
 		operationLock: fifo.New(),
+		apiLevel:      opts.APILevel,
 		scheduler:     opts.Scheduler,
 		htarget:       opts.Healthz.AddTarget("internal-placement-service"),
 		lock:          lock,
@@ -300,13 +305,17 @@ func (p *placement) handleLockOperation(ctx context.Context) {
 }
 
 func (p *placement) handleUpdateOperation(ctx context.Context, in *v1pb.PlacementTables) {
+	p.apiLevel.Set(in.GetApiLevel())
+
 	entries := make(map[string]*hashing.Consistent)
 
 	for k, v := range in.GetEntries() {
-		loadMap := make(map[string]*hashing.Host, len(v.HostMap()))
+		loadMap := make(map[string]*hashing.Host, len(v.GetLoadMap()))
 		for lk, lv := range v.GetLoadMap() {
 			loadMap[lk] = hashing.NewHost(lv.GetName(), lv.GetId(), lv.GetLoad(), lv.GetPort())
 		}
+
+		fmt.Printf(">>%s: GOT ENTITIES: %s:%s\n", p.appID, k, v)
 
 		entries[k] = hashing.NewFromExisting(loadMap, in.GetReplicationFactor(), p.virtualNodesCache)
 	}
@@ -337,8 +346,10 @@ func (p *placement) IsActorHosted(ctx context.Context, actorType, actorID string
 
 func (p *placement) handleUnlockOperation(ctx context.Context) {
 	if p.updateVersion.Add(1) != p.lockVersion.Load() {
+		fmt.Printf(">GOT UNLOCK FOR WRONG VERSION, IGNORING: update=%d, lock=%d\n", p.updateVersion.Load(), p.lockVersion.Load())
 		return
 	}
+	fmt.Printf(">>HANDLING UNLOCK ON NEW VERSION\n")
 
 	select {
 	case <-p.readyCh:

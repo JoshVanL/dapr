@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	v1pb "github.com/dapr/dapr/pkg/proto/placement/v1"
+	"github.com/dapr/kit/ptr"
 )
 
 const (
@@ -29,9 +30,13 @@ const (
 func (s *stream) handleLock(version uint64) error {
 	// Set the current version on lock operations as this is the latest known
 	// version.
-	s.currentVersion = version
-	s.currentOperation = v1pb.HostOperation_Lock
-	fmt.Printf(">>SENDING LOCK VERSION %d\n", version)
+	if s.currentVersion != nil && *s.currentVersion > version {
+		return nil
+	}
+
+	s.currentVersion = ptr.Of(version)
+	s.currentOperation = v1pb.HostOperation_LOCK
+	fmt.Printf(">>SENDING LOCK VERSION %d: %d\n", s.idx, version)
 
 	return s.channel.Send(&v1pb.PlacementOrder{
 		Operation: operationLock,
@@ -42,13 +47,13 @@ func (s *stream) handleLock(version uint64) error {
 // handleUpdate sends the update operation to the stream with the new tables.
 func (s *stream) handleUpdate(version uint64, tables *v1pb.PlacementTables) error {
 	// Ignore outdated updates.
-	if s.currentVersion != version {
-		fmt.Printf(">>IGNORING OUTDATED UPDATE VERSION %d CURRENT %d\n", version, s.currentVersion)
+	if s.currentVersion == nil || *s.currentVersion != version {
+		fmt.Printf(">>%d IGNORING WRONG UPDATE VERSION %d CURRENT %v\n", s.idx, version, s.currentVersion)
 		return nil
 	}
 
-	fmt.Printf(">>SENDING UPDATE VERSION %d\n", version)
-	s.currentOperation = v1pb.HostOperation_Update
+	fmt.Printf(">>SENDING UPDATE VERSION %d: %d\n", s.idx, version)
+	s.currentOperation = v1pb.HostOperation_UPDATE
 
 	return s.channel.Send(&v1pb.PlacementOrder{
 		Operation: operationUpdate,
@@ -60,13 +65,13 @@ func (s *stream) handleUpdate(version uint64, tables *v1pb.PlacementTables) erro
 // handleUnlock sends the unlock operation to the stream.
 func (s *stream) handleUnlock(version uint64) error {
 	// Ignore unlocks for older versions.
-	if s.currentVersion != version {
-		fmt.Printf(">>IGNORING OUTDATED UNLOCK VERSION %d CURRENT %d\n", version, s.currentVersion)
+	if s.currentVersion == nil || *s.currentVersion != version {
+		fmt.Printf(">>%d IGNORING WRONG UNLOCK VERSION %d CURRENT %v\n", s.idx, version, s.currentVersion)
 		return nil
 	}
 
-	fmt.Printf(">>SENDING UNLOCK VERSION %d\n", version)
-	s.currentOperation = v1pb.HostOperation_Report
+	fmt.Printf(">>SENDING UNLOCK VERSION %d: %d\n", s.idx, version)
+	s.currentOperation = v1pb.HostOperation_UNLOCK
 
 	return s.channel.Send(&v1pb.PlacementOrder{
 		Operation: operationUnlock,

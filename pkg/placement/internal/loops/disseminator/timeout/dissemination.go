@@ -17,22 +17,15 @@ import (
 	"time"
 )
 
-type Dissemination struct {
+type dissemination struct {
 	version uint64
 	dueTime time.Time
 }
 
-func NewTimeout(version uint64, dueTime time.Duration) *Dissemination {
-	return &Dissemination{
-		version: version,
-		dueTime: time.Now().Add(dueTime),
-	}
-}
-
-func (d *Dissemination) Key() uint64 {
+func (d *dissemination) Key() uint64 {
 	return d.version
 }
 
-func (d *Dissemination) ScheduledTime() time.Time {
+func (d *dissemination) ScheduledTime() time.Time {
 	return d.dueTime
 }

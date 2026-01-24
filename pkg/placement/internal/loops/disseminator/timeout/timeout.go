@@ -14,21 +14,47 @@ limitations under the License.
 package timeout
 
 import (
+	"time"
+
 	"github.com/dapr/dapr/pkg/placement/internal/loops"
 	"github.com/dapr/kit/events/loop"
 	"github.com/dapr/kit/events/queue"
 )
 
 type Options struct {
-	Loop loop.Interface[loops.Event]
+	Loop    loop.Interface[loops.Event]
+	Timeout time.Duration
 }
 
-func New(opts Options) *queue.Processor[uint64, *Dissemination] {
-	return queue.NewProcessor[uint64, *Dissemination](queue.Options[uint64, *Dissemination]{
-		ExecuteFn: func(diss *Dissemination) {
-			opts.Loop.Enqueue(loops.DisseminationTimeout{
-				Version: diss.Key(),
-			})
-		},
+type Timeout struct {
+	queue   *queue.Processor[uint64, *dissemination]
+	timeout time.Duration
+}
+
+func New(opts Options) *Timeout {
+	return &Timeout{
+		queue: queue.NewProcessor[uint64, *dissemination](queue.Options[uint64, *dissemination]{
+			ExecuteFn: func(diss *dissemination) {
+				opts.Loop.Enqueue(&loops.DisseminationTimeout{
+					Version: diss.Key(),
+				})
+			},
+		}),
+		timeout: opts.Timeout,
+	}
+}
+
+func (t *Timeout) Close() error {
+	return t.queue.Close()
+}
+
+func (t *Timeout) Enqueue(version uint64) {
+	t.queue.Enqueue(&dissemination{
+		version: version,
+		dueTime: time.Now().Add(t.timeout),
 	})
+}
+
+func (t *Timeout) Dequeue(version uint64) {
+	t.queue.Dequeue(version)
 }
