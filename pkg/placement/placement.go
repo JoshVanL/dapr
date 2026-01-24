@@ -299,7 +299,7 @@ func (p *Service) ReportDaprStatus(stream placementv1pb.Placement_ReportDaprStat
 		return status.Errorf(codes.Internal, "failed to receive the first message: %v", err)
 	}
 
-	err = p.validateFirstMessage(stream.Context(), firstMessage, spiffeClientID)
+	err = p.validateFirstMessage(stream.Context(), firstMessage, piffeClientID)
 	if err != nil {
 		log.Errorf("First message validation failed: %v", err)
 		return err
@@ -442,6 +442,7 @@ func (p *Service) validateClient(stream placementv1pb.Placement_ReportDaprStatus
 	return clientID, nil
 }
 
+// TODO: @joshvanl
 func (p *Service) validateFirstMessage(ctx context.Context, firstMessage *placementv1pb.Host, clientID *spiffe.Parsed) error {
 	if clientID != nil && firstMessage.GetId() != clientID.AppID() {
 		return status.Errorf(codes.PermissionDenied, "provided app ID %s doesn't match the one in the Spiffe ID (%s)", firstMessage.GetId(), clientID.AppID())
@@ -485,7 +486,7 @@ func (p *Service) authorizeMessage(ctx context.Context, msg *placementv1pb.Host,
 	for _, entity := range msg.GetEntities() {
 		split := strings.Split(entity, ".")
 		if len(split) >= 2 && split[0] == partDapr && split[1] == partInternal {
-			if len(split) < 4 || split[2] != clientID.Namespace() || split[3] != clientID.AppID() {
+			if len(split) < 4 || split[2] != msg.Namespace() || split[3] != clientID.AppID() {
 				return status.Errorf(codes.PermissionDenied, "entity %s is not allowed for app ID %s in namespace %s", entity, clientID.AppID(), clientID.Namespace())
 			}
 		}

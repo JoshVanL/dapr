@@ -23,7 +23,7 @@ import (
 
 	"github.com/dapr/dapr/pkg/metrics"
 	"github.com/dapr/dapr/pkg/modes"
-	"github.com/dapr/dapr/pkg/placement/raft"
+	"github.com/dapr/dapr/pkg/placement/peers"
 	"github.com/dapr/dapr/pkg/security"
 	securityConsts "github.com/dapr/dapr/pkg/security/consts"
 	"github.com/dapr/kit/logger"
@@ -55,7 +55,7 @@ type Options struct {
 	// Raft protocol configurations
 	RaftID           string
 	raftPeerFlag     []string
-	RaftPeers        []raft.PeerInfo
+	RaftPeers        []peers.PeerInfo
 	RaftInMemEnabled bool
 	RaftLogStorePath string
 
@@ -152,8 +152,8 @@ func New(origArgs []string) (*Options, error) {
 	return &opts, nil
 }
 
-func parsePeersFromFlag(val []string) []raft.PeerInfo {
-	peers := make([]raft.PeerInfo, len(val))
+func parsePeersFromFlag(val []string) []peers.PeerInfo {
+	ps := make([]peers.PeerInfo, len(val))
 
 	i := 0
 	for _, addr := range val {
@@ -162,14 +162,14 @@ func parsePeersFromFlag(val []string) []raft.PeerInfo {
 			continue
 		}
 
-		peers[i] = raft.PeerInfo{
+		ps[i] = peers.PeerInfo{
 			ID:      strings.TrimSpace(peer[0]),
 			Address: strings.TrimSpace(peer[1]),
 		}
 		i++
 	}
 
-	return peers[:i]
+	return ps[:i]
 }
 
 func (o *Options) Validate() error {

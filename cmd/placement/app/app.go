@@ -14,7 +14,7 @@ limitations under the License.
 package app
 
 import (
-	"encoding/json"
+	"context"
 	"os"
 
 	"github.com/dapr/dapr/cmd/placement/options"
@@ -23,9 +23,8 @@ import (
 	healthzserver "github.com/dapr/dapr/pkg/healthz/server"
 	"github.com/dapr/dapr/pkg/metrics"
 	"github.com/dapr/dapr/pkg/modes"
-	"github.com/dapr/dapr/pkg/placement"
+	"github.com/dapr/dapr/pkg/placement/josh"
 	"github.com/dapr/dapr/pkg/placement/monitoring"
-	"github.com/dapr/dapr/pkg/placement/raft"
 	"github.com/dapr/dapr/pkg/security"
 	"github.com/dapr/kit/concurrency"
 	"github.com/dapr/kit/logger"
@@ -76,66 +75,38 @@ func Run() {
 		log.Fatal(err)
 	}
 
-	raftOptions := raft.Options{
-		ID:                opts.RaftID,
-		InMem:             opts.RaftInMemEnabled,
-		Peers:             opts.RaftPeers,
-		LogStorePath:      opts.RaftLogStorePath,
-		ReplicationFactor: int64(opts.ReplicationFactor),
-		// TODO: fix types
-		//nolint:gosec
-		MinAPILevel: uint32(opts.MinAPILevel),
-		//nolint:gosec
-		MaxAPILevel: uint32(opts.MaxAPILevel),
-		Healthz:     healthz,
-		Security:    secProvider,
-	}
-
-	placementOpts := placement.ServiceOpts{
-		Port:               opts.PlacementPort,
-		Raft:               raftOptions,
-		SecProvider:        secProvider,
-		Healthz:            healthz,
-		KeepAliveTime:      opts.KeepAliveTime,
-		KeepAliveTimeout:   opts.KeepAliveTimeout,
-		DisseminateTimeout: opts.DisseminateTimeout,
-		ListenAddress:      opts.PlacementListenAddress,
-	}
-	placementOpts.SetMinAPILevel(opts.MinAPILevel)
-	placementOpts.SetMaxAPILevel(opts.MaxAPILevel)
-
-	placementService, err := placement.New(placementOpts)
-	if err != nil {
-		log.Fatal("failed to create placement service: ", err)
-	}
-
-	var healthzHandlers []healthzserver.Handler
-	if opts.MetadataEnabled {
-		healthzHandlers = append(healthzHandlers, healthzserver.Handler{
-			Path: "/placement/state",
-			Getter: func() ([]byte, error) {
-				var tables *placement.PlacementTables
-				tables, err = placementService.GetPlacementTables()
-				if err != nil {
-					return nil, err
-				}
-				return json.Marshal(tables)
-			},
-		})
-	}
-
 	healthSrv := healthzserver.New(healthzserver.Options{
-		Log:      log,
-		Port:     opts.HealthzPort,
-		Healthz:  healthz,
-		Handlers: healthzHandlers,
+		Log:     log,
+		Port:    opts.HealthzPort,
+		Healthz: healthz,
 	})
 
 	err = concurrency.NewRunnerManager(
-		secProvider.Run,
 		metricsExporter.Start,
 		healthSrv.Start,
-		placementService.Run,
+		secProvider.Run,
+		func(ctx context.Context) error {
+			secHandler, serr := secProvider.Handler(ctx)
+			if serr != nil {
+				return serr
+			}
+
+			place, err := josh.New(josh.Options{
+				NodeID:            opts.RaftID,
+				Port:              opts.PlacementPort,
+				ListenAddress:     opts.PlacementListenAddress,
+				Security:          secHandler,
+				Healthz:           healthz,
+				KeepAliveTime:     opts.KeepAliveTime,
+				KeepAliveTimeout:  opts.KeepAliveTimeout,
+				ReplicationFactor: int64(opts.ReplicationFactor),
+				Peers:             opts.RaftPeers,
+			})
+			if err != nil {
+				return err
+			}
+			return place.Run(ctx)
+		},
 	).Run(ctx)
 	if err != nil {
 		log.Fatal(err)

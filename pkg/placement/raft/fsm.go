@@ -87,7 +87,6 @@ func (c *FSM) PlacementState(namespace string) *v1pb.PlacementTables {
 	newTable := &v1pb.PlacementTables{
 		Version:           strconv.FormatUint(c.state.TableGeneration(), 10),
 		Entries:           make(map[string]*v1pb.PlacementTable),
-		ApiLevel:          c.state.APILevel(),
 		ReplicationFactor: c.config.replicationFactor,
 	}
 
@@ -125,7 +124,7 @@ func (c *FSM) PlacementState(namespace string) *v1pb.PlacementTables {
 		totalLoadMap += len(table.GetLoadMap())
 	}
 
-	logging.Debugf("PlacementTable LoadMapCount=%d ApiLevel=%d ReplicationFactor=%d", totalLoadMap, newTable.GetApiLevel(), newTable.GetReplicationFactor())
+	logging.Debugf("PlacementTable LoadMapCount=%d  ReplicationFactor=%d", totalLoadMap, newTable.GetReplicationFactor())
 
 	return newTable
 }
