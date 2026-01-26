@@ -47,6 +47,29 @@ func (n *nomtls) Setup(t *testing.T) []framework.Option {
 func (n *nomtls) Run(t *testing.T, ctx context.Context) {
 	n.place.WaitUntilRunning(t, ctx)
 
+	// Can create hosts with any appIDs or namespaces.
+	_, err := n.establishStream(t, ctx, &v1pb.Host{
+		Id:        "foo",
+		Namespace: "bar",
+	})
+	require.NoError(t, err)
+
+	_, err = n.establishStream(t, ctx, &v1pb.Host{
+		Id:        "bar",
+		Namespace: "foo",
+	})
+	require.NoError(t, err)
+
+	_, err = n.establishStream(t, ctx, &v1pb.Host{
+		Id:        "bar",
+		Namespace: "ns1",
+	})
+	require.NoError(t, err)
+}
+
+func (n *nomtls) establishStream(t *testing.T, ctx context.Context, firstMessage *v1pb.Host) (v1pb.Placement_ReportDaprStatusClient, error) {
+	t.Helper()
+
 	host := n.place.Address()
 	//nolint:staticcheck
 	conn, err := grpc.DialContext(ctx, host, grpc.WithBlock(), grpc.WithReturnConnectionError(),
@@ -54,21 +77,14 @@ func (n *nomtls) Run(t *testing.T, ctx context.Context) {
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, conn.Close()) })
-
 	client := v1pb.NewPlacementClient(conn)
 
-	// Can create hosts with any appIDs or namespaces.
-	_, err = establishStream(t, ctx, client, new(v1pb.Host))
-	require.NoError(t, err)
+	stream, err := client.ReportDaprStatus(ctx)
+	err = stream.Send(firstMessage)
+	if err != nil {
+		return nil, err
+	}
+	_, err = stream.Recv()
 
-	_, err = establishStream(t, ctx, client, &v1pb.Host{
-		Name: "bar",
-	})
-	require.NoError(t, err)
-
-	_, err = establishStream(t, ctx, client, &v1pb.Host{
-		Name:      "bar",
-		Namespace: "ns1",
-	})
-	require.NoError(t, err)
+	return stream, err
 }

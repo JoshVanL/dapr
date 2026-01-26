@@ -14,8 +14,10 @@ limitations under the License.
 package store
 
 import (
-	"fmt"
+	"sort"
 	"strconv"
+
+	"google.golang.org/protobuf/proto"
 
 	v1pb "github.com/dapr/dapr/pkg/proto/placement/v1"
 )
@@ -45,8 +47,7 @@ func (s *Store) PlacementTables(version uint64) *v1pb.PlacementTables {
 		Version:           strconv.FormatUint(version, 10),
 	}
 
-	for streamID, host := range s.hosts {
-		fmt.Printf(">>RETURNING TABLE WITH HOST: %d:%s\n", streamID, host.Name)
+	for _, host := range s.hosts {
 		for _, entity := range host.Entities {
 			if t.Entries[entity] == nil {
 				t.Entries[entity] = &v1pb.PlacementTable{
@@ -58,13 +59,37 @@ func (s *Store) PlacementTables(version uint64) *v1pb.PlacementTables {
 		}
 	}
 
-	fmt.Printf(">>--------------\n")
-
 	return t
 }
 
-func (s *Store) Set(streamIDx uint64, host *v1pb.Host) {
+func (s *Store) StatePlacementTable(version uint64) *v1pb.StatePlacementTable {
+	hosts := make([]*v1pb.Host, len(s.hosts))
+	var i int
+	for _, host := range s.hosts {
+		hosts[i] = proto.Clone(host).(*v1pb.Host)
+		i++
+	}
+
+	sort.SliceStable(hosts, func(i, j int) bool {
+		return hosts[i].Name < hosts[j].Name
+	})
+
+	return &v1pb.StatePlacementTable{
+		Version: version,
+		Hosts:   hosts,
+	}
+}
+
+func (s *Store) Set(streamIDx uint64, host *v1pb.Host) bool {
+	sort.Strings(host.Entities)
+	if existing, ok := s.hosts[streamIDx]; ok {
+		if proto.Equal(existing, host) {
+			return false
+		}
+	}
+
 	s.hosts[streamIDx] = host
+	return true
 }
 
 func (s *Store) Delete(streamIDx uint64) {

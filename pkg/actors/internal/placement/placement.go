@@ -16,7 +16,6 @@ package placement
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -315,8 +314,6 @@ func (p *placement) handleUpdateOperation(ctx context.Context, in *v1pb.Placemen
 			loadMap[lk] = hashing.NewHost(lv.GetName(), lv.GetId(), lv.GetLoad(), lv.GetPort())
 		}
 
-		fmt.Printf(">>%s: GOT ENTITIES: %s:%s\n", p.appID, k, v)
-
 		entries[k] = hashing.NewFromExisting(loadMap, in.GetReplicationFactor(), p.virtualNodesCache)
 	}
 
@@ -346,10 +343,8 @@ func (p *placement) IsActorHosted(ctx context.Context, actorType, actorID string
 
 func (p *placement) handleUnlockOperation(ctx context.Context) {
 	if p.updateVersion.Add(1) != p.lockVersion.Load() {
-		fmt.Printf(">GOT UNLOCK FOR WRONG VERSION, IGNORING: update=%d, lock=%d\n", p.updateVersion.Load(), p.lockVersion.Load())
 		return
 	}
-	fmt.Printf(">>HANDLING UNLOCK ON NEW VERSION\n")
 
 	select {
 	case <-p.readyCh:

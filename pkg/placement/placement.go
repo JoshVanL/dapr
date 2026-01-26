@@ -21,6 +21,7 @@ import (
 	"github.com/dapr/dapr/pkg/placement/internal/leadership"
 	"github.com/dapr/dapr/pkg/placement/internal/server"
 	"github.com/dapr/dapr/pkg/placement/peers"
+	v1pb "github.com/dapr/dapr/pkg/proto/placement/v1"
 	"github.com/dapr/dapr/pkg/security"
 	"github.com/dapr/kit/concurrency"
 )
@@ -40,12 +41,12 @@ type Options struct {
 	Peers []peers.PeerInfo
 }
 
-type Josh struct {
+type Placement struct {
 	server     *server.Server
 	leadership *leadership.Leadership
 }
 
-func New(opts Options) (*Josh, error) {
+func New(opts Options) (*Placement, error) {
 	leadership, err := leadership.New(leadership.Options{
 		ID:       opts.NodeID,
 		Peers:    opts.Peers,
@@ -69,15 +70,19 @@ func New(opts Options) (*Josh, error) {
 		DisseminateTimeout: opts.DisseminateTimeout,
 	})
 
-	return &Josh{
+	return &Placement{
 		server:     server,
 		leadership: leadership,
 	}, nil
 }
 
-func (j *Josh) Run(ctx context.Context) error {
+func (p *Placement) Run(ctx context.Context) error {
 	return concurrency.NewRunnerManager(
-		j.leadership.Run,
-		j.server.Run,
+		p.leadership.Run,
+		p.server.Run,
 	).Run(ctx)
+}
+
+func (p *Placement) StatePlacementTables(ctx context.Context) (*v1pb.StatePlacementTables, error) {
+	return p.server.StatePlacementTables(ctx)
 }

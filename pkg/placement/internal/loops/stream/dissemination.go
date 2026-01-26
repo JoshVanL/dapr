@@ -14,8 +14,6 @@ limitations under the License.
 package stream
 
 import (
-	"fmt"
-
 	v1pb "github.com/dapr/dapr/pkg/proto/placement/v1"
 	"github.com/dapr/kit/ptr"
 )
@@ -35,8 +33,6 @@ func (s *stream) handleLock(version uint64) error {
 	}
 
 	s.currentVersion = ptr.Of(version)
-	s.currentOperation = v1pb.HostOperation_LOCK
-	fmt.Printf(">>SENDING LOCK VERSION %d: %d\n", s.idx, version)
 
 	return s.channel.Send(&v1pb.PlacementOrder{
 		Operation: operationLock,
@@ -48,12 +44,8 @@ func (s *stream) handleLock(version uint64) error {
 func (s *stream) handleUpdate(version uint64, tables *v1pb.PlacementTables) error {
 	// Ignore outdated updates.
 	if s.currentVersion == nil || *s.currentVersion != version {
-		fmt.Printf(">>%d IGNORING WRONG UPDATE VERSION %d CURRENT %v\n", s.idx, version, s.currentVersion)
 		return nil
 	}
-
-	fmt.Printf(">>SENDING UPDATE VERSION %d: %d\n", s.idx, version)
-	s.currentOperation = v1pb.HostOperation_UPDATE
 
 	return s.channel.Send(&v1pb.PlacementOrder{
 		Operation: operationUpdate,
@@ -66,12 +58,8 @@ func (s *stream) handleUpdate(version uint64, tables *v1pb.PlacementTables) erro
 func (s *stream) handleUnlock(version uint64) error {
 	// Ignore unlocks for older versions.
 	if s.currentVersion == nil || *s.currentVersion != version {
-		fmt.Printf(">>%d IGNORING WRONG UNLOCK VERSION %d CURRENT %v\n", s.idx, version, s.currentVersion)
 		return nil
 	}
-
-	fmt.Printf(">>SENDING UNLOCK VERSION %d: %d\n", s.idx, version)
-	s.currentOperation = v1pb.HostOperation_UNLOCK
 
 	return s.channel.Send(&v1pb.PlacementOrder{
 		Operation: operationUnlock,

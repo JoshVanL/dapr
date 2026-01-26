@@ -15,8 +15,9 @@ package app
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
-	"time"
 
 	"github.com/dapr/dapr/cmd/placement/options"
 	"github.com/dapr/dapr/pkg/buildinfo"
@@ -76,10 +77,37 @@ func Run() {
 		log.Fatal(err)
 	}
 
+	var place *placement.Placement
+	var handlers []healthzserver.Handler
+	placeReady := make(chan struct{})
+	if opts.MetadataEnabled {
+		handlers = []healthzserver.Handler{
+			{
+				Path: "/placement/state",
+				Getter: func(ctx context.Context) ([]byte, error) {
+					fmt.Printf(">>CALLING STATE\n")
+					select {
+					case <-ctx.Done():
+						return nil, ctx.Err()
+					case <-placeReady:
+
+						tables, err := place.StatePlacementTables(ctx)
+						if err != nil {
+							return nil, err
+						}
+
+						return json.Marshal(tables)
+					}
+				},
+			},
+		}
+	}
+
 	healthSrv := healthzserver.New(healthzserver.Options{
-		Log:     log,
-		Port:    opts.HealthzPort,
-		Healthz: healthz,
+		Log:      log,
+		Port:     opts.HealthzPort,
+		Healthz:  healthz,
+		Handlers: handlers,
 	})
 
 	err = concurrency.NewRunnerManager(
@@ -92,23 +120,23 @@ func Run() {
 				return serr
 			}
 
-			place, err := placement.New(placement.Options{
-				NodeID:            opts.RaftID,
-				Port:              opts.PlacementPort,
-				ListenAddress:     opts.PlacementListenAddress,
-				Security:          secHandler,
-				Healthz:           healthz,
-				KeepAliveTime:     opts.KeepAliveTime,
-				KeepAliveTimeout:  opts.KeepAliveTimeout,
-				ReplicationFactor: int64(opts.ReplicationFactor),
-				Peers:             opts.RaftPeers,
-				//DisseminateTimeout: opts.DisseminateTimeout,
-				// TODO: @joshvanl
-				DisseminateTimeout: time.Second * 5,
+			place, serr = placement.New(placement.Options{
+				NodeID:             opts.RaftID,
+				Port:               opts.PlacementPort,
+				ListenAddress:      opts.PlacementListenAddress,
+				Security:           secHandler,
+				Healthz:            healthz,
+				KeepAliveTime:      opts.KeepAliveTime,
+				KeepAliveTimeout:   opts.KeepAliveTimeout,
+				ReplicationFactor:  int64(opts.ReplicationFactor),
+				Peers:              opts.RaftPeers,
+				DisseminateTimeout: opts.DisseminateTimeout,
 			})
-			if err != nil {
-				return err
+			if serr != nil {
+				return serr
 			}
+
+			close(placeReady)
 			return place.Run(ctx)
 		},
 	).Run(ctx)

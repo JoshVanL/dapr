@@ -15,7 +15,6 @@ package monitoring
 
 import (
 	"context"
-	"time"
 
 	"go.opencensus.io/stats"
 	"go.opencensus.io/stats/view"
@@ -34,11 +33,6 @@ var (
 	actorRuntimesTotal = stats.Int64(
 		"placement/actor_runtimes_total",
 		"The total number of actor runtimes reported to placement service.",
-		stats.UnitDimensionless)
-
-	actorHeartbeatTimestamp = stats.Int64(
-		"placement/actor_heartbeat_timestamp",
-		"The actor's heartbeat timestamp (in seconds) was last reported to the placement service.",
 		stats.UnitDimensionless)
 
 	leaderStatus = stats.Int64(
@@ -60,29 +54,21 @@ var (
 )
 
 // RecordRuntimesCount records the number of connected runtimes.
-func RecordRuntimesCount(count int, ns string) {
+func RecordRuntimesCount(count int64, ns string) {
 	stats.RecordWithTags(
 		context.Background(),
-		diagUtils.WithTags(actorHeartbeatTimestamp.Name(), namespaceKey, ns),
-		runtimesTotal.M(int64(count)),
+		diagUtils.WithTags(runtimesTotal.Name(), namespaceKey, ns),
+		runtimesTotal.M(count),
 	)
 }
 
 // RecordActorRuntimesCount records the number of actor-hosting runtimes.
-func RecordActorRuntimesCount(count int, ns string) {
+func RecordActorRuntimesCount(count int64, ns string) {
 	stats.RecordWithTags(
 		context.Background(),
-		diagUtils.WithTags(actorHeartbeatTimestamp.Name(), namespaceKey, ns),
-		actorRuntimesTotal.M(int64(count)),
+		diagUtils.WithTags(actorRuntimesTotal.Name(), namespaceKey, ns),
+		actorRuntimesTotal.M(count),
 	)
-}
-
-// RecordActorHeartbeat records the actor heartbeat, in seconds since epoch, with actor type, host and pod name.
-func RecordActorHeartbeat(appID, actorType, host, namespace, pod string, heartbeatTime time.Time) {
-	stats.RecordWithTags(
-		context.Background(),
-		diagUtils.WithTags(actorHeartbeatTimestamp.Name(), appIDKey, appID, actorTypeKey, actorType, hostNameKey, host, namespaceKey, namespace, podNameKey, pod),
-		actorHeartbeatTimestamp.M(heartbeatTime.Unix()))
 }
 
 // RecordPlacementLeaderStatus records the leader status of the placement server.
@@ -114,7 +100,6 @@ func InitMetrics() error {
 	err := view.Register(
 		diagUtils.NewMeasureView(runtimesTotal, []tag.Key{namespaceKey}, view.LastValue()),
 		diagUtils.NewMeasureView(actorRuntimesTotal, []tag.Key{namespaceKey}, view.LastValue()),
-		diagUtils.NewMeasureView(actorHeartbeatTimestamp, []tag.Key{appIDKey, actorTypeKey, hostNameKey, namespaceKey, podNameKey}, view.LastValue()),
 		diagUtils.NewMeasureView(leaderStatus, noKeys, view.LastValue()),
 		diagUtils.NewMeasureView(raftLeaderStatus, noKeys, view.LastValue()),
 	)

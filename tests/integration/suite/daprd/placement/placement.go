@@ -1,5 +1,5 @@
 /*
-Copyright 2023 The Dapr Authors
+Copyright 2026 The Dapr Authors
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
@@ -14,8 +14,7 @@ limitations under the License.
 package placement
 
 import (
-	_ "github.com/dapr/dapr/tests/integration/suite/placement/authz"
-	_ "github.com/dapr/dapr/tests/integration/suite/placement/metrics"
-	_ "github.com/dapr/dapr/tests/integration/suite/placement/quorum"
-	_ "github.com/dapr/dapr/tests/integration/suite/placement/timeout"
+	_ "github.com/dapr/dapr/tests/integration/suite/daprd/placement/cluster"
+	_ "github.com/dapr/dapr/tests/integration/suite/daprd/placement/multiple"
+	_ "github.com/dapr/dapr/tests/integration/suite/daprd/placement/single"
 )

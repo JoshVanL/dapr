@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -25,12 +26,14 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/dapr/dapr/pkg/healthz"
 	"github.com/dapr/dapr/pkg/placement/internal/authorizer"
 	"github.com/dapr/dapr/pkg/placement/internal/leadership"
 	"github.com/dapr/dapr/pkg/placement/internal/loops"
 	"github.com/dapr/dapr/pkg/placement/internal/loops/namespaces"
+	"github.com/dapr/dapr/pkg/placement/monitoring"
 	v1pb "github.com/dapr/dapr/pkg/proto/placement/v1"
 	"github.com/dapr/dapr/pkg/security"
 	"github.com/dapr/kit/concurrency"
@@ -69,7 +72,10 @@ type Server struct {
 	authz *authorizer.Authorizer
 	loop  loop.Interface[loops.Event]
 
-	isLeader atomic.Bool
+	connCount      atomic.Int64
+	actorConnCount atomic.Int64
+	isLeader       atomic.Bool
+	readyCh        chan struct{}
 }
 
 func New(opts Options) *Server {
@@ -87,6 +93,7 @@ func New(opts Options) *Server {
 		}),
 		replicationFactor:  opts.ReplicationFactor,
 		disseminateTimeout: opts.DisseminateTimeout,
+		readyCh:            make(chan struct{}),
 	}
 }
 
@@ -94,6 +101,9 @@ func (s *Server) Run(ctx context.Context) error {
 	defer s.htarget.NotReady()
 
 	log.Info("Placement service is starting...")
+
+	monitoring.RecordPlacementLeaderStatus(false)
+	monitoring.RecordRaftPlacementLeaderStatus(false)
 
 	listener, err := net.Listen("tcp",
 		net.JoinHostPort(s.listenAddress, strconv.Itoa(s.port)),
@@ -124,16 +134,22 @@ func (s *Server) Run(ctx context.Context) error {
 		DisseminationTimeout: s.disseminateTimeout,
 	})
 
+	close(s.readyCh)
 	s.htarget.Ready()
 
 	return concurrency.NewRunnerManager(
+		s.loop.Run,
 		func(ctx context.Context) error {
+			log.Infof("Node id=%s is waiting for leadership", s.nodeID)
 			if lerr := s.leadership.Wait(ctx); lerr != nil {
 				return lerr
 			}
 			log.Infof("Node id=%s has acquired leadership", s.nodeID)
+			monitoring.RecordPlacementLeaderStatus(true)
+			monitoring.RecordRaftPlacementLeaderStatus(true)
 			s.isLeader.Store(true)
-			return s.loop.Run(ctx)
+			<-ctx.Done()
+			return ctx.Err()
 		},
 		func(ctx context.Context) error {
 			log.Infof("Running Placement gRPC server on %s", listener.Addr())
@@ -150,6 +166,43 @@ func (s *Server) Run(ctx context.Context) error {
 			return nil
 		},
 	).Run(ctx)
+}
+
+func (s *Server) StatePlacementTables(ctx context.Context) (*v1pb.StatePlacementTables, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-s.readyCh:
+	}
+
+	if !s.isLeader.Load() {
+		return nil, status.Errorf(
+			codes.FailedPrecondition,
+			"node id=%s is not a leader. Only the leader can serve requests",
+			s.nodeID,
+		)
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var got *v1pb.StatePlacementTables
+	var lock sync.Mutex
+
+	s.loop.Enqueue(&loops.StateTableRequest{
+		State: func(result *v1pb.StatePlacementTables) {
+			lock.Lock()
+			got = result
+			lock.Unlock()
+			cancel()
+		},
+	})
+
+	<-ctx.Done()
+
+	lock.Lock()
+	defer lock.Unlock()
+	return proto.Clone(got).(*v1pb.StatePlacementTables), nil
 }
 
 func (s *Server) ReportDaprStatus(stream v1pb.Placement_ReportDaprStatusServer) error {
@@ -181,5 +234,5 @@ func (s *Server) ReportDaprStatus(stream v1pb.Placement_ReportDaprStatusServer) 
 
 	<-ctx.Done()
 
-	return ctx.Err()
+	return context.Cause(ctx)
 }

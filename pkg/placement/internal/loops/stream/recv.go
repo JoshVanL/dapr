@@ -14,10 +14,6 @@ limitations under the License.
 package stream
 
 import (
-	"fmt"
-
-	"github.com/google/go-cmp/cmp"
-
 	"github.com/dapr/dapr/pkg/placement/internal/loops"
 	v1pb "github.com/dapr/dapr/pkg/proto/placement/v1"
 )
@@ -49,7 +45,6 @@ func (s *stream) recv() error {
 		return err
 	}
 
-	resp.Namespace = s.ns
 	s.loop.Enqueue(resp)
 
 	return nil
@@ -57,67 +52,8 @@ func (s *stream) recv() error {
 
 // handleReceive processes incoming messages from the stream.
 func (s *stream) handleRecive(resp *v1pb.Host) {
-	if !s.shouldReport(resp) {
-		fmt.Printf(">>GOT HOST WHICH DOES NOT NEED REPORTING: %+v\n", resp.Entities)
-		return
-	}
-
-	fmt.Printf(">>GOT HOST WHICH NEEDS REPORTING %d: %+v\n", s.idx, resp.Entities)
-
-	s.host = resp
 	s.nsLoop.Enqueue(&loops.ReportedHost{
-		Host:p,
-		StreamIDx:
+		Host:      resp,
+		StreamIDx: s.idx,
 	})
-}
-
-func (s *stream) shouldReport(h *v1pb.Host) bool {
-	if s.currentVersion == nil {
-		return true
-	}
-
-	// TODO: @joshvanl
-	if v := h.Version; v != nil && *v < *s.currentVersion {
-		// Ignore reports of old operation versions.
-		return false
-	}
-
-	// If `operations` are set, we are talking to a new client that supports
-	// operations. Honor the operation specified.
-	if op := h.Operation; op != nil {
-		if *op != s.currentOperation {
-			// Ignore out-of-order operations.
-			return false
-		}
-
-		// Always report non-report operations.
-		if *op != v1pb.HostOperation_UNLOCK {
-			return true
-		}
-	}
-
-	// Always return true if we are in a locking operation to account for old
-	// clients.
-	if s.currentOperation != v1pb.HostOperation_UNLOCK {
-		return true
-	}
-
-	return s.needsDissemination(h)
-}
-
-func (s *stream) needsDissemination(h *v1pb.Host) bool {
-	m := s.host
-
-	if m == nil {
-		fmt.Printf(">>NO CACHED HOST, NEEDS DISSEMINATION\n")
-		return true
-	}
-
-	todoJosh := !(m.GetId() == h.GetId() &&
-		m.GetName() == h.GetName() &&
-		cmp.Equal(m.GetEntities(), h.GetEntities()))
-
-	fmt.Printf(">RETURNING NEEDS DISSEMINATION: %v\n", todoJosh)
-
-	return todoJosh
 }

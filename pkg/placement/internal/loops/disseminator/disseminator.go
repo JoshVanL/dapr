@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dapr/dapr/pkg/placement/internal/authorizer"
@@ -24,10 +25,13 @@ import (
 	"github.com/dapr/dapr/pkg/placement/internal/loops/disseminator/store"
 	"github.com/dapr/dapr/pkg/placement/internal/loops/disseminator/timeout"
 	"github.com/dapr/dapr/pkg/placement/internal/loops/stream"
+	"github.com/dapr/dapr/pkg/placement/monitoring"
 	v1pb "github.com/dapr/dapr/pkg/proto/placement/v1"
 	"github.com/dapr/kit/events/loop"
 	"github.com/dapr/kit/logger"
 	"github.com/dapr/kit/ptr"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 var log = logger.NewLogger("dapr.placement.server.loops.disseminator")
@@ -43,6 +47,7 @@ var (
 
 type Options struct {
 	NamespaceLoop        loop.Interface[loops.Event]
+	Namespace            string
 	ReplicationFactor    int64
 	Authorizer           *authorizer.Authorizer
 	DisseminationTimeout time.Duration
@@ -52,6 +57,7 @@ type streamConn struct {
 	loop           loop.Interface[loops.Event]
 	currentState   *v1pb.HostOperation
 	currentVersion *uint64
+	hasActors      bool
 }
 
 // disseminator is a control loop that creates and manages stream connections,
@@ -60,6 +66,8 @@ type disseminator struct {
 	nsLoop     loop.Interface[loops.Event]
 	loop       loop.Interface[loops.Event]
 	authorizer *authorizer.Authorizer
+
+	namespace string
 
 	timeoutQ *timeout.Timeout
 
@@ -70,6 +78,8 @@ type disseminator struct {
 
 	currentOperation v1pb.HostOperation
 	currentVersion   uint64
+	connCount        atomic.Int64
+	actorConnCount   atomic.Int64
 }
 
 func New(opts Options) loop.Interface[loops.Event] {
@@ -80,6 +90,9 @@ func New(opts Options) loop.Interface[loops.Event] {
 	diss.streamIDx = 0
 	diss.currentOperation = v1pb.HostOperation_UNLOCK
 	diss.currentVersion = 0
+	diss.connCount.Store(0)
+	diss.actorConnCount.Store(0)
+	diss.namespace = opts.Namespace
 
 	if diss.store == nil {
 		diss.store = store.New(store.Options{
@@ -109,8 +122,10 @@ func (d *disseminator) Handle(ctx context.Context, event loops.Event) error {
 		d.handleShutdown()
 	case *loops.DisseminationTimeout:
 		d.handleTimeout(e)
+	case *loops.NamespaceTableRequest:
+		d.handleTableRequest(e)
 	default:
-		return fmt.Errorf("unknown disseminator event type: %T", e)
+		panic(fmt.Sprintf("unknown disseminator event type: %T", e))
 	}
 
 	return nil
@@ -138,6 +153,12 @@ func (d *disseminator) handleAdd(ctx context.Context, add *loops.ConnAdd) {
 		loop:           streamLoop,
 		currentState:   nil,
 		currentVersion: nil,
+		hasActors:      len(add.InitialHost.GetEntities()) > 0,
+	}
+
+	monitoring.RecordRuntimesCount(d.connCount.Add(1), add.InitialHost.GetNamespace())
+	if d.streams[streamIDx].hasActors {
+		monitoring.RecordActorRuntimesCount(d.actorConnCount.Add(1), add.InitialHost.GetNamespace())
 	}
 
 	d.handleReportedHost(&loops.ReportedHost{
@@ -154,9 +175,16 @@ func (d *disseminator) handleCloseStream(closeStream *loops.ConnCloseStream) {
 		return
 	}
 
+	monitoring.RecordRuntimesCount(d.connCount.Add(-1), d.namespace)
+	if stream.hasActors {
+		monitoring.RecordActorRuntimesCount(d.actorConnCount.Add(-1), d.namespace)
+	}
+
 	d.store.Delete(closeStream.StreamIDx)
 	delete(d.streams, closeStream.StreamIDx)
-	stream.loop.Close(new(loops.StreamShutdown))
+	stream.loop.Close(&loops.StreamShutdown{
+		Error: closeStream.Error,
+	})
 
 	d.currentVersion++
 	d.currentOperation = v1pb.HostOperation_LOCK
@@ -180,18 +208,28 @@ func (d *disseminator) handleShutdown() {
 	d.store.DeleteAll()
 	d.timeoutQ.Close()
 
+	monitoring.RecordRuntimesCount(0, d.namespace)
+	monitoring.RecordActorRuntimesCount(0, d.namespace)
+
 	loopFactory.CacheLoop(d.loop)
 	dissCache.Put(d)
 }
 
 func (d *disseminator) handleTimeout(timeout *loops.DisseminationTimeout) {
+	if timeout.Version != d.currentVersion {
+		// Ignore old timeouts.
+		return
+	}
+
 	log.Warnf("Dissemination timeout for version %d", timeout.Version)
-	for idx, stream := range d.streams {
-		if stream.currentVersion == nil || *stream.currentVersion < timeout.Version {
-			d.handleCloseStream(&loops.ConnCloseStream{
-				StreamIDx: idx,
-				Error:     fmt.Errorf("dissemination timeout for version %d", timeout.Version),
-			})
-		}
+	for idx := range d.streams {
+		d.handleCloseStream(&loops.ConnCloseStream{
+			StreamIDx: idx,
+			Error: status.Errorf(
+				codes.DeadlineExceeded,
+				"dissemination timeout for version %d",
+				timeout.Version,
+			),
+		})
 	}
 }

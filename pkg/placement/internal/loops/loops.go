@@ -30,8 +30,8 @@ type ConnAdd struct {
 }
 
 type ReportedHost struct {
-	Hostpb.Host
-	StreamIDx
+	Host      *v1pb.Host
+	StreamIDx uint64
 }
 
 type DisseminateLock struct {
@@ -65,4 +65,12 @@ type Shutdown struct{}
 
 type DisseminationTimeout struct {
 	Version uint64
+}
+
+type NamespaceTableRequest struct {
+	Table func(*v1pb.StatePlacementTable)
+}
+
+type StateTableRequest struct {
+	State func(*v1pb.StatePlacementTables)
 }

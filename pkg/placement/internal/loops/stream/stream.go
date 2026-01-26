@@ -55,10 +55,8 @@ type stream struct {
 	authz   *authorizer.Authorizer
 
 	loop loop.Interface[loops.Event]
-	host *v1pb.Host
 
-	currentOperation v1pb.HostOperation
-	currentVersion   *uint64
+	currentVersion *uint64
 
 	addr string
 	wg   sync.WaitGroup
@@ -81,7 +79,6 @@ func New(ctx context.Context, opts Options) loop.Interface[loops.Event] {
 	stream.ns = opts.Add.InitialHost.GetNamespace()
 	stream.idx = opts.IDx
 
-	stream.currentOperation = v1pb.HostOperation_UNLOCK
 	stream.currentVersion = nil
 
 	stream.addr = addr
@@ -131,7 +128,7 @@ func (s *stream) Handle(ctx context.Context, event loops.Event) error {
 // handleShutdown handles a shutdown request from placement. It closes the
 // stream.
 func (s *stream) handleShutdown(e *loops.StreamShutdown) {
-	log.Infof("Closing connection to %s", s.addr)
+	log.Infof("Closing connection to %s: %s", s.addr, e.Error)
 	s.cancel(e.Error)
 	s.wg.Wait()
 	streamLoopFactory.CacheLoop(s.loop)

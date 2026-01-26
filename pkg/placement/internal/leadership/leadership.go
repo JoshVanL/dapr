@@ -152,26 +152,31 @@ func (s *Leadership) Run(ctx context.Context) error {
 		return err
 	}
 
-	raft, err := raft.NewRaft(config, fsm.New(), logStore, stableStore, snapStore, raftTransport)
+	ra, err := raft.NewRaft(config, fsm.New(), logStore, stableStore, snapStore, raftTransport)
 	if err != nil {
 		return fmt.Errorf("failed to create raft: %w", err)
 	}
-	defer raft.Shutdown()
+	defer ra.Shutdown()
 
 	s.htarget.Ready()
 
-	ch := raft.LeaderCh()
+	ch := ra.LeaderCh()
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case isLeader := <-ch:
-			if isLeader {
+		case <-ch:
+			if ra.State() == raft.Leader {
+				select {
+				case <-s.leaderCh:
+				default:
+					close(s.leaderCh)
+				}
+			} else {
 				select {
 				case <-s.leaderCh:
 					return errors.New("lost leadership")
 				default:
-					close(s.leaderCh)
 				}
 			}
 		}
@@ -186,36 +191,3 @@ func (s *Leadership) Wait(ctx context.Context) error {
 		return nil
 	}
 }
-
-//func (s *Leadership) runAsLeader(ctx context.Context, ch <-chan bool) error {
-//	ctx, cancel := context.WithCancelCause(ctx)
-//	loop := namespaces.New(namespaces.Options{
-//		CancelPool:        cancel,
-//		ReplicationFactor: s.replicationFactor,
-//	})
-//
-//	return concurrency.NewRunnerManager(
-//		func(ctx context.Context) error {
-//			for {
-//				select {
-//				case <-ctx.Done():
-//					return ctx.Err()
-//				case isLeader := <-ch:
-//					if !isLeader {
-//						return errors.New("no longer the leader")
-//					}
-//				}
-//			}
-//		},
-//		func(ctx context.Context) error {
-//			err := loop.Run(ctx)
-//			return err
-//		},
-//		func(ctx context.Context) error {
-//			<-ctx.Done()
-//			log.Info("Placement connection pool shutting down")
-//			loop.Close(new(loops.Shutdown))
-//			return nil
-//		},
-//	).Run(ctx)
-//}

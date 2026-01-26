@@ -70,8 +70,6 @@ func New(opts Options) loop.Interface[loops.Event] {
 }
 
 func (n *namespaces) Handle(ctx context.Context, event loops.Event) error {
-	fmt.Printf(">> Handling namespaces event: %T\n", event)
-
 	switch e := event.(type) {
 	case *loops.ConnAdd:
 		return n.handleAdd(ctx, e)
@@ -81,19 +79,26 @@ func (n *namespaces) Handle(ctx context.Context, event loops.Event) error {
 		return n.handleReportedHost(e)
 	case *loops.Shutdown:
 		return n.handleShutdown(e)
+	case *loops.StateTableRequest:
+		n.handleStatePlacement(e)
 	default:
-		return fmt.Errorf("unknown namespaces event type: %T", e)
+		panic(fmt.Sprintf("unknown namespaces event type: %T", e))
 	}
+
+	return nil
 }
 
 func (n *namespaces) handleAdd(ctx context.Context, add *loops.ConnAdd) error {
-	dissLoop, ok := n.disseminators[add.InitialHost.GetNamespace()]
+	ns := add.InitialHost.GetNamespace()
+
+	dissLoop, ok := n.disseminators[ns]
 	if !ok {
 		loop := disseminator.New(disseminator.Options{
 			ReplicationFactor:    n.replicationFactor,
 			NamespaceLoop:        n.loop,
 			Authorizer:           n.authorizer,
 			DisseminationTimeout: n.disseminationTimeout,
+			Namespace:            ns,
 		})
 
 		n.wg.Add(1)
