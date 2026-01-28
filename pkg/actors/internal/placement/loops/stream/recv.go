@@ -13,10 +13,7 @@ limitations under the License.
 
 package stream
 
-import (
-	"github.com/dapr/dapr/pkg/placement/internal/loops"
-	v1pb "github.com/dapr/dapr/pkg/proto/placement/v1"
-)
+import "github.com/dapr/dapr/pkg/actors/internal/placement/loops"
 
 // recvLoop is the main loop for receiving messages from the stream. It handles
 // errors and calls the recv function to receive messages.
@@ -24,36 +21,22 @@ func (s *stream) recvLoop() error {
 	for {
 		err := s.recv()
 		if err != nil {
-			log.Warnf("Error receiving from stream %s: %s", s.addr, err)
+			log.Warnf("Error receiving from stream: %s", err)
 			return err
 		}
 	}
 }
 
-// recv receives a message from the stream. It checks whether this host needs
-// to disseminate the namespace.
 func (s *stream) recv() error {
 	resp, err := s.channel.Recv()
 	if err != nil {
 		return err
 	}
 
-	// TODO: @joshvanl: we can potentially cache the client ID from the stream
-	// context after the first message.
-	if err = s.authz.Host(s.channel, resp); err != nil {
-		log.Warnf("Authorization failed for stream %s: %v", s.addr, err)
-		return err
-	}
-
-	s.loop.Enqueue(resp)
+	s.placeLoop.Enqueue(&loops.StreamOrder{
+		IDx:   s.idx,
+		Order: resp,
+	})
 
 	return nil
-}
-
-// handleReceive processes incoming messages from the stream.
-func (s *stream) handleRecive(resp *v1pb.Host) {
-	s.nsLoop.Enqueue(&loops.ReportedHost{
-		Host:      resp,
-		StreamIDx: s.idx,
-	})
 }

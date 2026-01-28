@@ -120,7 +120,7 @@ func (d *disseminator) Handle(ctx context.Context, event loops.Event) error {
 	case *loops.ConnCloseStream:
 		d.handleCloseStream(e)
 	case *loops.Shutdown:
-		d.handleShutdown()
+		d.handleShutdown(e)
 	case *loops.DisseminationTimeout:
 		d.handleTimeout(e)
 	case *loops.NamespaceTableRequest:
@@ -162,10 +162,7 @@ func (d *disseminator) handleAdd(ctx context.Context, add *loops.ConnAdd) {
 		monitoring.RecordActorRuntimesCount(d.actorConnCount.Add(1), add.InitialHost.GetNamespace())
 	}
 
-	d.handleReportedHost(&loops.ReportedHost{
-		Host:      add.InitialHost,
-		StreamIDx: streamIDx,
-	})
+	d.doReport(streamIDx, add.InitialHost)
 }
 
 // handleCloseStream handles a close stream request.
@@ -198,11 +195,13 @@ func (d *disseminator) handleCloseStream(closeStream *loops.ConnCloseStream) {
 }
 
 // handleShutdown handles the shutdown of the streams.
-func (d *disseminator) handleShutdown() {
+func (d *disseminator) handleShutdown(shutdown *loops.Shutdown) {
 	defer d.wg.Wait()
 
 	for _, stream := range d.streams {
-		stream.loop.Close(new(loops.StreamShutdown))
+		stream.loop.Close(&loops.StreamShutdown{
+			Error: shutdown.Error,
+		})
 	}
 
 	clear(d.streams)

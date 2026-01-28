@@ -15,6 +15,7 @@ package multiple
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -86,6 +87,7 @@ func (a *actors) Run(t *testing.T, ctx context.Context) {
 	}
 
 	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		fmt.Printf(">>%#+v\n", a.actors[0].Placement().PlacementTables(t, ctx).Tables["default"])
 		assert.Equal(c, expHosts, a.actors[0].Placement().PlacementTables(t, ctx).Tables["default"].Hosts)
 		assert.Equal(c, uint64(3), a.actors[0].Placement().PlacementTables(t, ctx).Tables["default"].Version)
 	}, time.Second*10, time.Millisecond*10)

@@ -14,6 +14,7 @@ limitations under the License.
 package store
 
 import (
+	"slices"
 	"sort"
 	"strconv"
 
@@ -85,7 +86,9 @@ func (s *Store) Set(streamIDx uint64, host *v1pb.Host) bool {
 	//nolint:protogetter
 	sort.Strings(host.Entities)
 	if existing, ok := s.hosts[streamIDx]; ok {
-		if proto.Equal(existing, host) {
+		if slices.Equal(existing.Entities, host.Entities) &&
+			host.GetId() == existing.GetId() &&
+			host.GetNamespace() == existing.GetNamespace() {
 			return false
 		}
 	}

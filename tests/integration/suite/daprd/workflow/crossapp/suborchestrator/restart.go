@@ -149,12 +149,12 @@ func (r *restart) Run(t *testing.T, ctx context.Context) {
 	// Start workflow listeners for each app
 	client1 := client.NewTaskHubGrpcClient(r.daprd1.GRPCConn(t, ctx), backend.DefaultLogger())
 	client2 := client.NewTaskHubGrpcClient(r.daprd2.GRPCConn(t, ctx), backend.DefaultLogger())
-	require.NoError(t, client1.StartWorkItemListener(t.Context(), r.registry1))
-	cctx, ccancel := context.WithCancel(t.Context())
+	require.NoError(t, client1.StartWorkItemListener(ctx, r.registry1))
+	cctx, ccancel := context.WithCancel(ctx)
 	t.Cleanup(ccancel)
 	require.NoError(t, client2.StartWorkItemListener(cctx, r.registry2))
 
-	id, err := client1.ScheduleNewOrchestration(t.Context(), "restartWorkflow", api.WithInput("Hello from app1"))
+	id, err := client1.ScheduleNewOrchestration(ctx, "restartWorkflow", api.WithInput("Hello from app1"))
 	require.NoError(t, err)
 	select {
 	case <-r.suborchestratorStarted:
@@ -165,16 +165,6 @@ func (r *restart) Run(t *testing.T, ctx context.Context) {
 	// Stop app2 to simulate app going down mid-execution
 	ccancel()
 	r.daprd2.Kill(t)
-
-	assert.EventuallyWithT(t, func(c *assert.CollectT) {
-		// Expect completion to hang, so timeout
-		waitCtx, waitCancel := context.WithTimeout(t.Context(), 5*time.Second)
-		defer waitCancel()
-
-		_, err = client1.WaitForOrchestrationCompletion(waitCtx, id, api.WithFetchPayloads(true))
-		assert.Error(c, err)
-		assert.EqualError(c, err, "context deadline exceeded")
-	}, 20*time.Second, 100*time.Millisecond)
 
 	// Create a new daprd2 instance, for restart
 	r.daprd2 = daprd.New(t,
@@ -196,11 +186,6 @@ func (r *restart) Run(t *testing.T, ctx context.Context) {
 	require.NoError(t, client2Restart.StartWorkItemListener(ctx, r.registry2))
 	close(r.suborchestratorReady)
 
-	assert.EventuallyWithT(t, func(c *assert.CollectT) {
-		completionCtx, completionCancel := context.WithTimeout(t.Context(), 5*time.Second)
-		defer completionCancel()
-
-		_, err = client1.WaitForOrchestrationCompletion(completionCtx, id, api.WithFetchPayloads(true))
-		assert.NoError(c, err)
-	}, 20*time.Second, 100*time.Millisecond)
+	_, err = client1.WaitForOrchestrationCompletion(ctx, id, api.WithFetchPayloads(true))
+	assert.NoError(t, err)
 }

@@ -85,7 +85,8 @@ message Host {
 
 enum HostOperation {
   UNKNOWN = 0;
-  UNLOCK = 1;
-  LOCK = 2;
-  UPDATE = 3;
+  REPORT = 1;
+  UNLOCK = 2;
+  LOCK = 3;
+  UPDATE = 4;
 }

@@ -34,6 +34,8 @@ func (s *stream) handleLock(version uint64) error {
 
 	s.currentVersion = ptr.Of(version)
 
+	log.Infof(">>SENDING: (idx:%d) (ver=%d) LOCK", s.idx, version)
+
 	return s.channel.Send(&v1pb.PlacementOrder{
 		Operation: operationLock,
 		Version:   version,
@@ -47,6 +49,7 @@ func (s *stream) handleUpdate(version uint64, tables *v1pb.PlacementTables) erro
 		return nil
 	}
 
+	log.Infof(">>SENDING: (idx:%d) (ver=%d) UPDATE: %s", s.idx, version, tables)
 	return s.channel.Send(&v1pb.PlacementOrder{
 		Operation: operationUpdate,
 		Version:   version,
@@ -61,6 +64,7 @@ func (s *stream) handleUnlock(version uint64) error {
 		return nil
 	}
 
+	log.Infof(">>SENDING: (idx:%d) (ver=%d) UNLOCK", s.idx, version)
 	return s.channel.Send(&v1pb.PlacementOrder{
 		Operation: operationUnlock,
 		Version:   version,

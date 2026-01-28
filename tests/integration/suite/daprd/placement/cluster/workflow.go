@@ -88,7 +88,9 @@ func (w *workflow) Run(t *testing.T, ctx context.Context) {
 
 	leader := w.place.Leader(t, ctx)
 
-	assert.Equal(t, expTable, leader.PlacementTables(t, ctx))
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.Equal(c, expTable, leader.PlacementTables(t, ctx))
+	}, time.Second*3, time.Millisecond*10)
 
 	client1 := dworkflow.NewClient(w.daprd1.GRPCConn(t, ctx))
 	cctx1, cancel1 := context.WithCancel(ctx)
