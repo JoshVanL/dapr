@@ -43,6 +43,7 @@ import (
 	commonv1pb "github.com/dapr/dapr/pkg/proto/common/v1"
 	internalv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 	"github.com/dapr/dapr/pkg/runtime/compstore"
+	"github.com/dapr/dapr/pkg/security"
 	securityConsts "github.com/dapr/dapr/pkg/security/consts"
 	"github.com/dapr/dapr/pkg/sse"
 	streamutils "github.com/dapr/kit/streams"
@@ -78,6 +79,7 @@ type Channel struct {
 	appHealthCheckPath  string
 	appHealth           *apphealth.AppHealth
 	middleware          middleware.HTTP
+	security            security.Handler
 }
 
 // ChannelConfiguration is the configuration used to create an HTTP AppChannel.
@@ -94,6 +96,7 @@ type ChannelConfiguration struct {
 	TLSRootCA          string
 	TLSRenegotiation   string
 	AppAPIToken        string
+	Security           security.Handler
 }
 
 // CreateHTTPChannel creates an HTTP AppChannel.
@@ -106,6 +109,7 @@ func CreateHTTPChannel(config ChannelConfiguration) (channel.AppChannel, error) 
 		tracingSpec:         config.TracingSpec,
 		appHeaderToken:      config.AppAPIToken,
 		maxResponseBodySize: config.MaxRequestBodySize,
+		security:            config.Security,
 	}
 
 	if config.MaxConcurrency > 0 {
@@ -461,7 +465,21 @@ func (h *Channel) constructRequest(ctx context.Context, req *invokev1.InvokeMeth
 			uri.WriteString(appID)
 		} else if endpoint, ok := h.compStore.GetHTTPEndpoint(appID); ok {
 			uri.WriteString(endpoint.Spec.BaseURL)
-			headers = endpoint.Spec.Headers
+			headers = endpoint.Spec.DeepCopy().Headers
+
+			if s := endpoint.Spec.SPIFFE; s != nil {
+				if j := s.JWT; j != nil {
+					header, err := h.security.WithSVIDJWTHeader(ctx, commonapi.NameValuePair{
+						Name: j.Header,
+					})
+					if err != nil {
+						return nil, err
+					}
+
+					headers = append(headers, header)
+				}
+			}
+
 		} else {
 			uri.WriteString(h.baseAddress)
 		}

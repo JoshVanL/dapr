@@ -23,6 +23,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	commonapi "github.com/dapr/dapr/pkg/apis/common"
 	"github.com/dapr/dapr/pkg/security"
 )
 
@@ -213,6 +214,10 @@ func (f *Fake) WatchTrustAnchors(ctx context.Context, ch chan<- []byte) {
 
 func (f *Fake) WithSVIDContext(ctx context.Context) context.Context {
 	return ctx
+}
+
+func (f *Fake) WithSVIDJWTHeader(ctx context.Context, nvp commonapi.NameValuePair) (commonapi.NameValuePair, error) {
+	return nvp, nil
 }
 
 func (f *Fake) IdentityDir() *string {

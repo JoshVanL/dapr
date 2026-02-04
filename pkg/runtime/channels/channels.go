@@ -37,6 +37,7 @@ import (
 	"github.com/dapr/dapr/pkg/runtime/compstore"
 	"github.com/dapr/dapr/pkg/runtime/meta"
 	"github.com/dapr/dapr/pkg/runtime/registry"
+	"github.com/dapr/dapr/pkg/security"
 	"github.com/dapr/kit/logger"
 )
 
@@ -69,6 +70,7 @@ type Options struct {
 
 	GRPC        *manager.Manager
 	AppAPIToken string
+	Security    security.Handler
 }
 
 type Channels struct {
@@ -81,6 +83,7 @@ type Channels struct {
 	appMiddlware        middleware.HTTP
 	httpClient          *http.Client
 	grpc                *manager.Manager
+	security            security.Handler
 
 	appAPIToken     string
 	appChannel      channel.AppChannel
@@ -100,6 +103,7 @@ func New(opts Options) *Channels {
 		appMiddlware:        opts.AppMiddleware,
 		grpc:                opts.GRPC,
 		appAPIToken:         opts.AppAPIToken,
+		security:            opts.Security,
 		httpClient:          appHTTPClient(opts.AppConnectionConfig, opts.GlobalConfig, opts.ReadBufferSize),
 		endpChannels:        make(map[string]channel.HTTPEndpointAppChannel),
 	}
@@ -194,6 +198,7 @@ func (c *Channels) appHTTPChannelConfig() channelhttp.ChannelConfiguration {
 		Middleware:         c.appMiddlware,
 		TracingSpec:        c.tracingSpec,
 		MaxRequestBodySize: c.maxRequestBodySize,
+		Security:           c.security,
 	}
 
 	conf.Endpoint = c.AppHTTPEndpoint()
@@ -234,6 +239,7 @@ func (c *Channels) getHTTPEndpointAppChannel(endpoint httpendpapi.HTTPEndpoint) 
 		Middleware:         c.appMiddlware,
 		MaxRequestBodySize: c.maxRequestBodySize,
 		TracingSpec:        c.tracingSpec,
+		Security:           c.security,
 	}
 
 	var tlsConfig *tls.Config

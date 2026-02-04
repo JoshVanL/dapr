@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.16.2
+    controller-gen.kubebuilder.io/version: v0.19.0
   name: httpendpoints.dapr.io
   labels:
     app.kubernetes.io/part-of: "dapr"
@@ -165,6 +165,14 @@ spec:
                   - name
                   type: object
                 type: array
+              spiffe:
+                properties:
+                  jwt:
+                    properties:
+                      header:
+                        type: string
+                    type: object
+                type: object
             required:
             - baseUrl
             type: object

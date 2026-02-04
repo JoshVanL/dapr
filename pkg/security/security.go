@@ -26,9 +26,11 @@ import (
 	"github.com/spiffe/go-spiffe/v2/spiffegrpc/grpccredentials"
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"github.com/spiffe/go-spiffe/v2/spiffetls/tlsconfig"
+	"github.com/spiffe/go-spiffe/v2/svid/jwtsvid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	commonapi "github.com/dapr/dapr/pkg/apis/common"
 	"github.com/dapr/dapr/pkg/diagnostics"
 	"github.com/dapr/dapr/pkg/healthz"
 	"github.com/dapr/dapr/pkg/modes"
@@ -39,6 +41,7 @@ import (
 	"github.com/dapr/kit/crypto/spiffe/trustanchors/file"
 	"github.com/dapr/kit/crypto/spiffe/trustanchors/static"
 	"github.com/dapr/kit/logger"
+	apiextapi "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 )
 
 var log = logger.NewLogger("dapr.runtime.security")
@@ -62,6 +65,7 @@ type Handler interface {
 	ControlPlaneNamespace() string
 	CurrentTrustAnchors(context.Context) ([]byte, error)
 	WithSVIDContext(context.Context) context.Context
+	WithSVIDJWTHeader(context.Context, commonapi.NameValuePair) (commonapi.NameValuePair, error)
 
 	MTLSEnabled() bool
 	ID() spiffeid.ID
@@ -484,6 +488,27 @@ func (s *security) WithSVIDContext(ctx context.Context) context.Context {
 	}
 
 	return spiffecontext.WithSpiffe(ctx, s.spiffe)
+}
+
+func (s *security) WithSVIDJWTHeader(ctx context.Context, nvp commonapi.NameValuePair) (commonapi.NameValuePair, error) {
+	if s.spiffe == nil {
+		return commonapi.NameValuePair{}, errors.New("spiffe not initialized")
+	}
+
+	svid, err := s.spiffe.JWTSVIDSource().FetchJWTSVID(ctx, jwtsvid.Params{
+		Audience: s.id.TrustDomain().Name()},
+	)
+	if err != nil {
+		return commonapi.NameValuePair{}, err
+	}
+
+	nvp.Value = commonapi.DynamicValue{
+		JSON: apiextapi.JSON{
+			Raw: []byte(svid.Marshal()),
+		},
+	}
+
+	return nvp, nil
 }
 
 func (s *security) IdentityDir() *string {

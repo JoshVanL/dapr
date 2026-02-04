@@ -138,6 +138,17 @@ type HTTPEndpointSpec struct {
 	Headers []common.NameValuePair `json:"headers"`
 	//+optional
 	ClientTLS *common.TLS `json:"clientTLS,omitempty"`
+	//+optional
+	SPIFFE *SPIFFESpec `json:"spiffe,omitempty"`
+}
+
+type SPIFFESpec struct {
+	//+optional
+	JWT *SPIFFEJWTSpec `json:"jwt,omitempty"`
+}
+
+type SPIFFEJWTSpec struct {
+	Header string `json:"header" validate:"required"`
 }
 
 // Auth represents authentication details for the component.

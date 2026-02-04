@@ -209,6 +209,7 @@ func newDaprRuntime(ctx context.Context,
 		GRPC:                grpc,
 		AppMiddleware:       httpMiddlewareApp,
 		AppAPIToken:         appAPIToken,
+		Security:            sec,
 	})
 
 	pubsubAdapter := publisher.New(publisher.Options{
