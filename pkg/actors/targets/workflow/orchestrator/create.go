@@ -21,17 +21,15 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	wfenginestate "github.com/dapr/dapr/pkg/runtime/wfengine/state"
-	"github.com/dapr/durabletask-go/api"
-	"github.com/dapr/durabletask-go/backend"
+	"github.com/dapr/durabletask-go/api/protos"
 	"github.com/dapr/durabletask-go/backend/runtimestate"
 )
 
 func (o *orchestrator) createWorkflowInstance(ctx context.Context, request []byte) error {
-	var createWorkflowInstanceRequest backend.CreateWorkflowInstanceRequest
+	var createWorkflowInstanceRequest protos.CreateWorkflowInstanceRequest
 	if err := proto.Unmarshal(request, &createWorkflowInstanceRequest); err != nil {
 		return fmt.Errorf("failed to unmarshal createWorkflowInstanceRequest: %w", err)
 	}
-	reuseIDPolicy := createWorkflowInstanceRequest.GetPolicy()
 
 	startEvent := createWorkflowInstanceRequest.GetStartEvent()
 	if es := startEvent.GetExecutionStarted(); es == nil {
@@ -41,15 +39,15 @@ func (o *orchestrator) createWorkflowInstance(ctx context.Context, request []byt
 			log.Debugf("Workflow actor '%s': creating workflow '%s' with instanceId '%s'",
 				o.actorID,
 				es.GetName(),
-				es.GetOrchestrationInstance().GetInstanceId(),
+				es.GetWorkflowInstance().GetInstanceID(),
 			)
 		} else {
 			log.Debugf("Workflow actor '%s': creating child workflow '%s' with instanceId '%s' parentWorkflow '%s' parentWorkflowId '%s'",
 				o.actorID,
 				es.GetName(),
-				es.GetOrchestrationInstance().GetInstanceId(),
+				es.GetWorkflowInstance().GetInstanceID(),
 				es.GetParentInstance().GetName(),
-				es.GetParentInstance().GetOrchestrationInstance().GetInstanceId(),
+				es.GetParentInstance().GetWorkflowInstance().GetInstanceID(),
 			)
 		}
 	}
@@ -67,42 +65,18 @@ func (o *orchestrator) createWorkflowInstance(ctx context.Context, request []byt
 			WorkflowActorType: o.actorType,
 			ActivityActorType: o.activityActorType,
 		})
-		o.rstate = runtimestate.NewOrchestrationRuntimeState(o.actorID, state.CustomStatus, state.History)
+		o.rstate = runtimestate.NewWorkflowRuntimeState(o.actorID, state.CustomStatus, state.History)
 		o.ometa = o.ometaFromState(o.rstate, startEvent.GetExecutionStarted())
 		return o.scheduleWorkflowStart(ctx, startEvent, state)
 	}
 
-	// orchestration already existed: apply reuse id policy
-	rs := o.rstate
-	runtimeStatus := runtimestate.RuntimeStatus(rs)
-	// if target status doesn't match, fall back to original logic, create instance only if previous one is completed
-	if !isStatusMatch(reuseIDPolicy.GetOperationStatus(), runtimeStatus) {
-		return o.createIfCompleted(ctx, rs, state, startEvent)
-	}
-
-	switch reuseIDPolicy.GetAction() {
-	case api.REUSE_ID_ACTION_IGNORE:
-		// Log an warning message and ignore creating new instance
-		log.Warnf("Workflow actor '%s': ignoring request to recreate the current workflow instance", o.actorID)
-		return nil
-	case api.REUSE_ID_ACTION_TERMINATE:
-		// terminate existing instance
-		if err := o.cleanupWorkflowStateInternal(ctx, state, false); err != nil {
-			return fmt.Errorf("failed to terminate existing instance with ID '%s'", o.actorID)
-		}
-
-		// created a new instance
-		state.Reset()
-		return o.scheduleWorkflowStart(ctx, startEvent, state)
-	}
-	// default Action ERROR, fall back to original logic
-	return o.createIfCompleted(ctx, rs, state, startEvent)
+	return o.createIfCompleted(ctx, state, startEvent)
 }
 
-func (o *orchestrator) createIfCompleted(ctx context.Context, rs *backend.OrchestrationRuntimeState, state *wfenginestate.State, startEvent *backend.HistoryEvent) error {
+func (o *orchestrator) createIfCompleted(ctx context.Context, state *wfenginestate.State, startEvent *protos.HistoryEvent) error {
 	// We block (re)creation of existing workflows unless they are in a completed state
 	// Or if they still have any pending activity result awaited.
-	if !runtimestate.IsCompleted(rs) {
+	if !runtimestate.IsCompleted(o.rstate) {
 		return fmt.Errorf("an active workflow with ID '%s' already exists", o.actorID)
 	}
 	if o.activityResultAwaited.Load() {
@@ -113,7 +87,7 @@ func (o *orchestrator) createIfCompleted(ctx context.Context, rs *backend.Orches
 	return o.scheduleWorkflowStart(ctx, startEvent, state)
 }
 
-func (o *orchestrator) scheduleWorkflowStart(ctx context.Context, startEvent *backend.HistoryEvent, state *wfenginestate.State) error {
+func (o *orchestrator) scheduleWorkflowStart(ctx context.Context, startEvent *protos.HistoryEvent, state *wfenginestate.State) error {
 	state.AddToInbox(startEvent)
 	if err := o.saveInternalState(ctx, state); err != nil {
 		return err
@@ -132,13 +106,4 @@ func (o *orchestrator) scheduleWorkflowStart(ctx context.Context, startEvent *ba
 	}
 
 	return nil
-}
-
-func isStatusMatch(statuses []api.OrchestrationStatus, runtimeStatus api.OrchestrationStatus) bool {
-	for _, status := range statuses {
-		if status == runtimeStatus {
-			return true
-		}
-	}
-	return false
 }

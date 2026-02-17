@@ -78,7 +78,7 @@ func (m *multipule) Run(t *testing.T, ctx context.Context) {
 	for i := range numWf {
 		resp, err := wfs[i].ListInstanceIDs(ctx)
 		require.NoError(t, err)
-		assert.Equal(t, ids, resp.InstanceIds)
+		assert.Equal(t, ids, resp.InstanceIDs)
 		assert.Nil(t, resp.ContinuationToken)
 	}
 }

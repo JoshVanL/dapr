@@ -503,8 +503,6 @@ github.com/dapr/components-contrib v1.16.2-0.20260211162145-f59507cd1abc h1:wbGy
 github.com/dapr/components-contrib v1.16.2-0.20260211162145-f59507cd1abc/go.mod h1:CrBOZVPMKdnblS9AjHGw02LGr9JVlNbgqiISwQeGVW8=
 github.com/dapr/components-contrib/tests/certification v0.0.0-20251104160704-920ad8a7b958 h1:DSZgzdXlbF75fwvEkMQpPqn1jjxmWVoBNmI4Bc4dS40=
 github.com/dapr/components-contrib/tests/certification v0.0.0-20251104160704-920ad8a7b958/go.mod h1:IUB5RJv0Gj5qxsHjjhvEBIlxPka7cD7KAn/Coa2y27M=
-github.com/dapr/durabletask-go v0.11.0 h1:e9Ns/3a2b6JDKGuvksvx6gCHn7rd+nwZZyAXbg5Ley4=
-github.com/dapr/durabletask-go v0.11.0/go.mod h1:0Ts4rXp74JyG19gDWPcwNo5V6NBZzhARzHF5XynmA7Q=
 github.com/dapr/kit v0.16.2-0.20251124175541-3ac186dff64d h1:csljij9d1IO6u9nqbg+TuSRmTZ+OXT8G49yh6zie1yI=
 github.com/dapr/kit v0.16.2-0.20251124175541-3ac186dff64d/go.mod h1:40ZWs5P6xfYf7O59XgwqZkIyDldTIXlhTQhGop8QoSM=
 github.com/dave/jennifer v1.4.0/go.mod h1:fIb+770HOpJ2fmN9EPPKOqm1vMGhB+TwXKMZhrIygKg=

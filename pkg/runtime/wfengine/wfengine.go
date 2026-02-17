@@ -134,7 +134,7 @@ func New(opts Options) Interface {
 	}
 
 	// There are separate "workers" for executing orchestrations (workflows) and activities
-	oworker := backend.NewOrchestrationWorker(backend.OrchestratorOptions{
+	oworker := backend.NewWorkflowWorker(backend.WorkflowOptions{
 		Backend:  abackend,
 		Executor: executor,
 		Logger:   wfBackendLogger,

@@ -23,7 +23,6 @@ import (
 	"github.com/dapr/dapr/tests/integration/framework"
 	"github.com/dapr/dapr/tests/integration/framework/process/workflow"
 	"github.com/dapr/dapr/tests/integration/suite"
-	"github.com/dapr/durabletask-go/api"
 	"github.com/dapr/durabletask-go/task"
 )
 
@@ -46,7 +45,7 @@ func (p *purge) Setup(t *testing.T) []framework.Option {
 func (p *purge) Run(t *testing.T, ctx context.Context) {
 	p.workflow.WaitUntilRunning(t, ctx)
 
-	p.workflow.Registry().AddOrchestratorN("foo", func(ctx *task.OrchestrationContext) (any, error) {
+	p.workflow.Registry().AddWorkflowN("foo", func(ctx *task.WorkflowContext) (any, error) {
 		return nil, nil
 	})
 
@@ -54,16 +53,16 @@ func (p *purge) Run(t *testing.T, ctx context.Context) {
 
 	ids := make([]string, 0, 3)
 	for range 3 {
-		id, err := client.ScheduleNewOrchestration(ctx, "foo")
+		id, err := client.ScheduleNewWorkflow(ctx, "foo")
 		require.NoError(t, err)
-		ids = append(ids, id.String())
+		ids = append(ids, id)
 	}
 
 	wf := p.workflow.WorkflowClient(t, ctx)
 	for range 3 {
 		resp, err := wf.ListInstanceIDs(ctx)
 		require.NoError(t, err)
-		assert.Equal(t, ids, resp.InstanceIds)
+		assert.Equal(t, ids, resp.InstanceIDs)
 		assert.Nil(t, resp.ContinuationToken)
 		require.NoError(t, wf.PurgeWorkflowState(ctx, ids[0]))
 		ids = ids[1:]
@@ -71,21 +70,21 @@ func (p *purge) Run(t *testing.T, ctx context.Context) {
 
 	resp, err := wf.ListInstanceIDs(ctx)
 	require.NoError(t, err)
-	assert.Empty(t, resp.InstanceIds)
+	assert.Empty(t, resp.InstanceIDs)
 	assert.Nil(t, resp.ContinuationToken)
 
 	ids = make([]string, 0, 3)
 	for range 3 {
-		var id api.InstanceID
-		id, err = client.ScheduleNewOrchestration(ctx, "foo")
+		var id string
+		id, err = client.ScheduleNewWorkflow(ctx, "foo")
 		require.NoError(t, err)
-		ids = append(ids, id.String())
+		ids = append(ids, id)
 	}
 
 	for range 3 {
 		resp, err = wf.ListInstanceIDs(ctx)
 		require.NoError(t, err)
-		assert.Equal(t, ids, resp.InstanceIds)
+		assert.Equal(t, ids, resp.InstanceIDs)
 		assert.Nil(t, resp.ContinuationToken)
 		require.NoError(t, wf.PurgeWorkflowState(ctx, ids[0]))
 		ids = ids[1:]
@@ -93,6 +92,6 @@ func (p *purge) Run(t *testing.T, ctx context.Context) {
 
 	resp, err = wf.ListInstanceIDs(ctx)
 	require.NoError(t, err)
-	assert.Empty(t, resp.InstanceIds)
+	assert.Empty(t, resp.InstanceIDs)
 	assert.Nil(t, resp.ContinuationToken)
 }

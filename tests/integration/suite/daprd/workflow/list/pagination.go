@@ -54,7 +54,7 @@ func (p *pagination) Setup(t *testing.T) []framework.Option {
 func (p *pagination) Run(t *testing.T, ctx context.Context) {
 	p.workflow.WaitUntilRunning(t, ctx)
 
-	p.workflow.Registry().AddOrchestratorN("foo", func(ctx *task.OrchestrationContext) (any, error) {
+	p.workflow.Registry().AddWorkflowN("foo", func(ctx *task.WorkflowContext) (any, error) {
 		return nil, nil
 	})
 
@@ -66,9 +66,9 @@ func (p *pagination) Run(t *testing.T, ctx context.Context) {
 	errCh := make(chan error, 100)
 	for range n {
 		go func() {
-			id, err := client.ScheduleNewOrchestration(ctx, "foo")
+			id, err := client.ScheduleNewWorkflow(ctx, "foo")
 			errCh <- err
-			ids.Append(id.String())
+			ids.Append(id)
 		}()
 	}
 
@@ -78,13 +78,13 @@ func (p *pagination) Run(t *testing.T, ctx context.Context) {
 
 	resp1, err := p.workflow.WorkflowClient(t, ctx).ListInstanceIDs(ctx)
 	require.NoError(t, err)
-	require.Len(t, resp1.InstanceIds, 1024)
+	require.Len(t, resp1.InstanceIDs, 1024)
 	require.NotNil(t, resp1.ContinuationToken)
 
 	resp2, err := p.workflow.WorkflowClient(t, ctx).ListInstanceIDs(ctx, dworkflow.WithListInstanceIDsContinuationToken(*resp1.ContinuationToken))
 	require.NoError(t, err)
-	require.Len(t, resp2.InstanceIds, 6)
+	require.Len(t, resp2.InstanceIDs, 6)
 	require.Nil(t, resp2.ContinuationToken)
 
-	assert.ElementsMatch(t, ids.Slice(), append(resp1.InstanceIds, resp2.InstanceIds...))
+	assert.ElementsMatch(t, ids.Slice(), append(resp1.InstanceIDs, resp2.InstanceIDs...))
 }

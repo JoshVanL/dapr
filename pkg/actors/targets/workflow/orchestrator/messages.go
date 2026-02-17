@@ -23,16 +23,16 @@ import (
 	invokev1 "github.com/dapr/dapr/pkg/messaging/v1"
 	internalsv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 	"github.com/dapr/dapr/pkg/runtime/wfengine/todo"
-	"github.com/dapr/durabletask-go/backend"
+	"github.com/dapr/durabletask-go/api/protos"
 )
 
-func (o *orchestrator) callCreateWorkflowStateMessage(ctx context.Context, events []*backend.OrchestrationRuntimeStateMessage) error {
+func (o *orchestrator) callCreateWorkflowStateMessage(ctx context.Context, events []*protos.WorkflowRuntimeStateMessage) error {
 	msgs := make([]proto.Message, len(events))
-	historyEvents := make([]*backend.HistoryEvent, len(events))
+	historyEvents := make([]*protos.HistoryEvent, len(events))
 	targets := make([]string, len(events))
 
 	for i, msg := range events {
-		msgs[i] = &backend.CreateWorkflowInstanceRequest{StartEvent: msg.GetHistoryEvent()}
+		msgs[i] = &protos.CreateWorkflowInstanceRequest{StartEvent: msg.GetHistoryEvent()}
 		historyEvents[i] = msg.GetHistoryEvent()
 		targets[i] = msg.GetTargetInstanceID()
 	}
@@ -40,9 +40,9 @@ func (o *orchestrator) callCreateWorkflowStateMessage(ctx context.Context, event
 	return o.callStateMessages(ctx, msgs, historyEvents, targets, todo.CreateWorkflowInstanceMethod)
 }
 
-func (o *orchestrator) callAddEventStateMessage(ctx context.Context, events []*backend.OrchestrationRuntimeStateMessage) error {
+func (o *orchestrator) callAddEventStateMessage(ctx context.Context, events []*protos.WorkflowRuntimeStateMessage) error {
 	msgs := make([]proto.Message, len(events))
-	historyEvents := make([]*backend.HistoryEvent, len(events))
+	historyEvents := make([]*protos.HistoryEvent, len(events))
 	targets := make([]string, len(events))
 
 	for i, msg := range events {
@@ -54,7 +54,7 @@ func (o *orchestrator) callAddEventStateMessage(ctx context.Context, events []*b
 	return o.callStateMessages(ctx, msgs, historyEvents, targets, todo.AddWorkflowEventMethod)
 }
 
-func (o *orchestrator) callStateMessages(ctx context.Context, msgs []proto.Message, historyEvents []*backend.HistoryEvent, targets []string, method string) error {
+func (o *orchestrator) callStateMessages(ctx context.Context, msgs []proto.Message, historyEvents []*protos.HistoryEvent, targets []string, method string) error {
 	for i, msg := range msgs {
 		if err := o.callStateMessage(ctx, msg, historyEvents[i], targets[i], method); err != nil {
 			return err
@@ -64,7 +64,7 @@ func (o *orchestrator) callStateMessages(ctx context.Context, msgs []proto.Messa
 	return nil
 }
 
-func (o *orchestrator) callStateMessage(ctx context.Context, m proto.Message, historyEvent *backend.HistoryEvent, target string, method string) error {
+func (o *orchestrator) callStateMessage(ctx context.Context, m proto.Message, historyEvent *protos.HistoryEvent, target string, method string) error {
 	b, err := proto.Marshal(m)
 	if err != nil {
 		return err
@@ -76,14 +76,14 @@ func (o *orchestrator) callStateMessage(ctx context.Context, m proto.Message, hi
 		log.Debugf("Cross-app suborchestrator call: target appID=%s, source appID=%s", router.GetTargetAppID(), router.GetSourceAppID())
 
 		switch m := m.(type) {
-		case *backend.CreateWorkflowInstanceRequest:
+		case *protos.CreateWorkflowInstanceRequest:
 			// If target app is specified and different from current app, use cross-app actor type
 			if router.TargetAppID != nil {
 				actorType = o.actorTypeBuilder.Workflow(router.GetTargetAppID())
 			}
-		case *backend.HistoryEvent:
+		case *protos.HistoryEvent:
 			var routeAppID string
-			if m.GetSubOrchestrationInstanceCompleted() != nil || m.GetSubOrchestrationInstanceFailed() != nil {
+			if m.GetChildWorkflowInstanceCompleted() != nil || m.GetChildWorkflowInstanceFailed() != nil {
 				if router.TargetAppID == nil {
 					return errors.New("sub-orchestrator completion events should have a target appID")
 				}

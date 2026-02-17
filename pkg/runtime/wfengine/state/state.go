@@ -25,7 +25,7 @@ import (
 
 	"github.com/dapr/dapr/pkg/actors/api"
 	"github.com/dapr/dapr/pkg/actors/state"
-	"github.com/dapr/durabletask-go/backend"
+	"github.com/dapr/durabletask-go/api/protos"
 	"github.com/dapr/kit/logger"
 )
 
@@ -49,8 +49,8 @@ type State struct {
 	workflowActorType string
 	activityActorType string
 
-	Inbox        []*backend.HistoryEvent
-	History      []*backend.HistoryEvent
+	Inbox        []*protos.HistoryEvent
+	History      []*protos.HistoryEvent
 	CustomStatus *wrapperspb.StringValue
 	Generation   uint64
 
@@ -96,7 +96,7 @@ func (s *State) ResetChangeTracking() {
 	s.historyRemovedCount = 0
 }
 
-func (s *State) ApplyRuntimeStateChanges(rs *backend.OrchestrationRuntimeState) {
+func (s *State) ApplyRuntimeStateChanges(rs *protos.WorkflowRuntimeState) {
 	if rs.GetContinuedAsNew() {
 		s.historyRemovedCount += len(s.History)
 		s.historyAddedCount = 0
@@ -110,12 +110,12 @@ func (s *State) ApplyRuntimeStateChanges(rs *backend.OrchestrationRuntimeState) 
 	s.CustomStatus = rs.GetCustomStatus()
 }
 
-func (s *State) AddToInbox(e *backend.HistoryEvent) {
+func (s *State) AddToInbox(e *protos.HistoryEvent) {
 	s.Inbox = append(s.Inbox, e)
 	s.inboxAddedCount++
 }
 
-func (s *State) AddToHistory(e *backend.HistoryEvent) {
+func (s *State) AddToHistory(e *protos.HistoryEvent) {
 	s.History = append(s.History, e)
 	s.historyAddedCount++
 }
@@ -165,7 +165,7 @@ func (s *State) GetSaveRequest(actorID string) (*api.TransactionalRequest, error
 		})
 	}
 
-	metaProto, err := proto.Marshal(&backend.WorkflowStateMetadata{
+	metaProto, err := proto.Marshal(&protos.WorkflowStateMetadata{
 		InboxLength:   uint64(len(s.Inbox)),
 		HistoryLength: uint64(len(s.History)),
 		Generation:    s.Generation,
@@ -215,7 +215,7 @@ func (s *State) String() string {
 	)
 }
 
-func addStateOperations(req *api.TransactionalRequest, keyPrefix string, events []*backend.HistoryEvent, addedCount int, removedCount int) error {
+func addStateOperations(req *api.TransactionalRequest, keyPrefix string, events []*protos.HistoryEvent, addedCount int, removedCount int) error {
 	// TODO: Investigate whether Dapr state stores put limits on batch sizes. It seems some storage
 	//       providers have limits and we need to know if that impacts this algorithm:
 	//       https://learn.microsoft.com/azure/cosmos-db/nosql/transactional-batch#limitations
@@ -240,7 +240,7 @@ func addStateOperations(req *api.TransactionalRequest, keyPrefix string, events 
 	return nil
 }
 
-func addPurgeStateOperations(req *api.TransactionalRequest, keyPrefix string, events []*backend.HistoryEvent) error {
+func addPurgeStateOperations(req *api.TransactionalRequest, keyPrefix string, events []*protos.HistoryEvent) error {
 	// TODO: Investigate whether Dapr state stores put limits on batch sizes. It seems some storage
 	//       providers have limits and we need to know if that impacts this algorithm:
 	//       https://learn.microsoft.com/azure/cosmos-db/nosql/transactional-batch#limitations
@@ -271,7 +271,7 @@ func LoadWorkflowState(ctx context.Context, state state.Interface, actorID strin
 		// no state found
 		return nil, nil
 	}
-	var metadata backend.WorkflowStateMetadata
+	var metadata protos.WorkflowStateMetadata
 	if err = proto.Unmarshal(res.Data, &metadata); err != nil {
 		// TODO: @joshvanl: remove in v1.16
 		var metadataJSON legacyWorkflowStateMetadata
@@ -288,8 +288,8 @@ func LoadWorkflowState(ctx context.Context, state state.Interface, actorID strin
 	// Load inbox, history, and custom status using a bulk request
 	wState := NewState(opts)
 	wState.Generation = metadata.GetGeneration()
-	wState.Inbox = make([]*backend.HistoryEvent, 0, metadata.GetInboxLength())
-	wState.History = make([]*backend.HistoryEvent, 0, metadata.GetHistoryLength())
+	wState.Inbox = make([]*protos.HistoryEvent, 0, metadata.GetInboxLength())
+	wState.History = make([]*protos.HistoryEvent, 0, metadata.GetHistoryLength())
 
 	bulkReq := &api.GetBulkStateRequest{
 		ActorType: opts.WorkflowActorType,
@@ -332,7 +332,7 @@ func LoadWorkflowState(ctx context.Context, state state.Interface, actorID strin
 			wfLogger.Warnf("Failed to load inbox state key '%s': not found", key)
 			continue
 		}
-		var hist backend.HistoryEvent
+		var hist protos.HistoryEvent
 		if err = proto.Unmarshal(bulkRes[key], &hist); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal history event from inbox state key '%s': %w", key, err)
 		}
@@ -344,7 +344,7 @@ func LoadWorkflowState(ctx context.Context, state state.Interface, actorID strin
 			wfLogger.Warnf("Failed to load history state key '%s': not found", key)
 			continue
 		}
-		var hist backend.HistoryEvent
+		var hist protos.HistoryEvent
 		if err = proto.Unmarshal(bulkRes[key], &hist); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal history event from history state key '%s': %w", key, err)
 		}
@@ -401,8 +401,8 @@ func (s *State) GetPurgeRequest(actorID string) (*api.TransactionalRequest, erro
 	return req, nil
 }
 
-func (s *State) ToWorkflowState() *backend.WorkflowState {
-	return &backend.WorkflowState{
+func (s *State) ToWorkflowState() *protos.WorkflowStateInbox {
+	return &protos.WorkflowStateInbox{
 		Inbox:        s.Inbox,
 		History:      s.History,
 		CustomStatus: s.CustomStatus,
@@ -410,7 +410,7 @@ func (s *State) ToWorkflowState() *backend.WorkflowState {
 	}
 }
 
-func (s *State) FromWorkflowState(state *backend.WorkflowState) {
+func (s *State) FromWorkflowState(state *protos.WorkflowStateInbox) {
 	s.Reset()
 	for _, e := range state.GetInbox() {
 		s.AddToInbox(e)

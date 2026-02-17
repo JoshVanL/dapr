@@ -59,7 +59,7 @@ func (c *crossnamespace) Setup(t *testing.T) []framework.Option {
 	)
 
 	// App1: Sub-orchestrator in different namespace
-	c.workflow.RegistryN(1).AddOrchestratorN("ProcessData", func(ctx *task.OrchestrationContext) (any, error) {
+	c.workflow.RegistryN(1).AddWorkflowN("ProcessData", func(ctx *task.WorkflowContext) (any, error) {
 		var input string
 		if err := ctx.GetInput(&input); err != nil {
 			return nil, fmt.Errorf("failed to get input in app1 sub-orchestrator: %w", err)
@@ -67,8 +67,8 @@ func (c *crossnamespace) Setup(t *testing.T) []framework.Option {
 		return "Processed by app1: " + input, nil
 	})
 
-	// App0: Orchestrator that tries to call app2 in different namespace
-	c.workflow.Registry().AddOrchestratorN("CrossNamespaceWorkflow", func(ctx *task.OrchestrationContext) (any, error) {
+	// App0: Workflow that tries to call app2 in different namespace
+	c.workflow.Registry().AddWorkflowN("CrossNamespaceWorkflow", func(ctx *task.WorkflowContext) (any, error) {
 		var input string
 		if err := ctx.GetInput(&input); err != nil {
 			return nil, fmt.Errorf("failed to get input in app0: %w", err)
@@ -76,9 +76,9 @@ func (c *crossnamespace) Setup(t *testing.T) []framework.Option {
 
 		// Try to call sub-orchestrator on app1 in different namespace - this should fail
 		var output string
-		err := ctx.CallSubOrchestrator("ProcessData",
-			task.WithSubOrchestratorInput(input),
-			task.WithSubOrchestratorAppID(c.workflow.DaprN(1).AppID())).
+		err := ctx.CallChildWorkflow("ProcessData",
+			task.WithChildWorkflowInput(input),
+			task.WithChildWorkflowAppID(c.workflow.DaprN(1).AppID())).
 			Await(&output)
 		if err != nil {
 			// Expected to fail due to namespace isolation
@@ -105,7 +105,7 @@ func (c *crossnamespace) Run(t *testing.T, ctx context.Context) {
 	defer waitCancel()
 
 	// Start workflow from app0 (default namespace)
-	_, err := client0.ScheduleNewOrchestration(waitCtx, "CrossNamespaceWorkflow", api.WithInput("Hello from app0"))
+	_, err := client0.ScheduleNewWorkflow(waitCtx, "CrossNamespaceWorkflow", api.WithInput("Hello from app0"))
 	require.Error(t, err)
 	require.True(t, strings.Contains(err.Error(), "context deadline exceeded") || strings.Contains(err.Error(), "DeadlineExceeded"))
 	c.actorNotFoundLogLine.EventuallyFoundAll(t)

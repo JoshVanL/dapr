@@ -52,7 +52,7 @@ func (c *continueasnew) Run(t *testing.T, ctx context.Context) {
 	c.workflow.WaitUntilRunning(t, ctx)
 
 	var cont atomic.Bool
-	require.NoError(t, c.workflow.RegistryN(0).AddOrchestratorN("can", func(ctx *task.OrchestrationContext) (any, error) {
+	require.NoError(t, c.workflow.RegistryN(0).AddWorkflowN("can", func(ctx *task.WorkflowContext) (any, error) {
 		var input string
 		require.NoError(t, ctx.GetInput(&input))
 		if cont.Load() {
@@ -81,9 +81,9 @@ func (c *continueasnew) Run(t *testing.T, ctx context.Context) {
 
 	for range 10 {
 		cont.Store(false)
-		id, err := client.ScheduleNewOrchestration(ctx, "can", api.WithInput("first call"))
+		id, err := client.ScheduleNewWorkflow(ctx, "can", api.WithInput("first call"))
 		require.NoError(t, err)
-		_, err = client.WaitForOrchestrationCompletion(ctx, id)
+		_, err = client.WaitForWorkflowCompletion(ctx, id)
 		require.NoError(t, err)
 	}
 }

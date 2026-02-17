@@ -85,8 +85,8 @@ func (a *async) Run(t *testing.T, ctx context.Context) {
 
 	childs := make([]string, 0, 2)
 	for _, e := range history.Events {
-		if s := e.GetSubOrchestrationInstanceCreated(); s != nil {
-			childs = append(childs, s.GetInstanceId())
+		if s := e.GetChildWorkflowInstanceCreated(); s != nil {
+			childs = append(childs, s.GetInstanceID())
 		}
 	}
 	assert.ElementsMatch(t, []string{"hello:0000", "hello:0001"}, childs)
@@ -94,6 +94,6 @@ func (a *async) Run(t *testing.T, ctx context.Context) {
 	ids, err := client.ListInstanceIDs(ctx)
 	require.NoError(t, err)
 
-	assert.ElementsMatch(t, []string{"abc", "abc:0000", "abc:0001", "hello", "hello:0000", "hello:0001"}, ids.InstanceIds)
+	assert.ElementsMatch(t, []string{"abc", "abc:0000", "abc:0001", "hello", "hello:0000", "hello:0001"}, ids.InstanceIDs)
 	assert.Equal(t, int64(4), calls.Load())
 }

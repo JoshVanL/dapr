@@ -22,7 +22,6 @@ import (
 
 	"github.com/dapr/dapr/pkg/runtime/wfengine/state"
 	"github.com/dapr/durabletask-go/api/protos"
-	"github.com/dapr/durabletask-go/backend"
 )
 
 type Options struct {
@@ -52,9 +51,9 @@ type Fork struct {
 	input                      *wrapperspb.StringValue
 	newChildWorkflowInstanceID *string
 
-	unfinishedActivities     map[int32]*backend.HistoryEvent
-	activeTimers             map[int32]*backend.HistoryEvent
-	unfinishedChildWorkflows map[int32]*backend.HistoryEvent
+	unfinishedActivities     map[int32]*protos.HistoryEvent
+	activeTimers             map[int32]*protos.HistoryEvent
+	unfinishedChildWorkflows map[int32]*protos.HistoryEvent
 }
 
 func New(opts Options) *Fork {
@@ -71,16 +70,16 @@ func New(opts Options) *Fork {
 		overwriteInput:             opts.OverwriteInput,
 		input:                      opts.Input,
 		newChildWorkflowInstanceID: opts.NewChildWorkflowInstanceID,
-		unfinishedActivities:       make(map[int32]*backend.HistoryEvent),
-		activeTimers:               make(map[int32]*backend.HistoryEvent),
-		unfinishedChildWorkflows:   make(map[int32]*backend.HistoryEvent),
+		unfinishedActivities:       make(map[int32]*protos.HistoryEvent),
+		activeTimers:               make(map[int32]*protos.HistoryEvent),
+		unfinishedChildWorkflows:   make(map[int32]*protos.HistoryEvent),
 	}
 }
 
 func (f *Fork) Build() (*state.State, error) {
 	var found *protos.HistoryEvent
 	for i, his := range f.oldState.History {
-		if his.GetEventId() != f.targetEventID {
+		if his.GetEventID() != f.targetEventID {
 			f.handleBefore(his)
 			continue
 		}
@@ -115,8 +114,8 @@ func (f *Fork) Build() (*state.State, error) {
 
 	// Ensure incomplete child workflows are also rerun.
 	for _, unfin := range f.unfinishedChildWorkflows {
-		sub := unfin.GetSubOrchestrationInstanceCreated()
-		sub.InstanceId = fmt.Sprintf("%s:%04x", f.newInstanceID, unfin.EventId)
+		sub := unfin.GetChildWorkflowInstanceCreated()
+		sub.InstanceID = fmt.Sprintf("%s:%04x", f.newInstanceID, unfin.GetEventID())
 		f.newState.AddToInbox(unfin)
 	}
 
@@ -125,45 +124,45 @@ func (f *Fork) Build() (*state.State, error) {
 	return f.newState, nil
 }
 
-func (f *Fork) handleBefore(his *backend.HistoryEvent) {
+func (f *Fork) handleBefore(his *protos.HistoryEvent) {
 	// Track activities which have not been completed yet so they are also
 	// rerun.
 	switch his.GetEventType().(type) {
 	case *protos.HistoryEvent_TaskScheduled:
-		f.unfinishedActivities[his.GetEventId()] = his
+		f.unfinishedActivities[his.GetEventID()] = his
 
 	case *protos.HistoryEvent_TaskCompleted:
-		f.newState.AddToHistory(f.unfinishedActivities[his.GetTaskCompleted().GetTaskScheduledId()])
+		f.newState.AddToHistory(f.unfinishedActivities[his.GetTaskCompleted().GetTaskScheduledID()])
 		f.newState.AddToHistory(his)
-		delete(f.unfinishedActivities, his.GetTaskCompleted().GetTaskScheduledId())
+		delete(f.unfinishedActivities, his.GetTaskCompleted().GetTaskScheduledID())
 
 	case *protos.HistoryEvent_TaskFailed:
-		f.newState.AddToHistory(f.unfinishedActivities[his.GetTaskFailed().GetTaskScheduledId()])
+		f.newState.AddToHistory(f.unfinishedActivities[his.GetTaskFailed().GetTaskScheduledID()])
 		f.newState.AddToHistory(his)
-		delete(f.unfinishedActivities, his.GetTaskFailed().GetTaskScheduledId())
+		delete(f.unfinishedActivities, his.GetTaskFailed().GetTaskScheduledID())
 
 	case *protos.HistoryEvent_TimerCreated:
-		f.activeTimers[his.GetEventId()] = his
+		f.activeTimers[his.GetEventID()] = his
 
-	case *protos.HistoryEvent_SubOrchestrationInstanceCreated:
-		f.unfinishedChildWorkflows[his.GetEventId()] = his
+	case *protos.HistoryEvent_ChildWorkflowInstanceCreated:
+		f.unfinishedChildWorkflows[his.GetEventID()] = his
 
-	case *protos.HistoryEvent_SubOrchestrationInstanceCompleted:
-		f.newState.AddToHistory(f.unfinishedChildWorkflows[his.GetSubOrchestrationInstanceCompleted().GetTaskScheduledId()])
+	case *protos.HistoryEvent_ChildWorkflowInstanceCompleted:
+		f.newState.AddToHistory(f.unfinishedChildWorkflows[his.GetChildWorkflowInstanceCompleted().GetTaskScheduledID()])
 		f.newState.AddToHistory(his)
-		delete(f.unfinishedChildWorkflows, his.GetSubOrchestrationInstanceCompleted().GetTaskScheduledId())
+		delete(f.unfinishedChildWorkflows, his.GetChildWorkflowInstanceCompleted().GetTaskScheduledID())
 
-	case *protos.HistoryEvent_SubOrchestrationInstanceFailed:
-		f.newState.AddToHistory(f.unfinishedChildWorkflows[his.GetSubOrchestrationInstanceFailed().GetTaskScheduledId()])
+	case *protos.HistoryEvent_ChildWorkflowInstanceFailed:
+		f.newState.AddToHistory(f.unfinishedChildWorkflows[his.GetChildWorkflowInstanceFailed().GetTaskScheduledID()])
 		f.newState.AddToHistory(his)
-		delete(f.unfinishedChildWorkflows, his.GetSubOrchestrationInstanceFailed().GetTaskScheduledId())
+		delete(f.unfinishedChildWorkflows, his.GetChildWorkflowInstanceFailed().GetTaskScheduledID())
 
 	default:
 		f.newState.AddToHistory(his)
 	}
 }
 
-func (f *Fork) handleFound(i int, his *backend.HistoryEvent) (*protos.HistoryEvent, error) {
+func (f *Fork) handleFound(i int, his *protos.HistoryEvent) (*protos.HistoryEvent, error) {
 	switch his.GetEventType().(type) {
 	case *protos.HistoryEvent_TaskScheduled:
 		sched := his.GetTaskScheduled()
@@ -191,16 +190,16 @@ func (f *Fork) handleFound(i int, his *backend.HistoryEvent) (*protos.HistoryEve
 		}
 		return his, nil
 
-	case *protos.HistoryEvent_SubOrchestrationInstanceCreated:
-		sub := his.GetSubOrchestrationInstanceCreated()
+	case *protos.HistoryEvent_ChildWorkflowInstanceCreated:
+		sub := his.GetChildWorkflowInstanceCreated()
 		sub.RerunParentInstanceInfo = &protos.RerunParentInstanceInfo{
 			InstanceID: f.instanceID,
 		}
 
 		if f.newChildWorkflowInstanceID != nil {
-			sub.InstanceId = *f.newChildWorkflowInstanceID
+			sub.InstanceID = *f.newChildWorkflowInstanceID
 		} else {
-			sub.InstanceId = fmt.Sprintf("%s:%04x", f.newInstanceID, his.EventId)
+			sub.InstanceID = fmt.Sprintf("%s:%04x", f.newInstanceID, his.GetEventID())
 		}
 
 		if f.overwriteInput {

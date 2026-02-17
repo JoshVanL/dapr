@@ -67,8 +67,8 @@ func (c *crossnamespace) Setup(t *testing.T) []framework.Option {
 		return "Processed by app1: " + input, nil
 	})
 
-	// App0: Orchestrator that tries to call app2 in different namespace
-	c.workflow.Registry().AddOrchestratorN("CrossNamespaceWorkflow", func(ctx *task.OrchestrationContext) (any, error) {
+	// App0: Workflow that tries to call app2 in different namespace
+	c.workflow.Registry().AddWorkflowN("CrossNamespaceWorkflow", func(ctx *task.WorkflowContext) (any, error) {
 		var input string
 		if err := ctx.GetInput(&input); err != nil {
 			return nil, fmt.Errorf("failed to get input in app0: %w", err)
@@ -105,7 +105,7 @@ func (c *crossnamespace) Run(t *testing.T, ctx context.Context) {
 	defer waitCancel()
 
 	// Start workflow from app0 (default namespace)
-	_, err := client0.ScheduleNewOrchestration(waitCtx, "CrossNamespaceWorkflow", api.WithInput("Hello from app0"))
+	_, err := client0.ScheduleNewWorkflow(waitCtx, "CrossNamespaceWorkflow", api.WithInput("Hello from app0"))
 	require.Error(t, err)
 	require.True(t, strings.Contains(err.Error(), "context deadline exceeded") || strings.Contains(err.Error(), "DeadlineExceeded"))
 	c.actorNotFoundLogLine.EventuallyFoundAll(t)

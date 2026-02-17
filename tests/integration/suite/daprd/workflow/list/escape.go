@@ -46,7 +46,7 @@ func (e *escape) Setup(t *testing.T) []framework.Option {
 func (e *escape) Run(t *testing.T, ctx context.Context) {
 	e.workflow.WaitUntilRunning(t, ctx)
 
-	e.workflow.Registry().AddOrchestratorN("foo", func(ctx *task.OrchestrationContext) (any, error) {
+	e.workflow.Registry().AddWorkflowN("foo", func(ctx *task.WorkflowContext) (any, error) {
 		return nil, nil
 	})
 
@@ -68,6 +68,6 @@ func (e *escape) Run(t *testing.T, ctx context.Context) {
 
 	resp, err := wf.ListInstanceIDs(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, ids, resp.InstanceIds)
+	assert.Equal(t, ids, resp.InstanceIDs)
 	assert.Nil(t, resp.ContinuationToken)
 }

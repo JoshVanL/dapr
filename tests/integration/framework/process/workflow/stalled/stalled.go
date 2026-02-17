@@ -25,7 +25,6 @@ import (
 
 	"github.com/dapr/dapr/tests/integration/framework/process/daprd"
 	"github.com/dapr/dapr/tests/integration/framework/process/workflow"
-	"github.com/dapr/durabletask-go/api"
 	"github.com/dapr/durabletask-go/api/protos"
 	"github.com/dapr/durabletask-go/client"
 	"github.com/dapr/durabletask-go/task"
@@ -45,7 +44,7 @@ func New(t *testing.T, fopts ...Option) *Stalled {
 	t.Helper()
 
 	opts := options{
-		workflows:  map[string]task.Orchestrator{},
+		workflows:  map[string]task.Workflow{},
 		activities: map[string]task.Activity{},
 	}
 
@@ -60,7 +59,7 @@ func New(t *testing.T, fopts ...Option) *Stalled {
 
 	appID := uuid.New().String()
 	wfOpts := []workflow.Option{
-		workflow.WithAddOrchestrator(t, "Orchestrator", fw.workflowWrapper),
+		workflow.WithAddWorkflow(t, "Orchestrator", fw.workflowWrapper),
 		workflow.WithDaprdOptions(0, daprd.WithAppID(appID)),
 	}
 	for name, activity := range opts.activities {
@@ -80,7 +79,7 @@ func (f *Stalled) Cleanup(t *testing.T) {
 	f.workflows.Cleanup(t)
 }
 
-func (f *Stalled) workflowWrapper(ctx *task.OrchestrationContext) (any, error) {
+func (f *Stalled) workflowWrapper(ctx *task.WorkflowContext) (any, error) {
 	if wf, ok := f.options.workflows[f.runWorkflowReplica]; !ok {
 		return nil, fmt.Errorf("workflow replica %s not found", f.runWorkflowReplica)
 	} else {
@@ -88,15 +87,15 @@ func (f *Stalled) workflowWrapper(ctx *task.OrchestrationContext) (any, error) {
 	}
 }
 
-func (f *Stalled) ScheduleWorkflow(t *testing.T, ctx context.Context) api.InstanceID {
+func (f *Stalled) ScheduleWorkflow(t *testing.T, ctx context.Context) string {
 	t.Helper()
 	f.workflows.WaitUntilRunning(t, ctx)
 	ctx, cancel := context.WithCancel(ctx)
 	f.currentClientCancel = cancel
 	f.CurrentClient = f.workflows.BackendClient(t, ctx)
-	id, err := f.CurrentClient.ScheduleNewOrchestration(ctx, "Orchestrator")
+	id, err := f.CurrentClient.ScheduleNewWorkflow(ctx, "Workflow")
 	require.NoError(t, err)
-	_, err = f.CurrentClient.WaitForOrchestrationStart(ctx, id)
+	_, err = f.CurrentClient.WaitForWorkflowStart(ctx, id)
 	require.NoError(t, err)
 	return id
 }
@@ -115,18 +114,18 @@ func (f *Stalled) restart(t *testing.T, ctx context.Context) {
 	f.CurrentClient = f.workflows.BackendClient(t, ctx)
 }
 
-func (f *Stalled) waitForStatus(t *testing.T, ctx context.Context, id api.InstanceID, status protos.OrchestrationStatus) {
+func (f *Stalled) waitForStatus(t *testing.T, ctx context.Context, id string, status protos.WorkflowStatus) {
 	t.Helper()
 	require.EventuallyWithT(t, func(c *assert.CollectT) {
-		md, err := f.CurrentClient.FetchOrchestrationMetadata(ctx, id)
+		md, err := f.CurrentClient.FetchWorkflowMetadata(ctx, id)
 		require.NoError(c, err)
 		assert.Equal(c, status.String(), md.RuntimeStatus.String())
 	}, 20*time.Second, 10*time.Millisecond)
 }
 
-func (f *Stalled) WaitForStalled(t *testing.T, ctx context.Context, id api.InstanceID) *protos.ExecutionStalledEvent {
+func (f *Stalled) WaitForStalled(t *testing.T, ctx context.Context, id string) *protos.ExecutionStalledEvent {
 	t.Helper()
-	f.waitForStatus(t, ctx, id, protos.OrchestrationStatus_ORCHESTRATION_STATUS_STALLED)
+	f.waitForStatus(t, ctx, id, protos.WorkflowStatus_WORKFLOW_STATUS_STALLED)
 	hist, err := f.CurrentClient.GetInstanceHistory(ctx, id)
 	require.NoError(t, err)
 	executionStalled := hist.Events[len(hist.Events)-1].GetExecutionStalled()
@@ -134,22 +133,22 @@ func (f *Stalled) WaitForStalled(t *testing.T, ctx context.Context, id api.Insta
 	return executionStalled
 }
 
-func (f *Stalled) WaitForCompleted(t *testing.T, ctx context.Context, id api.InstanceID) {
+func (f *Stalled) WaitForCompleted(t *testing.T, ctx context.Context, id string) {
 	t.Helper()
-	f.waitForStatus(t, ctx, id, protos.OrchestrationStatus_ORCHESTRATION_STATUS_COMPLETED)
+	f.waitForStatus(t, ctx, id, protos.WorkflowStatus_WORKFLOW_STATUS_COMPLETED)
 	hist, err := f.CurrentClient.GetInstanceHistory(ctx, id)
 	require.NoError(t, err)
 	require.NotNil(t, hist.Events[len(hist.Events)-1].GetExecutionCompleted())
 }
 
-func (f *Stalled) WaitForNumberOfOrchestrationStartedEvents(t *testing.T, ctx context.Context, id api.InstanceID, expected int) {
+func (f *Stalled) WaitForNumberOfWorkflowStartedEvents(t *testing.T, ctx context.Context, id string, expected int) {
 	t.Helper()
 	require.EventuallyWithT(t, func(c *assert.CollectT) {
 		hist, err := f.CurrentClient.GetInstanceHistory(ctx, id)
 		require.NoError(c, err)
 		count := 0
 		for _, event := range hist.Events {
-			if event.GetOrchestratorStarted() != nil {
+			if event.GetWorkflowStarted() != nil {
 				count++
 			}
 		}
@@ -157,7 +156,7 @@ func (f *Stalled) WaitForNumberOfOrchestrationStartedEvents(t *testing.T, ctx co
 	}, 20*time.Second, 10*time.Millisecond)
 }
 
-func (f *Stalled) CountStalledEvents(t *testing.T, ctx context.Context, id api.InstanceID) int {
+func (f *Stalled) CountStalledEvents(t *testing.T, ctx context.Context, id string) int {
 	t.Helper()
 	hist, err := f.CurrentClient.GetInstanceHistory(ctx, id)
 	require.NoError(t, err)

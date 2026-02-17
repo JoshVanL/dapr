@@ -26,7 +26,6 @@ import (
 	"github.com/dapr/dapr/tests/integration/framework/iowriter/logger"
 	"github.com/dapr/dapr/tests/integration/framework/process/workflow"
 	"github.com/dapr/dapr/tests/integration/suite"
-	"github.com/dapr/durabletask-go/api"
 	"github.com/dapr/durabletask-go/client"
 	"github.com/dapr/durabletask-go/task"
 )
@@ -53,7 +52,7 @@ func (m *midcall) Run(t *testing.T, ctx context.Context) {
 	m.workflow.WaitUntilRunning(t, ctx)
 
 	var here atomic.Int64
-	m.workflow.Registry().AddOrchestratorN("foo", func(ctx *task.OrchestrationContext) (any, error) {
+	m.workflow.Registry().AddWorkflowN("foo", func(ctx *task.WorkflowContext) (any, error) {
 		here.Add(1)
 		return nil, ctx.WaitForSingleEvent("bar", time.Minute).Await(nil)
 	})
@@ -64,10 +63,10 @@ func (m *midcall) Run(t *testing.T, ctx context.Context) {
 	client2 := client.NewTaskHubGrpcClient(m.workflow.DaprN(1).GRPCConn(t, ctx), logger.New(t))
 	require.NoError(t, client2.StartWorkItemListener(ctx, m.workflow.Registry()))
 
-	ids := make([]api.InstanceID, 5)
+	ids := make([]string, 5)
 	var err error
 	for i := range 5 {
-		ids[i], err = client1.ScheduleNewOrchestration(ctx, "foo")
+		ids[i], err = client1.ScheduleNewWorkflow(ctx, "foo")
 		require.NoError(t, err)
 	}
 
@@ -85,8 +84,8 @@ func (m *midcall) Run(t *testing.T, ctx context.Context) {
 	}()
 
 	for _, id := range ids {
-		go func(id api.InstanceID) {
-			_, ferr := client1.WaitForOrchestrationStart(ctx, id)
+		go func(id string) {
+			_, ferr := client1.WaitForWorkflowStart(ctx, id)
 			errCh <- ferr
 		}(id)
 	}

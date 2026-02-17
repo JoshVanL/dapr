@@ -25,13 +25,13 @@ import (
 	"github.com/dapr/dapr/pkg/actors/targets/workflow/common/lock"
 	internalsv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 	wfenginestate "github.com/dapr/dapr/pkg/runtime/wfengine/state"
-	"github.com/dapr/durabletask-go/backend"
+	"github.com/dapr/durabletask-go/api/protos"
 	"github.com/dapr/kit/logger"
 )
 
 var log = logger.NewLogger("dapr.runtime.actors.targets.orchestrator")
 
-type EventSink func(*backend.OrchestrationMetadata)
+type EventSink func(*protos.WorkflowMetadata)
 
 type orchestrator struct {
 	*factory
@@ -39,8 +39,8 @@ type orchestrator struct {
 	actorID string
 
 	state  *wfenginestate.State
-	rstate *backend.OrchestrationRuntimeState
-	ometa  *backend.OrchestrationMetadata
+	rstate *protos.WorkflowRuntimeState
+	ometa  *protos.WorkflowMetadata
 
 	activityResultAwaited atomic.Bool
 	lock                  *lock.Stallable

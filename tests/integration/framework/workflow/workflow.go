@@ -21,29 +21,28 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/dapr/durabletask-go/api"
 	"github.com/dapr/durabletask-go/api/protos"
 	"github.com/dapr/durabletask-go/client"
 )
 
-func WaitForOrchestratorStartedEvent(t *testing.T, ctx context.Context, client *client.TaskHubGrpcClient, id api.InstanceID) {
+func WaitForWorkflowStartedEvent(t *testing.T, ctx context.Context, client *client.TaskHubGrpcClient, id string) {
 	t.Helper()
 	require.EventuallyWithT(t, func(c *assert.CollectT) {
-		count := CountHistoryEventsOfType[protos.HistoryEvent_OrchestratorStarted](t, ctx, client, id)
+		count := CountHistoryEventsOfType[protos.HistoryEvent_WorkflowStarted](t, ctx, client, id)
 		require.Equal(c, 1, count)
 	}, 20*time.Second, 10*time.Millisecond)
 }
 
-func WaitForRuntimeStatus(t *testing.T, ctx context.Context, client *client.TaskHubGrpcClient, id api.InstanceID, status protos.OrchestrationStatus) {
+func WaitForRuntimeStatus(t *testing.T, ctx context.Context, client *client.TaskHubGrpcClient, id string, status protos.WorkflowStatus) {
 	t.Helper()
 	require.EventuallyWithT(t, func(c *assert.CollectT) {
-		md, err := client.FetchOrchestrationMetadata(ctx, id)
+		md, err := client.FetchWorkflowMetadata(ctx, id)
 		require.NoError(c, err)
 		require.Equal(c, status.String(), md.RuntimeStatus.String())
 	}, 20*time.Second, 10*time.Millisecond)
 }
 
-func GetLastHistoryEventOfType[T any](t *testing.T, ctx context.Context, client *client.TaskHubGrpcClient, id api.InstanceID) *protos.HistoryEvent {
+func GetLastHistoryEventOfType[T any](t *testing.T, ctx context.Context, client *client.TaskHubGrpcClient, id string) *protos.HistoryEvent {
 	t.Helper()
 	hist, err := client.GetInstanceHistory(ctx, id)
 	require.NoError(t, err)
@@ -57,7 +56,7 @@ func GetLastHistoryEventOfType[T any](t *testing.T, ctx context.Context, client 
 	return nil
 }
 
-func CountHistoryEventsOfType[T any](t *testing.T, ctx context.Context, client *client.TaskHubGrpcClient, id api.InstanceID) int {
+func CountHistoryEventsOfType[T any](t *testing.T, ctx context.Context, client *client.TaskHubGrpcClient, id string) int {
 	t.Helper()
 	hist, err := client.GetInstanceHistory(ctx, id)
 	require.NoError(t, err)

@@ -82,17 +82,17 @@ func (h *history) Run(t *testing.T, ctx context.Context) {
 	require.Len(t, history.Events, 9)
 
 	assert.True(t, proto.Equal(
-		history.Events[3].GetSubOrchestrationInstanceCreated(),
-		&protos.SubOrchestrationInstanceCreatedEvent{
-			InstanceId: "abc:0000",
+		history.Events[3].GetChildWorkflowInstanceCreated(),
+		&protos.ChildWorkflowInstanceCreatedEvent{
+			InstanceID: "abc:0000",
 			Name:       "bar",
 		},
 	))
 
 	assert.True(t, proto.Equal(
-		history.Events[5].GetSubOrchestrationInstanceCreated(),
-		&protos.SubOrchestrationInstanceCreatedEvent{
-			InstanceId: "hello:0001",
+		history.Events[5].GetChildWorkflowInstanceCreated(),
+		&protos.ChildWorkflowInstanceCreatedEvent{
+			InstanceID: "hello:0001",
 			Name:       "bar",
 			RerunParentInstanceInfo: &protos.RerunParentInstanceInfo{
 				InstanceID: "abc",
@@ -103,6 +103,6 @@ func (h *history) Run(t *testing.T, ctx context.Context) {
 	ids, err := client.ListInstanceIDs(ctx)
 	require.NoError(t, err)
 
-	assert.ElementsMatch(t, []string{"abc", "abc:0000", "abc:0001", "hello", "hello:0001"}, ids.InstanceIds)
+	assert.ElementsMatch(t, []string{"abc", "abc:0000", "abc:0001", "hello", "hello:0001"}, ids.InstanceIDs)
 	assert.Equal(t, int64(3), calls.Load())
 }

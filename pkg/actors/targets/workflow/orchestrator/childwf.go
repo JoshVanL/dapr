@@ -27,7 +27,6 @@ import (
 	internalsv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 	"github.com/dapr/dapr/pkg/runtime/wfengine/todo"
 	"github.com/dapr/durabletask-go/api/protos"
-	"github.com/dapr/durabletask-go/backend"
 	"github.com/dapr/kit/ptr"
 )
 
@@ -35,25 +34,25 @@ func (o *orchestrator) callChildWorkflows(ctx context.Context, startEventName st
 	log.Debugf("Workflow actor '%s': calling %d child workflows", o.actorID, len(es))
 
 	for _, e := range es {
-		createSO := e.GetSubOrchestrationInstanceCreated()
+		createSO := e.GetChildWorkflowInstanceCreated()
 
 		//nolint:protogetter
 		startEvent := &protos.HistoryEvent{
-			EventId:   -1,
+			EventID:   ptr.Of(int32(-1)),
 			Timestamp: timestamppb.New(time.Now()),
 			Router:    e.Router,
 			EventType: &protos.HistoryEvent_ExecutionStarted{
 				ExecutionStarted: &protos.ExecutionStartedEvent{
 					Name: createSO.Name,
 					ParentInstance: &protos.ParentInstanceInfo{
-						TaskScheduledId:       e.EventId,
-						Name:                  wrapperspb.String(startEventName),
-						OrchestrationInstance: &protos.OrchestrationInstance{InstanceId: o.actorID},
-						AppID:                 ptr.Of(o.appID),
+						TaskScheduledId:  e.GetEventID(),
+						Name:             wrapperspb.String(startEventName),
+						WorkflowInstance: &protos.WorkflowInstance{InstanceID: o.actorID},
+						AppID:            ptr.Of(o.appID),
 					},
 					Input: createSO.Input,
-					OrchestrationInstance: &protos.OrchestrationInstance{
-						InstanceId:  createSO.InstanceId,
+					WorkflowInstance: &protos.WorkflowInstance{
+						InstanceID:  createSO.InstanceID,
 						ExecutionId: wrapperspb.String(uuid.New().String()),
 					},
 					ParentTraceContext: createSO.ParentTraceContext,
@@ -61,14 +60,14 @@ func (o *orchestrator) callChildWorkflows(ctx context.Context, startEventName st
 			},
 		}
 
-		reqP, err := proto.Marshal(&backend.CreateWorkflowInstanceRequest{
+		reqP, err := proto.Marshal(&protos.CreateWorkflowInstanceRequest{
 			StartEvent: startEvent,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to marshal child workflow request: %w", err)
 		}
 
-		id := e.GetSubOrchestrationInstanceCreated().GetInstanceId()
+		id := e.GetChildWorkflowInstanceCreated().GetInstanceID()
 		req := internalsv1pb.NewInternalInvokeRequest(todo.CreateWorkflowInstanceMethod).
 			WithActor(o.actorType, id).
 			WithData(reqP).

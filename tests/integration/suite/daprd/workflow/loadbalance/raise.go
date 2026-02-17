@@ -26,7 +26,6 @@ import (
 	"github.com/dapr/dapr/tests/integration/framework/iowriter/logger"
 	"github.com/dapr/dapr/tests/integration/framework/process/workflow"
 	"github.com/dapr/dapr/tests/integration/suite"
-	"github.com/dapr/durabletask-go/api"
 	"github.com/dapr/durabletask-go/client"
 	"github.com/dapr/durabletask-go/task"
 )
@@ -50,7 +49,7 @@ func (r *raise) Setup(t *testing.T) []framework.Option {
 func (r *raise) Run(t *testing.T, ctx context.Context) {
 	r.workflow.WaitUntilRunning(t, ctx)
 
-	require.NoError(t, r.workflow.RegistryN(0).AddOrchestratorN("raise", func(ctx *task.OrchestrationContext) (any, error) {
+	require.NoError(t, r.workflow.RegistryN(0).AddWorkflowN("raise", func(ctx *task.WorkflowContext) (any, error) {
 		require.NoError(t, ctx.WaitForSingleEvent("my-event", time.Hour).Await(nil))
 		return nil, nil
 	}))
@@ -67,11 +66,11 @@ func (r *raise) Run(t *testing.T, ctx context.Context) {
 	), logger.New(t))
 
 	const n = 10
-	ids := make([]api.InstanceID, n)
+	ids := make([]string, n)
 
 	var err error
 	for i := range n {
-		ids[i], err = client.ScheduleNewOrchestration(ctx, "raise")
+		ids[i], err = client.ScheduleNewWorkflow(ctx, "raise")
 		require.NoError(t, err)
 	}
 
@@ -80,7 +79,7 @@ func (r *raise) Run(t *testing.T, ctx context.Context) {
 	}
 
 	for i := range n {
-		_, err = client.WaitForOrchestrationCompletion(ctx, ids[i])
+		_, err = client.WaitForWorkflowCompletion(ctx, ids[i])
 		require.NoError(t, err)
 	}
 }

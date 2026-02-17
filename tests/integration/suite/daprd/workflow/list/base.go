@@ -45,18 +45,18 @@ func (b *base) Setup(t *testing.T) []framework.Option {
 func (b *base) Run(t *testing.T, ctx context.Context) {
 	b.workflow.WaitUntilRunning(t, ctx)
 
-	b.workflow.Registry().AddOrchestratorN("foo", func(ctx *task.OrchestrationContext) (any, error) {
+	b.workflow.Registry().AddWorkflowN("foo", func(ctx *task.WorkflowContext) (any, error) {
 		return nil, nil
 	})
 
 	client := b.workflow.BackendClient(t, ctx)
 
-	id, err := client.ScheduleNewOrchestration(ctx, "foo")
+	id, err := client.ScheduleNewWorkflow(ctx, "foo")
 	require.NoError(t, err)
 
 	resp, err := b.workflow.WorkflowClient(t, ctx).ListInstanceIDs(ctx)
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{id.String()}, resp.InstanceIds)
+	assert.Equal(t, []string{id}, resp.InstanceIDs)
 	assert.Nil(t, resp.ContinuationToken)
 }

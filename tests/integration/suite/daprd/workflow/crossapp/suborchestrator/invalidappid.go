@@ -63,7 +63,7 @@ func (i *invalidappid) Run(t *testing.T, ctx context.Context) {
 	i.workflow.WaitUntilRunning(t, ctx)
 
 	// Add orchestrator to app0's registry that tries to call non-existent apps
-	i.workflow.Registry().AddOrchestratorN("InvalidAppWorkflow", func(ctx *task.OrchestrationContext) (any, error) {
+	i.workflow.Registry().AddWorkflowN("InvalidAppWorkflow", func(ctx *task.WorkflowContext) (any, error) {
 		var input string
 		if err := ctx.GetInput(&input); err != nil {
 			return nil, fmt.Errorf("failed to get input in orchestrator: %w", err)
@@ -71,9 +71,9 @@ func (i *invalidappid) Run(t *testing.T, ctx context.Context) {
 
 		// Try to call sub-orchestrator on non-existent app
 		var result string
-		err := ctx.CallSubOrchestrator("ProcessData",
-			task.WithSubOrchestratorInput(input),
-			task.WithSubOrchestratorAppID("nonexistent-app")).
+		err := ctx.CallChildWorkflow("ProcessData",
+			task.WithChildWorkflowInput(input),
+			task.WithChildWorkflowAppID("nonexistent-app")).
 			Await(&result)
 		return fmt.Sprintf("Error handled: %v", err), nil
 	})
@@ -84,7 +84,7 @@ func (i *invalidappid) Run(t *testing.T, ctx context.Context) {
 	// ctx cancel bc it will hang
 	wCtx, wcancel := context.WithTimeout(ctx, 5*time.Second)
 	defer wcancel()
-	_, err := client0.ScheduleNewOrchestration(wCtx, "InvalidAppWorkflow", api.WithInput("Hello from app0"))
+	_, err := client0.ScheduleNewWorkflow(wCtx, "InvalidAppWorkflow", api.WithInput("Hello from app0"))
 	require.Error(t, err)
 
 	i.actorNotFoundLogLine.EventuallyFoundAll(t)

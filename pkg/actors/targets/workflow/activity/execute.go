@@ -28,10 +28,11 @@ import (
 	wferrors "github.com/dapr/dapr/pkg/runtime/wfengine/errors"
 	"github.com/dapr/dapr/pkg/runtime/wfengine/todo"
 	"github.com/dapr/durabletask-go/api"
+	"github.com/dapr/durabletask-go/api/protos"
 	"github.com/dapr/durabletask-go/backend"
 )
 
-func (a *activity) executeActivity(ctx context.Context, name string, taskEvent *backend.HistoryEvent) error {
+func (a *activity) executeActivity(ctx context.Context, name string, taskEvent *protos.HistoryEvent) error {
 	activityName := ""
 	if ts := taskEvent.GetTaskScheduled(); ts != nil {
 		activityName = ts.GetName()
@@ -46,8 +47,8 @@ func (a *activity) executeActivity(ctx context.Context, name string, taskEvent *
 	workflowID := a.actorID[0:endIndex]
 
 	wi := &backend.ActivityWorkItem{
-		SequenceNumber: int64(taskEvent.GetEventId()),
-		InstanceID:     api.InstanceID(workflowID),
+		SequenceNumber: int64(taskEvent.GetEventID()),
+		InstanceID:     workflowID,
 		NewEvent:       taskEvent,
 		Properties:     make(map[string]any),
 	}

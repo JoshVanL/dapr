@@ -48,13 +48,13 @@ type appdown struct {
 	registry1 *task.TaskRegistry
 	registry2 *task.TaskRegistry
 
-	subOrchestratorStarted chan struct{}
-	subOrchestratorReady   chan struct{}
+	subWorkflowStarted chan struct{}
+	subWorkflowReady   chan struct{}
 }
 
 func (a *appdown) Setup(t *testing.T) []framework.Option {
-	a.subOrchestratorStarted = make(chan struct{})
-	a.subOrchestratorReady = make(chan struct{})
+	a.subWorkflowStarted = make(chan struct{})
+	a.subWorkflowReady = make(chan struct{})
 
 	a.place = placement.New(t)
 	a.sched = scheduler.New(t,
@@ -67,20 +67,20 @@ func (a *appdown) Setup(t *testing.T) []framework.Option {
 	a.registry2 = task.NewTaskRegistry()
 
 	// App2: Activity that will be called before the app goes down
-	a.registry2.AddOrchestratorN("ProcessData", func(ctx *task.OrchestrationContext) (any, error) {
+	a.registry2.AddWorkflowN("ProcessData", func(ctx *task.WorkflowContext) (any, error) {
 		var input string
 		if err := ctx.GetInput(&input); err != nil {
 			return nil, fmt.Errorf("failed to get input in app2: %w", err)
 		}
 
 		select {
-		case a.subOrchestratorStarted <- struct{}{}:
+		case a.subWorkflowStarted <- struct{}{}:
 		default:
 		}
 
 		// Block until allowed to proceed (which will never happen in this test)
 		// bc triggering this app to go down mid-activity execution and ensure the wf hangs
-		<-a.subOrchestratorReady
+		<-a.subWorkflowReady
 
 		return "Processed by app2: " + input, nil
 	})
@@ -100,17 +100,17 @@ func (a *appdown) Setup(t *testing.T) []framework.Option {
 		daprd.WithLogLevel("debug"),
 	)
 
-	// App1: Orchestrator, calls app2
-	a.registry1.AddOrchestratorN("AppDownWorkflow", func(ctx *task.OrchestrationContext) (any, error) {
+	// App1: Workflow, calls app2
+	a.registry1.AddWorkflowN("AppDownWorkflow", func(ctx *task.WorkflowContext) (any, error) {
 		var input string
 		if err := ctx.GetInput(&input); err != nil {
 			return nil, fmt.Errorf("failed to get input in orchestrator: %w", err)
 		}
 
 		var result string
-		err := ctx.CallSubOrchestrator("ProcessData",
-			task.WithSubOrchestratorInput(input),
-			task.WithSubOrchestratorAppID(a.daprd2.AppID())).
+		err := ctx.CallChildWorkflow("ProcessData",
+			task.WithChildWorkflowInput(input),
+			task.WithChildWorkflowAppID(a.daprd2.AppID())).
 			Await(&result)
 		if err != nil {
 			return fmt.Sprintf("Error occurred: %v", err), nil
@@ -146,14 +146,14 @@ func (a *appdown) Run(t *testing.T, ctx context.Context) {
 	err = client2.StartWorkItemListener(cctx, a.registry2)
 	require.NoError(t, err)
 
-	var id api.InstanceID
+	var id string
 	assert.EventuallyWithT(t, func(c *assert.CollectT) {
-		id, err = client1.ScheduleNewOrchestration(t.Context(), "AppDownWorkflow", api.WithInput("Hello from app1"))
+		id, err = client1.ScheduleNewWorkflow(t.Context(), "AppDownWorkflow", api.WithInput("Hello from app1"))
 		assert.NoError(c, err)
 
 		// Wait for sub-orchestrator to start
 		select {
-		case <-a.subOrchestratorStarted:
+		case <-a.subWorkflowStarted:
 		case <-time.After(5 * time.Second):
 			c.Errorf("Timeout waiting for sub-orchestrator to start")
 		}
@@ -168,7 +168,7 @@ func (a *appdown) Run(t *testing.T, ctx context.Context) {
 		waitCtx, waitCancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer waitCancel()
 
-		_, err = client1.WaitForOrchestrationCompletion(waitCtx, id, api.WithFetchPayloads(true))
+		_, err = client1.WaitForWorkflowCompletion(waitCtx, id, api.WithFetchPayloads(true))
 		assert.Error(c, err)
 		assert.EqualError(c, err, "context deadline exceeded")
 	}, 20*time.Second, 100*time.Millisecond)

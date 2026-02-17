@@ -82,8 +82,8 @@ func (l *localmix) Run(t *testing.T, ctx context.Context) {
 		return "Local processed: " + input, nil
 	})
 
-	// App0: Orchestrator - mixes local & cross-app calls
-	l.workflow.Registry().AddOrchestratorN("MixedWorkflow", func(ctx *task.OrchestrationContext) (any, error) {
+	// App0: Workflow - mixes local & cross-app calls
+	l.workflow.Registry().AddWorkflowN("MixedWorkflow", func(ctx *task.WorkflowContext) (any, error) {
 		var input string
 		if err := ctx.GetInput(&input); err != nil {
 			return nil, fmt.Errorf("failed to get input in orchestrator: %w", err)
@@ -134,13 +134,13 @@ func (l *localmix) Run(t *testing.T, ctx context.Context) {
 	client0 := l.workflow.BackendClient(t, ctx) // app0 (orchestrator)
 	l.workflow.BackendClientN(t, ctx, 1)        // app1 (activity)
 
-	id, err := client0.ScheduleNewOrchestration(ctx, "MixedWorkflow", api.WithInput("Hello from app0"))
+	id, err := client0.ScheduleNewWorkflow(ctx, "MixedWorkflow", api.WithInput("Hello from app0"))
 	require.NoError(t, err)
-	metadata, err := client0.WaitForOrchestrationCompletion(ctx, id, api.WithFetchPayloads(true))
+	metadata, err := client0.WaitForWorkflowCompletion(ctx, id, api.WithFetchPayloads(true))
 	require.NoError(t, err)
 
-	assert.True(t, api.OrchestrationMetadataIsComplete(metadata))
-	assert.Equal(t, api.RUNTIME_STATUS_COMPLETED, metadata.RuntimeStatus)
+	assert.True(t, api.WorkflowMetadataIsComplete(metadata))
+	assert.Equal(t, "WORKFLOW_STATUS_COMPLETED", metadata.RuntimeStatus.String())
 	expectedResult := `"Local processed: Local processed: Remote processed: Local processed: Hello from app0"`
 	assert.Equal(t, expectedResult, metadata.GetOutput().GetValue())
 }

@@ -49,7 +49,7 @@ func (e *terminatecompleted) Setup(t *testing.T) []framework.Option {
 func (e *terminatecompleted) Run(t *testing.T, ctx context.Context) {
 	e.workflow.WaitUntilRunning(t, ctx)
 
-	e.workflow.Registry().AddOrchestratorN("foo", func(ctx *task.OrchestrationContext) (any, error) {
+	e.workflow.Registry().AddWorkflowN("foo", func(ctx *task.WorkflowContext) (any, error) {
 		require.NoError(t, ctx.CallActivity("bar").Await(nil))
 		return nil, nil
 	})
@@ -58,11 +58,11 @@ func (e *terminatecompleted) Run(t *testing.T, ctx context.Context) {
 	})
 
 	cl := e.workflow.BackendClient(t, ctx)
-	id, err := cl.ScheduleNewOrchestration(ctx, "foo")
+	id, err := cl.ScheduleNewWorkflow(ctx, "foo")
 	require.NoError(t, err)
-	_, err = cl.WaitForOrchestrationCompletion(ctx, id)
+	_, err = cl.WaitForWorkflowCompletion(ctx, id)
 	require.NoError(t, err)
-	require.NoError(t, cl.TerminateOrchestration(ctx, id))
+	require.NoError(t, cl.TerminateWorkflow(ctx, id))
 
 	//nolint:staticcheck
 	_, err = e.workflow.Dapr().GRPCClient(t, ctx).TerminateWorkflowAlpha1(ctx, &rtv1.TerminateWorkflowRequest{

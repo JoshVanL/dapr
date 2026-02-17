@@ -74,7 +74,7 @@ func (r *rootonly) Run(t *testing.T, ctx context.Context) {
 	ids, err := client.ListInstanceIDs(ctx)
 	require.NoError(t, err)
 
-	assert.ElementsMatch(t, []string{"abc", "abc:0000", "hello", "hello:0000"}, ids.InstanceIds)
+	assert.ElementsMatch(t, []string{"abc", "abc:0000", "hello", "hello:0000"}, ids.InstanceIDs)
 
 	_, err = client.RerunWorkflowFromEvent(ctx, "abc:0000", 0)
 	require.Error(t, err)

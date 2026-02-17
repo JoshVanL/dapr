@@ -50,7 +50,7 @@ func (d *uniquestalledevent) Run(t *testing.T, ctx context.Context) {
 
 	runv1 := atomic.Bool{}
 	runv2 := atomic.Bool{}
-	d.workflow.Registry().AddVersionedOrchestratorN("workflow", "v1", true, func(ctx *task.OrchestrationContext) (any, error) {
+	d.workflow.Registry().AddVersionedWorkflowN("workflow", "v1", true, func(ctx *task.WorkflowContext) (any, error) {
 		if err := ctx.WaitForSingleEvent("Continue", -1).Await(nil); err != nil {
 			return nil, err
 		}
@@ -61,15 +61,15 @@ func (d *uniquestalledevent) Run(t *testing.T, ctx context.Context) {
 	clientCtx, cancelClient := context.WithCancel(ctx)
 	defer cancelClient()
 	client := d.workflow.BackendClient(t, clientCtx)
-	id, err := client.ScheduleNewOrchestration(ctx, "workflow")
+	id, err := client.ScheduleNewWorkflow(ctx, "workflow")
 	require.NoError(t, err)
 
-	wf.WaitForOrchestratorStartedEvent(t, ctx, client, id)
+	wf.WaitForWorkflowStartedEvent(t, ctx, client, id)
 
 	d.workflow.ResetRegistry(t)
 	cancelClient()
 
-	d.workflow.Registry().AddVersionedOrchestratorN("workflow", "v2", true, func(ctx *task.OrchestrationContext) (any, error) {
+	d.workflow.Registry().AddVersionedWorkflowN("workflow", "v2", true, func(ctx *task.WorkflowContext) (any, error) {
 		if err := ctx.WaitForSingleEvent("Continue", -1).Await(nil); err != nil {
 			return nil, err
 		}
@@ -84,7 +84,7 @@ func (d *uniquestalledevent) Run(t *testing.T, ctx context.Context) {
 		assert.NoError(c, client.RaiseEvent(ctx, id, "Continue"))
 	}, time.Second*20, time.Millisecond*10)
 
-	wf.WaitForRuntimeStatus(t, ctx, client, id, protos.OrchestrationStatus_ORCHESTRATION_STATUS_STALLED)
+	wf.WaitForRuntimeStatus(t, ctx, client, id, protos.WorkflowStatus_WORKFLOW_STATUS_STALLED)
 	lastEvent := wf.GetLastHistoryEventOfType[protos.HistoryEvent_ExecutionStalled](t, ctx, client, id)
 	require.NotNil(t, lastEvent)
 	require.Equal(t, protos.StalledReason_VERSION_NOT_AVAILABLE, lastEvent.GetExecutionStalled().GetReason())
@@ -94,7 +94,7 @@ func (d *uniquestalledevent) Run(t *testing.T, ctx context.Context) {
 	clientCtx, cancelClient = context.WithCancel(ctx)
 	defer cancelClient()
 	client = d.workflow.BackendClient(t, clientCtx)
-	wf.WaitForRuntimeStatus(t, ctx, client, id, protos.OrchestrationStatus_ORCHESTRATION_STATUS_STALLED)
+	wf.WaitForRuntimeStatus(t, ctx, client, id, protos.WorkflowStatus_WORKFLOW_STATUS_STALLED)
 
 	require.Equal(t, 1, wf.CountHistoryEventsOfType[protos.HistoryEvent_ExecutionStalled](t, ctx, client, id))
 }

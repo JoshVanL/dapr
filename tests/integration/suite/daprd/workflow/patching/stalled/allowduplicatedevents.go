@@ -38,21 +38,21 @@ type allowduplicatedevents struct {
 func (r *allowduplicatedevents) Setup(t *testing.T) []framework.Option {
 	r.fw = stalled.New(t,
 		stalled.WithInitialReplica("new"),
-		stalled.WithNamedWorkflowReplica("new", func(ctx *task.OrchestrationContext) (any, error) {
+		stalled.WithNamedWorkflowReplica("new", func(ctx *task.WorkflowContext) (any, error) {
 			ctx.IsPatched("patch3")
 			if err := ctx.WaitForSingleEvent("Continue", -1).Await(nil); err != nil {
 				return nil, err
 			}
 			return nil, nil
 		}),
-		stalled.WithNamedWorkflowReplica("old1", func(ctx *task.OrchestrationContext) (any, error) {
+		stalled.WithNamedWorkflowReplica("old1", func(ctx *task.WorkflowContext) (any, error) {
 			if err := ctx.WaitForSingleEvent("Continue", -1).Await(nil); err != nil {
 				return nil, err
 			}
 			ctx.IsPatched("patch1")
 			return nil, nil
 		}),
-		stalled.WithNamedWorkflowReplica("old2", func(ctx *task.OrchestrationContext) (any, error) {
+		stalled.WithNamedWorkflowReplica("old2", func(ctx *task.WorkflowContext) (any, error) {
 			if err := ctx.WaitForSingleEvent("Continue", -1).Await(nil); err != nil {
 				return nil, err
 			}
@@ -70,7 +70,7 @@ func (r *allowduplicatedevents) Setup(t *testing.T) []framework.Option {
 // different patches to make the descriptions different.
 func (r *allowduplicatedevents) Run(t *testing.T, ctx context.Context) {
 	id := r.fw.ScheduleWorkflow(t, ctx)
-	r.fw.WaitForNumberOfOrchestrationStartedEvents(t, ctx, id, 1)
+	r.fw.WaitForNumberOfWorkflowStartedEvents(t, ctx, id, 1)
 
 	r.fw.RestartAsReplica(t, ctx, "old1")
 

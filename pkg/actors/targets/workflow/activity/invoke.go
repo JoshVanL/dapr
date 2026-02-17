@@ -27,7 +27,7 @@ import (
 	internalsv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 	wferrors "github.com/dapr/dapr/pkg/runtime/wfengine/errors"
 	"github.com/dapr/dapr/pkg/runtime/wfengine/todo"
-	"github.com/dapr/durabletask-go/backend"
+	"github.com/dapr/durabletask-go/api/protos"
 )
 
 // Activities are scheduled by workflows and can execute for arbitrary lengths of time. Instead of executing
@@ -56,7 +56,7 @@ func (a *activity) handleInvoke(ctx context.Context, req *internalsv1pb.Internal
 
 	msg := imReq.Message()
 
-	var his backend.HistoryEvent
+	var his protos.HistoryEvent
 	if err = proto.Unmarshal(msg.GetData().GetValue(), &his); err != nil {
 		return nil, fmt.Errorf("failed to decode activity request: %w", err)
 	}
@@ -68,7 +68,7 @@ func (a *activity) handleInvoke(ctx context.Context, req *internalsv1pb.Internal
 func (a *activity) handleReminder(ctx context.Context, reminder *actorapi.Reminder) error {
 	log.Debugf("Activity actor '%s': invoking reminder '%s'", a.actorID, reminder.Name)
 
-	var state backend.HistoryEvent
+	var state protos.HistoryEvent
 	if err := reminder.Data.UnmarshalTo(&state); err != nil {
 		return fmt.Errorf("failed to decode activity reminder: %w", err)
 	}

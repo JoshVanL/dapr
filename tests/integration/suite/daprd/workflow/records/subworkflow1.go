@@ -45,11 +45,11 @@ func (a *subworkflow1) Setup(t *testing.T) []framework.Option {
 func (a *subworkflow1) Run(t *testing.T, ctx context.Context) {
 	a.workflow.WaitUntilRunning(t, ctx)
 
-	a.workflow.Registry().AddOrchestratorN("records", func(ctx *task.OrchestrationContext) (any, error) {
-		require.NoError(t, ctx.CallSubOrchestrator("records2").Await(nil))
+	a.workflow.Registry().AddWorkflowN("records", func(ctx *task.WorkflowContext) (any, error) {
+		require.NoError(t, ctx.CallChildWorkflow("records2").Await(nil))
 		return nil, nil
 	})
-	a.workflow.Registry().AddOrchestratorN("records2", func(ctx *task.OrchestrationContext) (any, error) {
+	a.workflow.Registry().AddWorkflowN("records2", func(ctx *task.WorkflowContext) (any, error) {
 		return nil, nil
 	})
 
@@ -62,25 +62,25 @@ func (a *subworkflow1) Run(t *testing.T, ctx context.Context) {
 
 	client := a.workflow.BackendClient(t, ctx)
 
-	id, err := client.ScheduleNewOrchestration(ctx, "records")
+	id, err := client.ScheduleNewWorkflow(ctx, "records")
 	require.NoError(t, err)
 
-	_, err = client.WaitForOrchestrationCompletion(ctx, id)
+	_, err = client.WaitForWorkflowCompletion(ctx, id)
 	require.NoError(t, err)
 
 	// 1. ExecutionStarted – records orchestration begins
-	// 2. OrchestratorStarted
+	// 2. WorkflowStarted
 	// 3. ExecutionStarted
 	// 4. TaskScheduled
-	// 5. OrchestratorCompleted
+	// 5. WorkflowCompleted
 	// 6. ExecutionStarted – records2 orchestration begins
-	// 7. OrchestratorStarted
-	// 8. OrchestratorCompleted
+	// 7. WorkflowStarted
+	// 8. WorkflowCompleted
 	// 9. ExecutionCompleted
 	// 10. TaskCompleted – result of records2
-	// 11. OrchestratorStarted
+	// 11. WorkflowStarted
 	// 12. ExecutionCompleted
-	// 13. OrchestratorCompleted
+	// 13. WorkflowCompleted
 	require.NoError(t, db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+tableName).Scan(&count))
 	assert.Equal(t, 13, count)
 }

@@ -26,7 +26,6 @@ import (
 	"github.com/dapr/dapr/tests/integration/framework/iowriter/logger"
 	"github.com/dapr/dapr/tests/integration/framework/process/workflow"
 	"github.com/dapr/dapr/tests/integration/suite"
-	"github.com/dapr/durabletask-go/api"
 	"github.com/dapr/durabletask-go/client"
 	"github.com/dapr/durabletask-go/task"
 )
@@ -56,7 +55,7 @@ func (c *crossactivity) Setup(t *testing.T) []framework.Option {
 func (c *crossactivity) Run(t *testing.T, ctx context.Context) {
 	c.workflow.WaitUntilRunning(t, ctx)
 
-	c.workflow.Registry().AddOrchestratorN("foo", func(ctx *task.OrchestrationContext) (any, error) {
+	c.workflow.Registry().AddWorkflowN("foo", func(ctx *task.WorkflowContext) (any, error) {
 		if err := ctx.CallActivity("bar").Await(nil); err != nil {
 			return nil, err
 		}
@@ -83,7 +82,7 @@ func (c *crossactivity) Run(t *testing.T, ctx context.Context) {
 		assert.Len(col, c.workflow.Dapr().GetMetadata(t, ctx).ActorRuntime.ActiveActors, 3)
 	}, time.Second*10, time.Millisecond*10)
 
-	id, err := cl.ScheduleNewOrchestration(ctx, "foo")
+	id, err := cl.ScheduleNewWorkflow(ctx, "foo")
 	require.NoError(t, err)
 
 	assert.EventuallyWithT(t, func(cc *assert.CollectT) {
@@ -104,9 +103,9 @@ func (c *crossactivity) Run(t *testing.T, ctx context.Context) {
 
 	waitCompletionCtx, waitCompletionCancel := context.WithTimeout(ctx, time.Second*10)
 	t.Cleanup(waitCompletionCancel)
-	meta, err := cl.WaitForOrchestrationCompletion(waitCompletionCtx, id)
+	meta, err := cl.WaitForWorkflowCompletion(waitCompletionCtx, id)
 	require.NoError(t, err)
-	assert.Equal(t, api.RUNTIME_STATUS_COMPLETED, meta.GetRuntimeStatus())
+	assert.Equal(t, "WORKFLOW_STATUS_COMPLETED", meta.GetRuntimeStatus().String())
 
 	assert.Equal(t, int64(2), c.calledA.Load())
 	assert.Equal(t, int64(1), c.calledB.Load())

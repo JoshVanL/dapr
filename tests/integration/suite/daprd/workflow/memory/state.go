@@ -26,7 +26,6 @@ import (
 	"github.com/dapr/dapr/tests/integration/framework"
 	"github.com/dapr/dapr/tests/integration/framework/process/workflow"
 	"github.com/dapr/dapr/tests/integration/suite"
-	"github.com/dapr/durabletask-go/api"
 	"github.com/dapr/durabletask-go/task"
 )
 
@@ -44,7 +43,7 @@ func (s *state) Setup(t *testing.T) []framework.Option {
 	input := bytes.Repeat([]byte("0"), 1024*1024)
 
 	s.workflow = workflow.New(t,
-		workflow.WithAddOrchestrator(t, "foo", func(ctx *task.OrchestrationContext) (any, error) {
+		workflow.WithAddWorkflow(t, "foo", func(ctx *task.WorkflowContext) (any, error) {
 			require.NoError(t, ctx.CallActivity("bar", task.WithActivityInput(input)).Await(new([]byte)))
 			return "", nil
 		}),
@@ -69,7 +68,7 @@ func (s *state) Run(t *testing.T, ctx context.Context) {
 			WorkflowName:      "foo",
 		})
 		require.NoError(t, err)
-		_, err = client.WaitForOrchestrationCompletion(ctx, api.InstanceID(resp.GetInstanceId()))
+		_, err = client.WaitForWorkflowCompletion(ctx, resp.GetInstanceId())
 		require.NoError(t, err)
 
 		if i == 0 {

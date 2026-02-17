@@ -27,7 +27,6 @@ import (
 	wferrors "github.com/dapr/dapr/pkg/runtime/wfengine/errors"
 	wfenginestate "github.com/dapr/dapr/pkg/runtime/wfengine/state"
 	"github.com/dapr/dapr/pkg/runtime/wfengine/todo"
-	"github.com/dapr/durabletask-go/api"
 	"github.com/dapr/durabletask-go/api/protos"
 	"github.com/dapr/durabletask-go/backend"
 	"github.com/dapr/durabletask-go/backend/runtimestate"
@@ -45,7 +44,7 @@ func (o *orchestrator) runWorkflow(ctx context.Context, reminder *actorapi.Remin
 	}
 
 	if strings.HasPrefix(reminder.Name, "timer-") && !runtimestate.IsCompleted(o.rstate) {
-		var durableTimer backend.DurableTimer
+		var durableTimer protos.DurableTimer
 		if err = reminder.Data.UnmarshalTo(&durableTimer); err != nil {
 			// Likely the result of an incompatible durable task timer format change.
 			// This is non-recoverable.
@@ -71,7 +70,7 @@ func (o *orchestrator) runWorkflow(ctx context.Context, reminder *actorapi.Remin
 		return todo.RunCompletedTrue, nil
 	}
 
-	var esHistoryEvent *backend.HistoryEvent
+	var esHistoryEvent *protos.HistoryEvent
 	for _, e := range state.Inbox {
 		if es := e.GetExecutionStarted(); es != nil {
 			esHistoryEvent = e
@@ -86,8 +85,8 @@ func (o *orchestrator) runWorkflow(ctx context.Context, reminder *actorapi.Remin
 	}
 
 	rs := o.rstate
-	wi := &backend.OrchestrationWorkItem{
-		InstanceID: api.InstanceID(rs.GetInstanceId()),
+	wi := &backend.WorkflowWorkItem{
+		InstanceID: rs.GetInstanceID(),
 		NewEvents:  state.Inbox,
 		RetryCount: -1, // TODO
 		State:      rs,
@@ -171,14 +170,14 @@ func (o *orchestrator) runWorkflow(ctx context.Context, reminder *actorapi.Remin
 	}
 
 	// Process the outbound orchestrator events
-	var addWorkflows []*backend.OrchestrationRuntimeStateMessage
-	var createWorkflows []*backend.OrchestrationRuntimeStateMessage
+	var addWorkflows []*protos.WorkflowRuntimeStateMessage
+	var createWorkflows []*protos.WorkflowRuntimeStateMessage
 	for _, msg := range rs.GetPendingMessages() {
 		switch {
 		case msg.GetHistoryEvent().GetExecutionStarted() != nil:
 			createWorkflows = append(createWorkflows, msg)
 
-		case msg.GetHistoryEvent().GetSubOrchestrationInstanceCompleted() != nil, msg.GetHistoryEvent().GetSubOrchestrationInstanceFailed() != nil:
+		case msg.GetHistoryEvent().GetChildWorkflowInstanceCompleted() != nil, msg.GetHistoryEvent().GetChildWorkflowInstanceFailed() != nil:
 			addWorkflows = append(addWorkflows, msg)
 
 		default:
@@ -208,7 +207,7 @@ func (o *orchestrator) runWorkflow(ctx context.Context, reminder *actorapi.Remin
 		// which will skip recording metrics for this execution.
 		executionStatus = ""
 		if runtimestate.IsCompleted(rs) {
-			if rstatus == api.RUNTIME_STATUS_COMPLETED {
+			if rstatus == protos.WorkflowStatus_WORKFLOW_STATUS_COMPLETED {
 				executionStatus = diag.StatusSuccess
 			} else {
 				// Setting executionStatus to failed if workflow has failed/terminated/cancelled
@@ -231,14 +230,14 @@ func (o *orchestrator) runWorkflow(ctx context.Context, reminder *actorapi.Remin
 
 func (*orchestrator) calculateWorkflowExecutionLatency(state *wfenginestate.State) (wExecutionElapsedTime float64) {
 	for _, e := range state.History {
-		if os := e.GetOrchestratorStarted(); os != nil {
+		if os := e.GetWorkflowStarted(); os != nil {
 			return diag.ElapsedSince(e.GetTimestamp().AsTime())
 		}
 	}
 	return 0
 }
 
-func (*orchestrator) recordWorkflowSchedulingLatency(ctx context.Context, esHistoryEvent *backend.HistoryEvent, workflowName string) {
+func (*orchestrator) recordWorkflowSchedulingLatency(ctx context.Context, esHistoryEvent *protos.HistoryEvent, workflowName string) {
 	if esHistoryEvent == nil {
 		return
 	}
@@ -262,7 +261,7 @@ func (*orchestrator) recordWorkflowSchedulingLatency(ctx context.Context, esHist
 	}
 }
 
-func (o *orchestrator) handleRetention(ctx context.Context, status protos.OrchestrationStatus) error {
+func (o *orchestrator) handleRetention(ctx context.Context, status protos.WorkflowStatus) error {
 	if o.retentionPolicy == nil {
 		return nil
 	}
@@ -271,15 +270,15 @@ func (o *orchestrator) handleRetention(ctx context.Context, status protos.Orches
 	var name string
 	switch {
 	case o.retentionPolicy.Completed != nil &&
-		status == protos.OrchestrationStatus_ORCHESTRATION_STATUS_COMPLETED:
+		status == protos.WorkflowStatus_WORKFLOW_STATUS_COMPLETED:
 		dueTime = o.retentionPolicy.Completed
 		name = "completed"
 	case o.retentionPolicy.Terminated != nil &&
-		status == protos.OrchestrationStatus_ORCHESTRATION_STATUS_TERMINATED:
+		status == protos.WorkflowStatus_WORKFLOW_STATUS_TERMINATED:
 		dueTime = o.retentionPolicy.Terminated
 		name = "terminated"
 	case o.retentionPolicy.Failed != nil &&
-		status == protos.OrchestrationStatus_ORCHESTRATION_STATUS_FAILED:
+		status == protos.WorkflowStatus_WORKFLOW_STATUS_FAILED:
 		dueTime = o.retentionPolicy.Failed
 		name = "failed"
 	case o.retentionPolicy.AnyTerminal != nil:

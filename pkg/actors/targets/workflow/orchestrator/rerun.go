@@ -31,11 +31,11 @@ import (
 	"github.com/dapr/dapr/pkg/runtime/wfengine/todo"
 	"github.com/dapr/durabletask-go/api"
 	"github.com/dapr/durabletask-go/api/protos"
-	"github.com/dapr/durabletask-go/backend"
+	"github.com/dapr/kit/ptr"
 )
 
 func (o *orchestrator) forkWorkflowHistory(ctx context.Context, request []byte) error {
-	var rerunReq backend.RerunWorkflowFromEventRequest
+	var rerunReq protos.RerunWorkflowFromEventRequest
 	if err := proto.Unmarshal(request, &rerunReq); err != nil {
 		return fmt.Errorf("failed to unmarshal rerun workflow request: %w", err)
 	}
@@ -50,7 +50,7 @@ func (o *orchestrator) forkWorkflowHistory(ctx context.Context, request []byte) 
 		return status.Errorf(codes.NotFound, "workflow instance does not exist with ID '%s'", o.actorID)
 	}
 
-	if !api.OrchestrationMetadataIsComplete(ometa) {
+	if !api.WorkflowMetadataIsComplete(ometa) {
 		return status.Errorf(codes.InvalidArgument, "'%s' is not in a terminal state", o.actorID)
 	}
 
@@ -106,7 +106,7 @@ func (o *orchestrator) rerunWorkflowInstanceRequest(ctx context.Context, request
 		return status.Errorf(codes.AlreadyExists, "workflow '%s' has already been created", o.actorID)
 	}
 
-	var workflowState backend.WorkflowState
+	var workflowState protos.WorkflowStateInbox
 	if err = proto.Unmarshal(request, &workflowState); err != nil {
 		return fmt.Errorf("failed to unmarshal workflow history: %w", err)
 	}
@@ -129,17 +129,17 @@ func (o *orchestrator) rerunWorkflowInstanceRequest(ctx context.Context, request
 
 		case *protos.HistoryEvent_TimerCreated:
 			timers = append(timers, &protos.HistoryEvent{
-				EventId:   -1,
+				EventID:   ptr.Of(int32(-1)),
 				Timestamp: timestamppb.New(time.Now()),
 				EventType: &protos.HistoryEvent_TimerFired{
 					TimerFired: &protos.TimerFiredEvent{
-						TimerId: his.GetEventId(),
+						TimerID: his.GetEventID(),
 						FireAt:  his.GetTimerCreated().GetFireAt(),
 					},
 				},
 			})
 
-		case *protos.HistoryEvent_SubOrchestrationInstanceCreated:
+		case *protos.HistoryEvent_ChildWorkflowInstanceCreated:
 			childWFs = append(childWFs, his)
 
 		default:

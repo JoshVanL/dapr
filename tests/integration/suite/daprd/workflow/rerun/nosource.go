@@ -24,7 +24,6 @@ import (
 	"github.com/dapr/dapr/tests/integration/framework"
 	"github.com/dapr/dapr/tests/integration/framework/process/workflow"
 	"github.com/dapr/dapr/tests/integration/suite"
-	"github.com/dapr/durabletask-go/api"
 )
 
 func init() {
@@ -46,7 +45,7 @@ func (n *nosource) Run(t *testing.T, ctx context.Context) {
 	n.workflow.WaitUntilRunning(t, ctx)
 
 	client := n.workflow.BackendClient(t, ctx)
-	_, err := client.RerunWorkflowFromEvent(ctx, api.InstanceID("abc"), 0)
+	_, err := client.RerunWorkflowFromEvent(ctx, "abc", 0)
 
 	assert.Equal(t, status.Error(codes.NotFound, "workflow instance does not exist with ID 'abc'"), err)
 }

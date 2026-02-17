@@ -26,10 +26,10 @@ import (
 	internalsv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 	wfenginestate "github.com/dapr/dapr/pkg/runtime/wfengine/state"
 	"github.com/dapr/dapr/pkg/runtime/wfengine/todo"
-	"github.com/dapr/durabletask-go/backend"
+	"github.com/dapr/durabletask-go/api/protos"
 )
 
-func (o *orchestrator) callActivities(ctx context.Context, es []*backend.HistoryEvent, state *wfenginestate.State) error {
+func (o *orchestrator) callActivities(ctx context.Context, es []*protos.HistoryEvent, state *wfenginestate.State) error {
 	var dueTime time.Time
 	if len(state.History) > 0 {
 		dueTime = state.History[0].GetTimestamp().AsTime()
@@ -41,7 +41,7 @@ func (o *orchestrator) callActivities(ctx context.Context, es []*backend.History
 		err := o.callActivity(ctx, e, dueTime, state.Generation)
 		if err != nil {
 			if errors.Is(err, todo.ErrDuplicateInvocation) {
-				log.Warnf("Workflow actor '%s': activity invocation '%s::%d' was flagged as a duplicate and will be skipped", o.actorID, e.GetTaskScheduled().GetName(), e.GetEventId())
+				log.Warnf("Workflow actor '%s': activity invocation '%s::%d' was flagged as a duplicate and will be skipped", o.actorID, e.GetTaskScheduled().GetName(), e.GetEventID())
 				continue
 			}
 
@@ -52,7 +52,7 @@ func (o *orchestrator) callActivities(ctx context.Context, es []*backend.History
 	return nil
 }
 
-func (o *orchestrator) callActivity(ctx context.Context, e *backend.HistoryEvent, dueTime time.Time, generation uint64) error {
+func (o *orchestrator) callActivity(ctx context.Context, e *protos.HistoryEvent, dueTime time.Time, generation uint64) error {
 	ts := e.GetTaskScheduled()
 	if ts == nil {
 		log.Warnf("Workflow actor '%s': unable to process task '%v'", o.actorID, e)
@@ -70,7 +70,7 @@ func (o *orchestrator) callActivity(ctx context.Context, e *backend.HistoryEvent
 		activityActorType = o.actorTypeBuilder.Activity(router.GetTargetAppID())
 	}
 
-	targetActorID := buildActivityActorID(o.actorID, e.GetEventId(), generation)
+	targetActorID := buildActivityActorID(o.actorID, e.GetEventID(), generation)
 
 	o.activityResultAwaited.Store(true)
 

@@ -54,8 +54,8 @@ func (be *ClusterTasksBackend) CompleteActivityTask(ctx context.Context, resp *p
 	}
 
 	key := backend.GetActivityExecutionKey(
-		resp.GetInstanceId(),
-		resp.GetTaskId(),
+		resp.GetInstanceID(),
+		resp.GetTaskID(),
 	)
 
 	data, err := proto.Marshal(resp)
@@ -73,7 +73,7 @@ func (be *ClusterTasksBackend) CompleteActivityTask(ctx context.Context, resp *p
 	return err
 }
 
-func (be *ClusterTasksBackend) CancelActivityTask(ctx context.Context, id api.InstanceID, taskID int32) error {
+func (be *ClusterTasksBackend) CancelActivityTask(ctx context.Context, id string, taskID int32) error {
 	router, err := be.actors.Router(ctx)
 	if err != nil {
 		return err
@@ -101,8 +101,8 @@ func (be *ClusterTasksBackend) WaitForActivityCompletion(req *protos.ActivityReq
 		}
 
 		key := backend.GetActivityExecutionKey(
-			req.GetOrchestrationInstance().GetInstanceId(),
-			req.GetTaskId(),
+			req.GetWorkflowInstance().GetInstanceID(),
+			req.GetTaskID(),
 		)
 		sreq := internalsv1pb.
 			NewInternalInvokeRequest(executor.MethodWatchComplete).
@@ -130,7 +130,7 @@ func (be *ClusterTasksBackend) WaitForActivityCompletion(req *protos.ActivityReq
 	}
 }
 
-func (be *ClusterTasksBackend) CompleteOrchestratorTask(ctx context.Context, resp *protos.OrchestratorResponse) error {
+func (be *ClusterTasksBackend) CompleteWorkflowTask(ctx context.Context, resp *protos.WorkflowResponse) error {
 	router, err := be.actors.Router(ctx)
 	if err != nil {
 		return err
@@ -143,7 +143,7 @@ func (be *ClusterTasksBackend) CompleteOrchestratorTask(ctx context.Context, res
 
 	req := internalsv1pb.
 		NewInternalInvokeRequest(executor.MethodComplete).
-		WithActor(be.executorActorType, resp.GetInstanceId()).
+		WithActor(be.executorActorType, resp.GetInstanceID()).
 		WithData(data).
 		WithContentType(invokev1.ProtobufContentType)
 
@@ -151,7 +151,7 @@ func (be *ClusterTasksBackend) CompleteOrchestratorTask(ctx context.Context, res
 	return err
 }
 
-func (be *ClusterTasksBackend) CancelOrchestratorTask(ctx context.Context, id api.InstanceID) error {
+func (be *ClusterTasksBackend) CancelWorkflowTask(ctx context.Context, id string) error {
 	router, err := be.actors.Router(ctx)
 	if err != nil {
 		return err
@@ -166,8 +166,8 @@ func (be *ClusterTasksBackend) CancelOrchestratorTask(ctx context.Context, id ap
 	return err
 }
 
-func (be *ClusterTasksBackend) WaitForOrchestratorCompletion(req *protos.OrchestratorRequest) func(context.Context) (*protos.OrchestratorResponse, error) {
-	return func(ctx context.Context) (*protos.OrchestratorResponse, error) {
+func (be *ClusterTasksBackend) WaitForWorkflowCompletion(req *protos.WorkflowRequest) func(context.Context) (*protos.WorkflowResponse, error) {
+	return func(ctx context.Context) (*protos.WorkflowResponse, error) {
 		router, err := be.actors.Router(ctx)
 		if err != nil {
 			return nil, err
@@ -175,10 +175,10 @@ func (be *ClusterTasksBackend) WaitForOrchestratorCompletion(req *protos.Orchest
 
 		sreq := internalsv1pb.
 			NewInternalInvokeRequest(executor.MethodWatchComplete).
-			WithActor(be.executorActorType, req.GetInstanceId()).
+			WithActor(be.executorActorType, req.GetInstanceID()).
 			WithContentType(invokev1.ProtobufContentType)
 
-		var resp protos.OrchestratorResponse
+		var resp protos.WorkflowResponse
 		err = router.CallStream(ctx, sreq, func(res *internalsv1pb.InternalInvokeResponse) (bool, error) {
 			if res == nil {
 				return false, errors.New("received nil response from activity completion")
