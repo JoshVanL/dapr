@@ -18,12 +18,12 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	subapi "github.com/dapr/dapr/pkg/apis/subscriptions/v2alpha1"
 	"github.com/dapr/dapr/pkg/operator/api/authz"
+	subscriptionclient "github.com/dapr/dapr/pkg/operator/api/loops/client/subscription"
 	operatorv1pb "github.com/dapr/dapr/pkg/proto/operator/v1"
 )
 
@@ -32,17 +32,12 @@ type SubscriptionUpdateEvent struct {
 	EventType    operatorv1pb.ResourceEventType
 }
 
+// OnSubscriptionUpdated broadcasts subscription updates to all connected clients.
 func (a *apiServer) OnSubscriptionUpdated(ctx context.Context, eventType operatorv1pb.ResourceEventType, subscription *subapi.Subscription) {
 	a.subLock.Lock()
 	defer a.subLock.Unlock()
-	for _, connUpdateChan := range a.allSubscriptionUpdateChan {
-		select {
-		case connUpdateChan <- &SubscriptionUpdateEvent{
-			Subscription: subscription,
-			EventType:    eventType,
-		}:
-		case <-ctx.Done():
-		}
+	for _, client := range a.subClients {
+		subscriptionclient.Enqueue(client, subscription, eventType)
 	}
 }
 
@@ -84,65 +79,49 @@ func (a *apiServer) ListSubscriptionsV2(ctx context.Context, in *operatorv1pb.Li
 	return resp, nil
 }
 
+// SubscriptionUpdate handles subscription update streaming for a connected client.
+// Each client connection gets its own client that receives subscription
+// updates and sends them over the gRPC stream.
 func (a *apiServer) SubscriptionUpdate(in *operatorv1pb.SubscriptionUpdateRequest, srv operatorv1pb.Operator_SubscriptionUpdateServer) error { //nolint:nosnakecase
 	if _, err := authz.Request(srv.Context(), in.GetNamespace()); err != nil {
 		return err
 	}
 
 	log.Info("sidecar connected for subscription updates")
-	keyObj, err := uuid.NewRandom()
-	if err != nil {
-		return err
-	}
-	key := keyObj.String()
 
+	ctx := srv.Context()
+	key := a.idx.Add(1)
+
+	// Create a client for this connection
+	client := subscriptionclient.New(ctx, subscriptionclient.Options{
+		Stream:    srv,
+		Namespace: in.GetNamespace(),
+		PodName:   in.GetPodName(),
+	})
+
+	// Register the client
 	a.subLock.Lock()
 	if a.closed.Load() {
 		a.subLock.Unlock()
+		client.CacheLoop()
 		return nil
 	}
-	updateChan := make(chan *SubscriptionUpdateEvent)
-	a.allSubscriptionUpdateChan[key] = updateChan
+	a.subClients[key] = client
 	a.subLock.Unlock()
 
 	defer func() {
 		a.subLock.Lock()
 		defer a.subLock.Unlock()
-		delete(a.allSubscriptionUpdateChan, key)
+		delete(a.subClients, key)
 	}()
 
-	updateSubscriptionFunc := func(ctx context.Context, t operatorv1pb.ResourceEventType, sub *subapi.Subscription) {
-		if sub.Namespace != in.GetNamespace() {
-			return
-		}
-
-		b, err := json.Marshal(&sub)
-		if err != nil {
-			log.Warnf("error serializing subscription %s for pod %s/%s: %s", sub.GetName(), in.GetNamespace(), in.GetPodName(), err)
-			return
-		}
-
-		err = srv.Send(&operatorv1pb.SubscriptionUpdateEvent{
-			Subscription: b,
-			Type:         t,
-		})
-		if err != nil {
-			log.Warnf("error updating sidecar with subscroption %s to pod %s/%s: %s", sub.GetName(), in.GetNamespace(), in.GetPodName(), err)
-			return
-		}
-
-		log.Debugf("updated sidecar with subscription %s %s to pod %s/%s", t.String(), sub.GetName(), in.GetNamespace(), in.GetPodName())
+	// Run the client - this will block until context is done
+	if err := client.Run(ctx); err != nil {
+		log.Warnf("subscription client loop ended with error: %s", err)
 	}
 
-	for {
-		select {
-		case <-srv.Context().Done():
-			return nil
-		case c, ok := <-updateChan:
-			if !ok {
-				return nil
-			}
-			updateSubscriptionFunc(srv.Context(), c.EventType, c.Subscription)
-		}
-	}
+	// Cache the client loop for reuse
+	client.CacheLoop()
+
+	return nil
 }

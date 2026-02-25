@@ -596,10 +596,10 @@ func TestHTTPEndpointUpdate(t *testing.T) {
 	client := fake.NewClientBuilder().
 		WithScheme(s).Build()
 
-	mockSidecar := &mockHTTPEndpointUpdateServer{ctx: pki.ClientGRPCCtx(t)}
-	api := NewAPIServer(Options{Client: client}).(*apiServer)
-
 	t.Run("expect error if requesting for different namespace", func(t *testing.T) {
+		mockSidecar := &mockHTTPEndpointUpdateServer{ctx: pki.ClientGRPCCtx(t)}
+		api := NewAPIServer(Options{Client: client}).(*apiServer)
+
 		// Start sidecar update loop
 		err := api.HTTPEndpointUpdate(&operatorv1pb.HTTPEndpointUpdateRequest{
 			Namespace: "ns2",
@@ -614,24 +614,29 @@ func TestHTTPEndpointUpdate(t *testing.T) {
 	})
 
 	t.Run("skip sidecar update if namespace doesn't match", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(pki.ClientGRPCCtx(t))
+		mockSidecar := &mockHTTPEndpointUpdateServer{ctx: ctx}
+		api := NewAPIServer(Options{Client: client}).(*apiServer)
+
 		go func() {
+			// Wait for client loop to be registered
 			assert.Eventually(t, func() bool {
 				api.endpointLock.Lock()
 				defer api.endpointLock.Unlock()
-				return len(api.allEndpointsUpdateChan) == 1
+				return len(api.endpointClients) == 1
 			}, time.Second, 10*time.Millisecond)
 
-			api.endpointLock.Lock()
-			defer api.endpointLock.Unlock()
-			for key := range api.allEndpointsUpdateChan {
-				api.allEndpointsUpdateChan[key] <- &httpendpointapi.HTTPEndpoint{
-					ObjectMeta: metav1.ObjectMeta{
-						Namespace: "ns2",
-					},
-					Spec: httpendpointapi.HTTPEndpointSpec{},
-				}
-				close(api.allEndpointsUpdateChan[key])
-			}
+			// Send an event with different namespace
+			api.OnHTTPEndpointUpdated(ctx, &httpendpointapi.HTTPEndpoint{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "ns2",
+				},
+				Spec: httpendpointapi.HTTPEndpointSpec{},
+			})
+
+			// Give time for processing then cancel
+			time.Sleep(50 * time.Millisecond)
+			cancel()
 		}()
 
 		// Start sidecar update loop
@@ -643,24 +648,29 @@ func TestHTTPEndpointUpdate(t *testing.T) {
 	})
 
 	t.Run("sidecar is updated when endpoint namespace is a match", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(pki.ClientGRPCCtx(t))
+		mockSidecar := &mockHTTPEndpointUpdateServer{ctx: ctx}
+		api := NewAPIServer(Options{Client: client}).(*apiServer)
+
 		go func() {
+			// Wait for client loop to be registered
 			assert.Eventually(t, func() bool {
 				api.endpointLock.Lock()
 				defer api.endpointLock.Unlock()
-				return len(api.allEndpointsUpdateChan) == 1
+				return len(api.endpointClients) == 1
 			}, time.Second, 10*time.Millisecond)
 
-			api.endpointLock.Lock()
-			defer api.endpointLock.Unlock()
-			for key := range api.allEndpointsUpdateChan {
-				api.allEndpointsUpdateChan[key] <- &httpendpointapi.HTTPEndpoint{
-					ObjectMeta: metav1.ObjectMeta{
-						Namespace: "ns1",
-					},
-					Spec: httpendpointapi.HTTPEndpointSpec{},
-				}
-				close(api.allEndpointsUpdateChan[key])
-			}
+			// Send an event with matching namespace
+			api.OnHTTPEndpointUpdated(ctx, &httpendpointapi.HTTPEndpoint{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "ns1",
+				},
+				Spec: httpendpointapi.HTTPEndpointSpec{},
+			})
+
+			// Give time for processing then cancel
+			time.Sleep(50 * time.Millisecond)
+			cancel()
 		}()
 
 		// Start sidecar update loop

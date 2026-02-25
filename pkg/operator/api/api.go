@@ -30,6 +30,8 @@ import (
 	httpendpointsapi "github.com/dapr/dapr/pkg/apis/httpEndpoint/v1alpha1"
 	subapi "github.com/dapr/dapr/pkg/apis/subscriptions/v2alpha1"
 	"github.com/dapr/dapr/pkg/operator/api/informer"
+	httpendpointclient "github.com/dapr/dapr/pkg/operator/api/loops/client/httpendpoint"
+	subscriptionclient "github.com/dapr/dapr/pkg/operator/api/loops/client/subscription"
 	operatorv1pb "github.com/dapr/dapr/pkg/proto/operator/v1"
 	"github.com/dapr/dapr/pkg/security"
 	"github.com/dapr/kit/concurrency"
@@ -70,13 +72,16 @@ type apiServer struct {
 
 	compInformer informer.Interface[componentsapi.Component]
 
-	endpointLock              sync.Mutex
-	allEndpointsUpdateChan    map[string]chan *httpendpointsapi.HTTPEndpoint
-	allSubscriptionUpdateChan map[string]chan *SubscriptionUpdateEvent
-	subLock                   sync.Mutex
-	readyCh                   chan struct{}
-	running                   atomic.Bool
-	closed                    atomic.Bool
+	// Client instances for each resource type, keyed by connection ID.
+	endpointLock    sync.Mutex
+	endpointClients map[uint64]*httpendpointclient.Client
+	subLock         sync.Mutex
+	subClients      map[uint64]*subscriptionclient.Client
+	idx             atomic.Uint64
+
+	readyCh chan struct{}
+	running atomic.Bool
+	closed  atomic.Bool
 }
 
 // NewAPIServer returns a new API server.
@@ -86,12 +91,12 @@ func NewAPIServer(opts Options) Server {
 		compInformer: informer.New[componentsapi.Component](informer.Options{
 			Cache: opts.Cache,
 		}),
-		sec:                       opts.Security,
-		port:                      strconv.Itoa(opts.Port),
-		listenAddress:             opts.ListenAddress,
-		allEndpointsUpdateChan:    make(map[string]chan *httpendpointsapi.HTTPEndpoint),
-		allSubscriptionUpdateChan: make(map[string]chan *SubscriptionUpdateEvent),
-		readyCh:                   make(chan struct{}),
+		sec:             opts.Security,
+		port:            strconv.Itoa(opts.Port),
+		listenAddress:   opts.ListenAddress,
+		endpointClients: make(map[uint64]*httpendpointclient.Client),
+		subClients:      make(map[uint64]*subscriptionclient.Client),
+		readyCh:         make(chan struct{}),
 	}
 }
 
@@ -129,18 +134,27 @@ func (a *apiServer) Run(ctx context.Context) error {
 			// Block until context is done
 			<-ctx.Done()
 			a.closed.Store(true)
+
+			// Close all client loops to unblock their Run methods.
+			// This must happen before GracefulStop() to avoid deadlock,
+			// since GracefulStop waits for active RPCs to complete.
+
+			// Close and clear subscription clients
 			a.subLock.Lock()
-			for key, ch := range a.allSubscriptionUpdateChan {
-				close(ch)
-				delete(a.allSubscriptionUpdateChan, key)
+			for key, client := range a.subClients {
+				client.Close()
+				delete(a.subClients, key)
 			}
 			a.subLock.Unlock()
+
+			// Close and clear HTTP endpoint clients
 			a.endpointLock.Lock()
-			for key, ch := range a.allEndpointsUpdateChan {
-				close(ch)
-				delete(a.allEndpointsUpdateChan, key)
+			for key, client := range a.endpointClients {
+				client.Close()
+				delete(a.endpointClients, key)
 			}
 			a.endpointLock.Unlock()
+
 			s.GracefulStop()
 			return nil
 		},
