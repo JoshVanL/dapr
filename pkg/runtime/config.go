@@ -43,6 +43,7 @@ import (
 	"github.com/dapr/dapr/pkg/security"
 	"github.com/dapr/dapr/pkg/validation"
 	"github.com/dapr/dapr/utils"
+	"github.com/dapr/kit/ptr"
 )
 
 const (
@@ -121,6 +122,7 @@ type Config struct {
 	DisableBuiltinK8sSecretStore  bool
 	AppHealthCheckPath            string
 	AppChannelAddress             string
+	InsecureSkipTLSVerify         *bool
 	Metrics                       metrics.Options
 	Registry                      *registry.Options
 	Security                      security.Handler
@@ -359,6 +361,12 @@ func (c *Config) toInternal() (*internalConfig, error) {
 		healthz:                   c.Healthz,
 		outboundHealthz:           healthz.New(),
 		workflowEventSink:         c.WorkflowEventSink,
+	}
+
+	if c.InsecureSkipTLSVerify != nil {
+		intc.appConnectionConfig.InsecureSkipTLSVerify = c.InsecureSkipTLSVerify
+	} else {
+		intc.appConnectionConfig.InsecureSkipTLSVerify = ptr.Of(true)
 	}
 
 	if len(intc.standalone.ResourcesPath) == 0 && c.ComponentsPath != "" {

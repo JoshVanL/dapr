@@ -44,4 +44,9 @@ type AppConnectionConfig struct {
 	MaxConcurrency      int
 	Port                int
 	Protocol            protocol.Protocol
+	// InsecureSkipTLSVerify controls whether TLS certificate verification is
+	// skipped when connecting to the app over HTTPS/gRPC-TLS. Defaults to true
+	// for backward compatibility. Set to false and configure a CA certificate
+	// to enable proper TLS verification.
+	InsecureSkipTLSVerify *bool
 }

@@ -319,7 +319,7 @@ func appHTTPClient(connConfig config.AppConnectionConfig, globalConfig *config.C
 		var tlsConfig *tls.Config
 		if connConfig.Protocol == protocol.HTTPSProtocol {
 			tlsConfig = &tls.Config{
-				InsecureSkipVerify: true, //nolint:gosec
+				InsecureSkipVerify: connConfig.InsecureSkipTLSVerify != nil && *connConfig.InsecureSkipTLSVerify, //nolint:gosec
 				MinVersion:         channel.AppChannelMinTLSVersion,
 			}
 		}

@@ -51,14 +51,15 @@ type ConnCreatorFn = func() (grpc.ClientConnInterface, error)
 
 // AppChannelConfig contains the configuration for the app channel.
 type AppChannelConfig struct {
-	Port               int
-	MaxConcurrency     int
-	TracingSpec        config.TracingSpec
-	EnableTLS          bool
-	MaxRequestBodySize int // In bytes
-	ReadBufferSize     int // In bytes
-	BaseAddress        string
-	AppAPIToken        string
+	Port                  int
+	MaxConcurrency        int
+	TracingSpec           config.TracingSpec
+	EnableTLS             bool
+	InsecureSkipTLSVerify *bool // Defaults to true for backward compat
+	MaxRequestBodySize    int  // In bytes
+	ReadBufferSize        int  // In bytes
+	BaseAddress           string
+	AppAPIToken           string
 }
 
 // Manager is a wrapper around gRPC connection pooling.
@@ -150,7 +151,7 @@ func (g *Manager) createLocalConnection(parentCtx context.Context, port int, ena
 
 	if enableTLS {
 		//nolint:gosec
-		tlsConfig := &tls.Config{InsecureSkipVerify: true}
+		tlsConfig := &tls.Config{InsecureSkipVerify: g.channelConfig.InsecureSkipTLSVerify != nil && *g.channelConfig.InsecureSkipTLSVerify}
 		tlsConfig.MinVersion = channel.AppChannelMinTLSVersion
 		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)))
 	} else {

@@ -1511,6 +1511,7 @@ func createGRPCManager(sec security.Handler, runtimeConfig *internalConfig, glob
 		grpcAppChannelConfig.Port = runtimeConfig.appConnectionConfig.Port
 		grpcAppChannelConfig.MaxConcurrency = runtimeConfig.appConnectionConfig.MaxConcurrency
 		grpcAppChannelConfig.EnableTLS = (runtimeConfig.appConnectionConfig.Protocol == protocol.GRPCSProtocol)
+		grpcAppChannelConfig.InsecureSkipTLSVerify = runtimeConfig.appConnectionConfig.InsecureSkipTLSVerify
 		grpcAppChannelConfig.MaxRequestBodySize = runtimeConfig.maxRequestBodySize
 		grpcAppChannelConfig.ReadBufferSize = runtimeConfig.readBufferSize
 		grpcAppChannelConfig.BaseAddress = runtimeConfig.appConnectionConfig.ChannelAddress

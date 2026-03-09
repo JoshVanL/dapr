@@ -82,6 +82,7 @@ type Options struct {
 	DisableBuiltinK8sSecretStore  bool
 	AppHealthCheckPath            string
 	AppChannelAddress             string
+	AppSSLInsecureSkipVerify      *bool
 	SentryRequestJwtAudiences     []string
 	Logger                        logger.Options
 	Metrics                       *metrics.FlagOptions
@@ -92,6 +93,7 @@ func New(origArgs []string) (*Options, error) {
 	opts := Options{
 		EnableAPILogging:          new(bool),
 		DaprBlockShutdownDuration: new(time.Duration),
+		AppSSLInsecureSkipVerify:  new(bool),
 		MaxRequestSize:            runtime.DefaultMaxRequestBodySize,
 		ReadBufferSize:            runtime.DefaultReadBufferSize,
 	}
@@ -151,6 +153,7 @@ func New(origArgs []string) (*Options, error) {
 	fs.BoolVar(&opts.EnableMTLS, "enable-mtls", false, "Enables automatic mTLS for daprd-to-daprd communication channels")
 	fs.BoolVar(&opts.AppSSL, "app-ssl", false, "Sets the URI scheme of the app to https and attempts a TLS connection")
 	fs.MarkDeprecated("app-ssl", "use '--app-protocol https|grpcs'")
+	fs.BoolVar(opts.AppSSLInsecureSkipVerify, "app-ssl-insecure-skip-verify", true, "When using HTTPS/gRPCS app protocol, skip TLS certificate verification")
 	fs.IntVar(&maxRequestSizeMB, "dapr-http-max-request-size", runtime.DefaultMaxRequestBodySize>>20, "Max size of request body in MB")
 	fs.MarkDeprecated("dapr-http-max-request-size", "use '--max-body-size "+strconv.Itoa(runtime.DefaultMaxRequestBodySize>>20)+"Mi'")
 	fs.StringVar(&maxBodySize, "max-body-size", strconv.Itoa(runtime.DefaultMaxRequestBodySize>>20)+"Mi", "Max size of request body for the Dapr HTTP and gRPC servers, as a resource quantity")
@@ -199,6 +202,10 @@ func New(origArgs []string) (*Options, error) {
 	// For this flag, we need the third state (unset) so we need to do a bit more work here to check if it's unset, then mark "enableAPILogging" as nil
 	if !*opts.EnableAPILogging && !fs.Changed("enable-api-logging") {
 		opts.EnableAPILogging = nil
+	}
+
+	if !fs.Changed("app-ssl-insecure-skip-verify") {
+		opts.AppSSLInsecureSkipVerify = nil
 	}
 
 	// If placement-host-address is set, that always takes priority over actors-service

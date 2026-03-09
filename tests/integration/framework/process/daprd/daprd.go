@@ -118,6 +118,9 @@ func New(t *testing.T, fopts ...Option) *Daprd {
 	if opts.appPort != nil {
 		args = append(args, "--app-port="+strconv.Itoa(*opts.appPort))
 	}
+	if opts.appSSLInsecureSkipVerify != nil {
+		args = append(args, "--app-ssl-insecure-skip-verify="+strconv.FormatBool(*opts.appSSLInsecureSkipVerify))
+	}
 	if opts.appHealthCheckPath != "" {
 		args = append(args, "--app-health-check-path="+opts.appHealthCheckPath)
 	}

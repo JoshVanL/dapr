@@ -65,9 +65,10 @@ type options struct {
 	blockShutdownDuration   *string
 	controlPlaneTrustDomain *string
 	schedulerAddresses      []string
-	disableInitEndpoints    []string
-	maxBodySize             *string
-	allowedOrigins          *string
+	disableInitEndpoints     []string
+	appSSLInsecureSkipVerify *bool
+	maxBodySize              *string
+	allowedOrigins           *string
 }
 
 func WithExecOptions(execOptions ...exec.Option) Option {
@@ -110,6 +111,12 @@ func WithAppPort(port int) Option {
 func WithAppProtocol(protocol string) Option {
 	return func(o *options) {
 		o.appProtocol = protocol
+	}
+}
+
+func WithAppSSLInsecureSkipVerify(skip bool) Option {
+	return func(o *options) {
+		o.appSSLInsecureSkipVerify = &skip
 	}
 }
 

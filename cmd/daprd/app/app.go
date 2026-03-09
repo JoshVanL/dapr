@@ -173,6 +173,7 @@ func Run() {
 				AppHealthProbeTimeout:         opts.AppHealthProbeTimeout,
 				AppHealthThreshold:            opts.AppHealthThreshold,
 				AppChannelAddress:             opts.AppChannelAddress,
+				InsecureSkipTLSVerify:         opts.AppSSLInsecureSkipVerify,
 				EnableAPILogging:              opts.EnableAPILogging,
 				Config:                        opts.Config,
 				DisableInitEndpoints:          opts.DisableInitEndpoints,
