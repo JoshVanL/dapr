@@ -62,6 +62,10 @@ const (
 	// the workflow app is back online. Strongly recommended to always be enabled
 	// if using the same Dapr version on all daprds.
 	WorkflowsRemoteActivityReminder Feature = "WorkflowsRemoteActivityReminder"
+
+	// Enables workflow access control policies. When enabled, WorkflowAccessPolicy
+	// resources are loaded and enforced at the target sidecar's CallActor handler.
+	WorkflowAccessPolicy Feature = "WorkflowAccessPolicy"
 )
 
 // end feature flags section

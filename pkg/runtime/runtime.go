@@ -16,6 +16,7 @@ package runtime
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -42,6 +43,9 @@ import (
 	"github.com/dapr/kit/concurrency"
 	"github.com/dapr/kit/logger"
 
+	"sigs.k8s.io/yaml"
+
+	workflowacl "github.com/dapr/dapr/pkg/acl/workflow"
 	"github.com/dapr/dapr/pkg/actors"
 	"github.com/dapr/dapr/pkg/actors/hostconfig"
 	"github.com/dapr/dapr/pkg/api/grpc"
@@ -52,6 +56,7 @@ import (
 	compapi "github.com/dapr/dapr/pkg/apis/components/v1alpha1"
 	endpointapi "github.com/dapr/dapr/pkg/apis/httpEndpoint/v1alpha1"
 	subapi "github.com/dapr/dapr/pkg/apis/subscriptions/v2alpha1"
+	wfaclapi "github.com/dapr/dapr/pkg/apis/workflowaccesspolicy/v1alpha1"
 	"github.com/dapr/dapr/pkg/apphealth"
 	"github.com/dapr/dapr/pkg/components"
 	"github.com/dapr/dapr/pkg/components/pluggable"
@@ -714,6 +719,13 @@ func (a *DaprRuntime) initRuntime(ctx context.Context) error {
 		Processor:             a.processor,
 	})
 
+	// Load and apply workflow access policies before starting servers.
+	if a.globalConfig.IsFeatureEnabled(config.WorkflowAccessPolicy) {
+		if err = a.loadWorkflowAccessPolicies(ctx); err != nil {
+			log.Warnf("Failed to load workflow access policies: %s", err)
+		}
+	}
+
 	if err = a.runnerCloser.AddCloser(a.daprGRPCAPI); err != nil {
 		return err
 	}
@@ -1313,6 +1325,117 @@ func (a *DaprRuntime) loadHTTPEndpoints(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (a *DaprRuntime) loadWorkflowAccessPolicies(ctx context.Context) error {
+	switch a.runtimeConfig.mode {
+	case modes.KubernetesMode:
+		return a.loadWorkflowAccessPoliciesKubernetes(ctx)
+	case modes.StandaloneMode:
+		return a.loadWorkflowAccessPoliciesStandalone(ctx)
+	default:
+		return nil
+	}
+}
+
+func (a *DaprRuntime) loadWorkflowAccessPoliciesKubernetes(ctx context.Context) error {
+	resp, err := a.operatorClient.ListWorkflowAccessPolicy(ctx, &operatorv1pb.ListWorkflowAccessPolicyRequest{
+		Namespace: a.namespace,
+	})
+	if err != nil {
+		return fmt.Errorf("error listing workflow access policies: %w", err)
+	}
+
+	var policies []wfaclapi.WorkflowAccessPolicy
+	for _, raw := range resp.GetPolicies() {
+		var policy wfaclapi.WorkflowAccessPolicy
+		if err := json.Unmarshal(raw, &policy); err != nil {
+			log.Warnf("Error unmarshalling workflow access policy: %s", err)
+			continue
+		}
+
+		if !policy.IsAppScoped(a.runtimeConfig.id) {
+			continue
+		}
+		policies = append(policies, policy)
+	}
+
+	compiled := workflowacl.Compile(policies)
+	a.daprGRPCAPI.SetWorkflowAccessPolicies(compiled)
+
+	if compiled != nil {
+		log.Infof("Loaded %d workflow access policy resource(s)", len(policies))
+	}
+
+	return nil
+}
+
+func (a *DaprRuntime) loadWorkflowAccessPoliciesStandalone(ctx context.Context) error {
+	var policies []wfaclapi.WorkflowAccessPolicy
+
+	for _, dir := range a.runtimeConfig.standalone.ResourcesPath {
+		loaded, err := loadWorkflowAccessPoliciesFromDir(dir, a.runtimeConfig.id)
+		if err != nil {
+			log.Warnf("Error loading workflow access policies from %s: %s", dir, err)
+			continue
+		}
+		policies = append(policies, loaded...)
+	}
+
+	compiled := workflowacl.Compile(policies)
+	a.daprGRPCAPI.SetWorkflowAccessPolicies(compiled)
+
+	if compiled != nil {
+		log.Infof("Loaded %d workflow access policy resource(s)", len(policies))
+	}
+
+	return nil
+}
+
+func loadWorkflowAccessPoliciesFromDir(dir string, appID string) ([]wfaclapi.WorkflowAccessPolicy, error) {
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	var policies []wfaclapi.WorkflowAccessPolicy
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+
+		name := file.Name()
+		if !isYAMLFile(name) {
+			continue
+		}
+
+		b, err := os.ReadFile(dir + "/" + name)
+		if err != nil {
+			log.Warnf("Error reading file %s: %s", name, err)
+			continue
+		}
+
+		var policy wfaclapi.WorkflowAccessPolicy
+		if err := yaml.Unmarshal(b, &policy); err != nil {
+			continue // Not a WorkflowAccessPolicy, skip
+		}
+
+		if policy.Kind != "WorkflowAccessPolicy" {
+			continue
+		}
+
+		if !policy.IsAppScoped(appID) {
+			continue
+		}
+
+		policies = append(policies, policy)
+	}
+
+	return policies, nil
+}
+
+func isYAMLFile(name string) bool {
+	return strings.HasSuffix(name, ".yaml") || strings.HasSuffix(name, ".yml")
 }
 
 // ShutdownWithWait will gracefully stop runtime and wait outstanding operations.

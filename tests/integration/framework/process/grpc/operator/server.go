@@ -103,3 +103,11 @@ func (s *server) SubscriptionUpdate(req *operatorv1.SubscriptionUpdateRequest, s
 	}
 	return nil
 }
+
+func (s *server) ListWorkflowAccessPolicy(ctx context.Context, in *operatorv1.ListWorkflowAccessPolicyRequest) (*operatorv1.ListWorkflowAccessPolicyResponse, error) {
+	return new(operatorv1.ListWorkflowAccessPolicyResponse), nil
+}
+
+func (s *server) WorkflowAccessPolicyUpdate(req *operatorv1.WorkflowAccessPolicyUpdateRequest, srv operatorv1.Operator_WorkflowAccessPolicyUpdateServer) error {
+	return nil
+}

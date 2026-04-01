@@ -26,8 +26,10 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/dapr/dapr/pkg/acl"
+	workflowacl "github.com/dapr/dapr/pkg/acl/workflow"
 	actorapi "github.com/dapr/dapr/pkg/actors/api"
 	actorerrors "github.com/dapr/dapr/pkg/actors/errors"
+	"github.com/dapr/dapr/pkg/security/spiffe"
 	"github.com/dapr/dapr/pkg/api/grpc/metadata"
 	diag "github.com/dapr/dapr/pkg/diagnostics"
 	diagConsts "github.com/dapr/dapr/pkg/diagnostics/consts"
@@ -295,6 +297,10 @@ func (a *api) CallLocalStream(stream internalv1pb.ServiceInvocation_CallLocalStr
 
 // CallActor invokes a virtual actor.
 func (a *api) CallActor(ctx context.Context, in *internalv1pb.InternalInvokeRequest) (*internalv1pb.InternalInvokeResponse, error) {
+	if err := a.callActorValidateWorkflowACL(ctx, in); err != nil {
+		return nil, err
+	}
+
 	// We don't do resiliency here as it is handled in the API layer. See InvokeActor().
 	var res *internalv1pb.InternalInvokeResponse
 	router, err := a.ActorRouter(ctx)
@@ -349,6 +355,10 @@ func (a *api) CallActorReminder(ctx context.Context, in *internalv1pb.Reminder) 
 }
 
 func (a *api) CallActorStream(req *internalv1pb.InternalInvokeRequest, stream internalv1pb.ServiceInvocation_CallActorStreamServer) error {
+	if err := a.callActorValidateWorkflowACL(stream.Context(), req); err != nil {
+		return err
+	}
+
 	router, err := a.ActorRouter(stream.Context())
 	if err != nil {
 		return err
@@ -388,6 +398,54 @@ func (a *api) callLocalValidateACL(ctx context.Context, req *invokev1.InvokeMeth
 		if !callAllowed {
 			return status.Error(codes.PermissionDenied, errMsg)
 		}
+	}
+
+	return nil
+}
+
+// callActorValidateWorkflowACL checks whether the caller is allowed to invoke
+// the target workflow or activity based on WorkflowAccessPolicy resources.
+// Returns nil if no policy applies or the call is allowed; returns
+// PermissionDenied if denied.
+func (a *api) callActorValidateWorkflowACL(ctx context.Context, in *internalv1pb.InternalInvokeRequest) error {
+	policies := a.workflowAccessPolicies.Load()
+	if policies == nil {
+		// No policies loaded — allow all (backward compatible).
+		return nil
+	}
+
+	actorType := in.GetActor().GetActorType()
+	opType, isWorkflowActor := workflowacl.ParseActorType(actorType)
+	if !isWorkflowActor {
+		// Not a workflow/activity actor — skip policy check.
+		return nil
+	}
+
+	method := in.GetMessage().GetMethod()
+	data := in.GetMessage().GetData().GetValue()
+
+	opName, subject, err := workflowacl.ExtractOperationName(opType, method, data)
+	if err != nil {
+		return status.Errorf(codes.Internal, "workflow access policy: failed to extract operation name: %v", err)
+	}
+	if !subject {
+		// Method not subject to access control (e.g. AddWorkflowEvent).
+		return nil
+	}
+
+	// Extract caller identity from SPIFFE ID in mTLS peer certificate.
+	spiffeID, ok, err := spiffe.FromGRPCContext(ctx)
+	if err != nil {
+		return status.Errorf(codes.Internal, "workflow access policy: failed to extract caller identity: %v", err)
+	}
+	if !ok {
+		// mTLS not active but policies exist — deny (cannot verify identity).
+		return status.Error(codes.PermissionDenied, "workflow access policy: caller identity unknown (mTLS required when workflow access policies are configured)")
+	}
+
+	callerAppID := spiffeID.AppID()
+	if !policies.Evaluate(callerAppID, opType, opName) {
+		return status.Errorf(codes.PermissionDenied, "workflow access policy: app '%s' is not allowed to schedule %s '%s'", callerAppID, opType, opName)
 	}
 
 	return nil

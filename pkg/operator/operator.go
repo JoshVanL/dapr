@@ -42,6 +42,7 @@ import (
 	resiliencyapi "github.com/dapr/dapr/pkg/apis/resiliency/v1alpha1"
 	subscriptionsapiV1alpha1 "github.com/dapr/dapr/pkg/apis/subscriptions/v1alpha1"
 	subapi "github.com/dapr/dapr/pkg/apis/subscriptions/v2alpha1"
+	wfaclapi "github.com/dapr/dapr/pkg/apis/workflowaccesspolicy/v1alpha1"
 	"github.com/dapr/dapr/pkg/healthz"
 	"github.com/dapr/dapr/pkg/modes"
 	"github.com/dapr/dapr/pkg/operator/api"
@@ -385,6 +386,7 @@ func buildScheme(opts Options) (*runtime.Scheme, error) {
 		httpendpointsapi.AddToScheme,
 		subscriptionsapiV1alpha1.AddToScheme,
 		subapi.AddToScheme,
+		wfaclapi.AddToScheme,
 	}
 
 	if opts.ArgoRolloutServiceReconcilerEnabled {

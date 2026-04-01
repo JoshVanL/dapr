@@ -44,6 +44,7 @@ import (
 	"github.com/dapr/components-contrib/state"
 	actorapi "github.com/dapr/dapr/pkg/actors/api"
 	actorerrors "github.com/dapr/dapr/pkg/actors/errors"
+	workflowacl "github.com/dapr/dapr/pkg/acl/workflow"
 	apierrors "github.com/dapr/dapr/pkg/api/errors"
 	"github.com/dapr/dapr/pkg/api/grpc/metadata"
 	"github.com/dapr/dapr/pkg/api/universal"
@@ -84,6 +85,9 @@ type API interface {
 
 	// Dapr Service methods
 	runtimev1pb.DaprServer
+
+	// SetWorkflowAccessPolicies atomically updates the workflow access policies.
+	SetWorkflowAccessPolicies(policies *workflowacl.CompiledPolicies)
 }
 
 type api struct {
@@ -96,9 +100,10 @@ type api struct {
 	outbox                outbox.Outbox
 	sendToOutputBindingFn func(ctx context.Context, name string, req *bindings.InvokeRequest) (*bindings.InvokeResponse, error)
 	tracingSpec           config.TracingSpec
-	accessControlList     *config.AccessControlList
-	processor             *processor.Processor
-	wg                    sync.WaitGroup
+	accessControlList      *config.AccessControlList
+	workflowAccessPolicies atomic.Pointer[workflowacl.CompiledPolicies]
+	processor              *processor.Processor
+	wg                     sync.WaitGroup
 
 	closeCh chan struct{}
 	closed  atomic.Bool
@@ -135,6 +140,12 @@ func NewAPI(opts APIOpts) API {
 		processor:             opts.Processor,
 		closeCh:               make(chan struct{}),
 	}
+}
+
+// SetWorkflowAccessPolicies atomically sets the compiled workflow access
+// policies used for enforcement in CallActor/CallActorStream.
+func (a *api) SetWorkflowAccessPolicies(policies *workflowacl.CompiledPolicies) {
+	a.workflowAccessPolicies.Store(policies)
 }
 
 // validateAndGetPubsubAndTopic validates the request parameters and returns the pubsub interface, pubsub name, topic name, rawPayload metadata if set
