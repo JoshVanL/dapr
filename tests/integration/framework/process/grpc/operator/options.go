@@ -38,8 +38,10 @@ type options struct {
 	listHTTPEndpointsFn   func(context.Context, *operatorv1.ListHTTPEndpointsRequest) (*operatorv1.ListHTTPEndpointsResponse, error)
 	listResiliencyFn      func(context.Context, *operatorv1.ListResiliencyRequest) (*operatorv1.ListResiliencyResponse, error)
 	listSubscriptionsFn   func(context.Context, *emptypb.Empty) (*operatorv1.ListSubscriptionsResponse, error)
-	listSubscriptionsV2Fn func(context.Context, *operatorv1.ListSubscriptionsRequest) (*operatorv1.ListSubscriptionsResponse, error)
-	subscriptionUpdateFn  func(*operatorv1.SubscriptionUpdateRequest, operatorv1.Operator_SubscriptionUpdateServer) error
+	listSubscriptionsV2Fn              func(context.Context, *operatorv1.ListSubscriptionsRequest) (*operatorv1.ListSubscriptionsResponse, error)
+	subscriptionUpdateFn               func(*operatorv1.SubscriptionUpdateRequest, operatorv1.Operator_SubscriptionUpdateServer) error
+	listWorkflowAccessPoliciesFn       func(context.Context, *operatorv1.ListWorkflowAccessPolicyRequest) (*operatorv1.ListWorkflowAccessPolicyResponse, error)
+	workflowAccessPolicyUpdateFn       func(*operatorv1.WorkflowAccessPolicyUpdateRequest, operatorv1.Operator_WorkflowAccessPolicyUpdateServer) error
 }
 
 func WithGRPCOptions(opts ...procgrpc.Option) func(*options) {
@@ -111,5 +113,17 @@ func WithListSubscriptionsV2Fn(fn func(context.Context, *operatorv1.ListSubscrip
 func WithSubscriptionUpdateFn(fn func(*operatorv1.SubscriptionUpdateRequest, operatorv1.Operator_SubscriptionUpdateServer) error) func(*options) {
 	return func(opts *options) {
 		opts.subscriptionUpdateFn = fn
+	}
+}
+
+func WithListWorkflowAccessPoliciesFn(fn func(context.Context, *operatorv1.ListWorkflowAccessPolicyRequest) (*operatorv1.ListWorkflowAccessPolicyResponse, error)) func(*options) {
+	return func(opts *options) {
+		opts.listWorkflowAccessPoliciesFn = fn
+	}
+}
+
+func WithWorkflowAccessPolicyUpdateFn(fn func(*operatorv1.WorkflowAccessPolicyUpdateRequest, operatorv1.Operator_WorkflowAccessPolicyUpdateServer) error) func(*options) {
+	return func(opts *options) {
+		opts.workflowAccessPolicyUpdateFn = fn
 	}
 }

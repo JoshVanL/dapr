@@ -20,6 +20,7 @@ import (
 
 	componentsapi "github.com/dapr/dapr/pkg/apis/components/v1alpha1"
 	subapi "github.com/dapr/dapr/pkg/apis/subscriptions/v2alpha1"
+	wfaclapi "github.com/dapr/dapr/pkg/apis/workflowaccesspolicy/v1alpha1"
 	operatorpb "github.com/dapr/dapr/pkg/proto/operator/v1"
 	"github.com/dapr/dapr/pkg/runtime/compstore"
 	"github.com/dapr/dapr/pkg/runtime/hotreload/loader"
@@ -37,16 +38,18 @@ type Options struct {
 }
 
 type operator struct {
-	components    *resource[componentsapi.Component]
-	subscriptions *resource[subapi.Subscription]
+	components             *resource[componentsapi.Component]
+	subscriptions          *resource[subapi.Subscription]
+	workflowAccessPolicies *resource[wfaclapi.WorkflowAccessPolicy]
 
 	running atomic.Bool
 }
 
 func New(opts Options) loader.Interface {
 	return &operator{
-		components:    newResource[componentsapi.Component](opts, loadercompstore.NewComponents(opts.ComponentStore), new(components)),
-		subscriptions: newResource[subapi.Subscription](opts, loadercompstore.NewSubscriptions(opts.ComponentStore), new(subscriptions)),
+		components:             newResource[componentsapi.Component](opts, loadercompstore.NewComponents(opts.ComponentStore), new(components)),
+		subscriptions:          newResource[subapi.Subscription](opts, loadercompstore.NewSubscriptions(opts.ComponentStore), new(subscriptions)),
+		workflowAccessPolicies: newResource[wfaclapi.WorkflowAccessPolicy](opts, loadercompstore.NewWorkflowAccessPolicies(opts.ComponentStore), new(workflowAccessPolicies)),
 	}
 }
 
@@ -57,7 +60,7 @@ func (o *operator) Run(ctx context.Context) error {
 
 	<-ctx.Done()
 
-	return errors.Join(o.components.close(), o.subscriptions.close())
+	return errors.Join(o.components.close(), o.subscriptions.close(), o.workflowAccessPolicies.close())
 }
 
 func (o *operator) Components() loader.Loader[componentsapi.Component] {
@@ -66,4 +69,8 @@ func (o *operator) Components() loader.Loader[componentsapi.Component] {
 
 func (o *operator) Subscriptions() loader.Loader[subapi.Subscription] {
 	return o.subscriptions
+}
+
+func (o *operator) WorkflowAccessPolicies() loader.Loader[wfaclapi.WorkflowAccessPolicy] {
+	return o.workflowAccessPolicies
 }

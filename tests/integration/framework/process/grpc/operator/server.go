@@ -22,16 +22,18 @@ import (
 )
 
 type server struct {
-	componentUpdateFn     func(*operatorv1.ComponentUpdateRequest, operatorv1.Operator_ComponentUpdateServer) error
-	getConfigurationFn    func(context.Context, *operatorv1.GetConfigurationRequest) (*operatorv1.GetConfigurationResponse, error)
-	getResiliencyFn       func(context.Context, *operatorv1.GetResiliencyRequest) (*operatorv1.GetResiliencyResponse, error)
-	httpEndpointUpdateFn  func(*operatorv1.HTTPEndpointUpdateRequest, operatorv1.Operator_HTTPEndpointUpdateServer) error
-	listComponentsFn      func(context.Context, *operatorv1.ListComponentsRequest) (*operatorv1.ListComponentResponse, error)
-	listHTTPEndpointsFn   func(context.Context, *operatorv1.ListHTTPEndpointsRequest) (*operatorv1.ListHTTPEndpointsResponse, error)
-	listResiliencyFn      func(context.Context, *operatorv1.ListResiliencyRequest) (*operatorv1.ListResiliencyResponse, error)
-	listSubscriptionsFn   func(context.Context, *emptypb.Empty) (*operatorv1.ListSubscriptionsResponse, error)
-	listSubscriptionsV2Fn func(context.Context, *operatorv1.ListSubscriptionsRequest) (*operatorv1.ListSubscriptionsResponse, error)
-	subscriptionUpdateFn  func(*operatorv1.SubscriptionUpdateRequest, operatorv1.Operator_SubscriptionUpdateServer) error
+	componentUpdateFn                func(*operatorv1.ComponentUpdateRequest, operatorv1.Operator_ComponentUpdateServer) error
+	getConfigurationFn               func(context.Context, *operatorv1.GetConfigurationRequest) (*operatorv1.GetConfigurationResponse, error)
+	getResiliencyFn                  func(context.Context, *operatorv1.GetResiliencyRequest) (*operatorv1.GetResiliencyResponse, error)
+	httpEndpointUpdateFn             func(*operatorv1.HTTPEndpointUpdateRequest, operatorv1.Operator_HTTPEndpointUpdateServer) error
+	listComponentsFn                 func(context.Context, *operatorv1.ListComponentsRequest) (*operatorv1.ListComponentResponse, error)
+	listHTTPEndpointsFn              func(context.Context, *operatorv1.ListHTTPEndpointsRequest) (*operatorv1.ListHTTPEndpointsResponse, error)
+	listResiliencyFn                 func(context.Context, *operatorv1.ListResiliencyRequest) (*operatorv1.ListResiliencyResponse, error)
+	listSubscriptionsFn              func(context.Context, *emptypb.Empty) (*operatorv1.ListSubscriptionsResponse, error)
+	listSubscriptionsV2Fn            func(context.Context, *operatorv1.ListSubscriptionsRequest) (*operatorv1.ListSubscriptionsResponse, error)
+	subscriptionUpdateFn             func(*operatorv1.SubscriptionUpdateRequest, operatorv1.Operator_SubscriptionUpdateServer) error
+	listWorkflowAccessPoliciesFn     func(context.Context, *operatorv1.ListWorkflowAccessPolicyRequest) (*operatorv1.ListWorkflowAccessPolicyResponse, error)
+	workflowAccessPolicyUpdateFn     func(*operatorv1.WorkflowAccessPolicyUpdateRequest, operatorv1.Operator_WorkflowAccessPolicyUpdateServer) error
 }
 
 func (s *server) ComponentUpdate(req *operatorv1.ComponentUpdateRequest, srv operatorv1.Operator_ComponentUpdateServer) error {
@@ -105,9 +107,15 @@ func (s *server) SubscriptionUpdate(req *operatorv1.SubscriptionUpdateRequest, s
 }
 
 func (s *server) ListWorkflowAccessPolicy(ctx context.Context, in *operatorv1.ListWorkflowAccessPolicyRequest) (*operatorv1.ListWorkflowAccessPolicyResponse, error) {
+	if s.listWorkflowAccessPoliciesFn != nil {
+		return s.listWorkflowAccessPoliciesFn(ctx, in)
+	}
 	return new(operatorv1.ListWorkflowAccessPolicyResponse), nil
 }
 
 func (s *server) WorkflowAccessPolicyUpdate(req *operatorv1.WorkflowAccessPolicyUpdateRequest, srv operatorv1.Operator_WorkflowAccessPolicyUpdateServer) error {
+	if s.workflowAccessPolicyUpdateFn != nil {
+		return s.workflowAccessPolicyUpdateFn(req, srv)
+	}
 	return nil
 }

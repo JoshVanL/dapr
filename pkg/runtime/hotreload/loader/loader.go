@@ -18,6 +18,7 @@ import (
 
 	compapi "github.com/dapr/dapr/pkg/apis/components/v1alpha1"
 	subapi "github.com/dapr/dapr/pkg/apis/subscriptions/v2alpha1"
+	wfaclapi "github.com/dapr/dapr/pkg/apis/workflowaccesspolicy/v1alpha1"
 	operatorv1pb "github.com/dapr/dapr/pkg/proto/operator/v1"
 	"github.com/dapr/dapr/pkg/runtime/hotreload/differ"
 )
@@ -28,6 +29,7 @@ type Interface interface {
 	Run(context.Context) error
 	Components() Loader[compapi.Component]
 	Subscriptions() Loader[subapi.Subscription]
+	WorkflowAccessPolicies() Loader[wfaclapi.WorkflowAccessPolicy]
 }
 
 type StreamConn[T differ.Resource] struct {

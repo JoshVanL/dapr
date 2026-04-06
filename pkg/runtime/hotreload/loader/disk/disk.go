@@ -20,6 +20,7 @@ import (
 
 	compapi "github.com/dapr/dapr/pkg/apis/components/v1alpha1"
 	subapi "github.com/dapr/dapr/pkg/apis/subscriptions/v2alpha1"
+	wfaclapi "github.com/dapr/dapr/pkg/apis/workflowaccesspolicy/v1alpha1"
 	loaderdisk "github.com/dapr/dapr/pkg/internal/loader/disk"
 	"github.com/dapr/dapr/pkg/runtime/compstore"
 	"github.com/dapr/dapr/pkg/runtime/hotreload/loader"
@@ -38,9 +39,10 @@ type Options struct {
 }
 
 type disk struct {
-	components    *resource[compapi.Component]
-	subscriptions *resource[subapi.Subscription]
-	fs            *fswatcher.FSWatcher
+	components             *resource[compapi.Component]
+	subscriptions          *resource[subapi.Subscription]
+	workflowAccessPolicies *resource[wfaclapi.WorkflowAccessPolicy]
+	fs                     *fswatcher.FSWatcher
 }
 
 func New(opts Options) (loader.Interface, error) {
@@ -73,6 +75,15 @@ func New(opts Options) (loader.Interface, error) {
 				store: store.NewSubscriptions(opts.ComponentStore),
 			},
 		),
+		workflowAccessPolicies: newResource[wfaclapi.WorkflowAccessPolicy](
+			resourceOptions[wfaclapi.WorkflowAccessPolicy]{
+				loader: loaderdisk.NewWorkflowAccessPolicies(loaderdisk.Options{
+					AppID: opts.AppID,
+					Paths: opts.Dirs,
+				}),
+				store: store.NewWorkflowAccessPolicies(opts.ComponentStore),
+			},
+		),
 	}, nil
 }
 
@@ -82,6 +93,7 @@ func (d *disk) Run(ctx context.Context) error {
 	return concurrency.NewRunnerManager(
 		d.components.run,
 		d.subscriptions.run,
+		d.workflowAccessPolicies.run,
 		func(ctx context.Context) error {
 			return d.fs.Run(ctx, eventCh)
 		},
@@ -97,6 +109,9 @@ func (d *disk) Run(ctx context.Context) error {
 					if err := d.subscriptions.trigger(ctx); err != nil {
 						return err
 					}
+					if err := d.workflowAccessPolicies.trigger(ctx); err != nil {
+						return err
+					}
 				}
 			}
 		},
@@ -109,4 +124,8 @@ func (d *disk) Components() loader.Loader[compapi.Component] {
 
 func (d *disk) Subscriptions() loader.Loader[subapi.Subscription] {
 	return d.subscriptions
+}
+
+func (d *disk) WorkflowAccessPolicies() loader.Loader[wfaclapi.WorkflowAccessPolicy] {
+	return d.workflowAccessPolicies
 }

@@ -15,9 +15,13 @@ package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/dapr/dapr/pkg/apis/common"
+	"github.com/dapr/dapr/pkg/apis/workflowaccesspolicy"
 )
+
+const kind = "WorkflowAccessPolicy"
 
 // +genclient
 // +genclient:noStatus
@@ -35,10 +39,71 @@ type WorkflowAccessPolicy struct {
 	common.Scoped `json:",inline"`
 }
 
+// Kind returns the resource kind.
+func (WorkflowAccessPolicy) Kind() string {
+	return kind
+}
+
+// APIVersion returns the group/version string.
+func (WorkflowAccessPolicy) APIVersion() string {
+	return workflowaccesspolicy.GroupName + "/v1alpha1"
+}
+
+// GetName returns the policy name.
+func (w WorkflowAccessPolicy) GetName() string {
+	return w.Name
+}
+
+// GetNamespace returns the policy namespace.
+func (w WorkflowAccessPolicy) GetNamespace() string {
+	return w.Namespace
+}
+
+// LogName returns a display name suitable for logging.
+func (w WorkflowAccessPolicy) LogName() string {
+	return w.Name
+}
+
+// GetSecretStore returns an empty string — WorkflowAccessPolicy has no secrets.
+func (WorkflowAccessPolicy) GetSecretStore() string {
+	return ""
+}
+
+// GetScopes returns the scopes for this resource.
+func (w WorkflowAccessPolicy) GetScopes() []string {
+	return w.Scopes
+}
+
+// NameValuePairs returns nil — WorkflowAccessPolicy has no name/value pairs.
+func (WorkflowAccessPolicy) NameValuePairs() []common.NameValuePair {
+	return nil
+}
+
+// ClientObject returns the WorkflowAccessPolicy as a controller-runtime client.Object.
+func (w WorkflowAccessPolicy) ClientObject() client.Object {
+	return &w
+}
+
+// EmptyMetaDeepCopy returns a deep copy with only TypeMeta and minimal ObjectMeta.
+func (w WorkflowAccessPolicy) EmptyMetaDeepCopy() metav1.Object {
+	n := w.DeepCopy()
+	n.TypeMeta = metav1.TypeMeta{
+		Kind:       kind,
+		APIVersion: workflowaccesspolicy.GroupName + "/v1alpha1",
+	}
+	n.ObjectMeta = metav1.ObjectMeta{
+		Name:      w.Name,
+		Namespace: w.Namespace,
+	}
+	return n
+}
+
 // WorkflowAccessPolicySpec defines the desired state of WorkflowAccessPolicy.
 type WorkflowAccessPolicySpec struct {
 	// DefaultAction is the action when no rule matches. Defaults to "deny" if omitted.
 	// +optional
+	// +kubebuilder:default="deny"
+	// +kubebuilder:validation:Enum=allow;deny
 	DefaultAction PolicyAction `json:"defaultAction,omitempty"`
 
 	// Rules defines ingress rules for which callers can perform which operations.
@@ -50,19 +115,23 @@ type WorkflowAccessPolicySpec struct {
 // are allowed or denied.
 type WorkflowAccessPolicyRule struct {
 	// Callers that this rule applies to.
+	// +kubebuilder:validation:MinItems=1
 	Callers []WorkflowCaller `json:"callers"`
 
 	// Operations that the matched callers are allowed/denied to perform.
+	// +kubebuilder:validation:MinItems=1
 	Operations []WorkflowOperationRule `json:"operations"`
 }
 
 // WorkflowCaller identifies a calling application.
 type WorkflowCaller struct {
 	// AppID is the Dapr app ID of the caller.
+	// +kubebuilder:validation:MinLength=1
 	AppID string `json:"appID"`
 }
 
 // PolicyAction is the action to take: "allow" or "deny".
+// +kubebuilder:validation:Enum=allow;deny
 type PolicyAction string
 
 const (
@@ -71,6 +140,7 @@ const (
 )
 
 // WorkflowOperationType is the type of operation: "workflow" or "activity".
+// +kubebuilder:validation:Enum=workflow;activity
 type WorkflowOperationType string
 
 const (
@@ -79,6 +149,7 @@ const (
 )
 
 // WorkflowOperation is the specific operation being controlled (e.g., "schedule").
+// +kubebuilder:validation:Enum=schedule
 type WorkflowOperation string
 
 const (
@@ -88,16 +159,20 @@ const (
 // WorkflowOperationRule defines access control for a specific workflow or activity operation.
 type WorkflowOperationRule struct {
 	// Type is "workflow" or "activity".
+	// +kubebuilder:validation:Enum=workflow;activity
 	Type WorkflowOperationType `json:"type"`
 
 	// Name is the exact name or glob pattern for the workflow/activity.
+	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name"`
 
 	// Operation defaults to "schedule" if omitted.
 	// +optional
+	// +kubebuilder:validation:Enum=schedule
 	Operation *WorkflowOperation `json:"operation,omitempty"`
 
 	// Action is "allow" or "deny".
+	// +kubebuilder:validation:Enum=allow;deny
 	Action PolicyAction `json:"action"`
 }
 

@@ -18,6 +18,7 @@ import (
 
 	compapi "github.com/dapr/dapr/pkg/apis/components/v1alpha1"
 	subapi "github.com/dapr/dapr/pkg/apis/subscriptions/v2alpha1"
+	wfaclapi "github.com/dapr/dapr/pkg/apis/workflowaccesspolicy/v1alpha1"
 	"github.com/dapr/dapr/pkg/config"
 	"github.com/dapr/dapr/pkg/healthz"
 	operatorv1 "github.com/dapr/dapr/pkg/proto/operator/v1"
@@ -60,6 +61,7 @@ type Reloader struct {
 	loader                  loader.Interface
 	componentsReconciler    *reconciler.Reconciler[compapi.Component]
 	subscriptionsReconciler *reconciler.Reconciler[subapi.Subscription]
+	policyReconciler        *reconciler.Reconciler[wfaclapi.WorkflowAccessPolicy]
 }
 
 func NewDisk(opts OptionsReloaderDisk) (*Reloader, error) {
@@ -94,6 +96,8 @@ func NewDisk(opts OptionsReloaderDisk) (*Reloader, error) {
 			Authorizer: opts.Authorizer,
 			Healthz:    opts.Healthz,
 		}),
+		// policyReconciler is initialized later via SetPolicyRecompiler,
+		// since the gRPC API is not available at construction time.
 	}, nil
 }
 
@@ -127,7 +131,25 @@ func NewOperator(opts OptionsReloaderOperator) *Reloader {
 			Authorizer: opts.Authorizer,
 			Healthz:    opts.Healthz,
 		}),
+		// policyReconciler is initialized later via SetPolicyRecompiler,
+		// since the gRPC API is not available at construction time.
 	}
+}
+
+// Loader returns the underlying loader.Interface used by this reloader.
+func (r *Reloader) Loader() loader.Interface {
+	return r.loader
+}
+
+// SetPolicyRecompiler initializes the WorkflowAccessPolicy reconciler with the
+// given recompiler callback. This must be called before Run() when workflow
+// access policies are enabled.
+func (r *Reloader) SetPolicyRecompiler(opts reconciler.WorkflowAccessPolicyOptions) {
+	if !r.isEnabled {
+		return
+	}
+
+	r.policyReconciler = reconciler.NewWorkflowAccessPolicies(opts)
 }
 
 func (r *Reloader) Run(ctx context.Context) error {
@@ -138,11 +160,18 @@ func (r *Reloader) Run(ctx context.Context) error {
 		return nil
 	}
 
-	log.Info("Hot reloading enabled. Daprd will reload 'Component' and 'Subscription' resources on change.")
-
-	return concurrency.NewRunnerManager(
+	runners := []func(context.Context) error{
 		r.loader.Run,
 		r.componentsReconciler.Run,
 		r.subscriptionsReconciler.Run,
-	).Run(ctx)
+	}
+
+	if r.policyReconciler != nil {
+		runners = append(runners, r.policyReconciler.Run)
+		log.Info("Hot reloading enabled. Daprd will reload 'Component', 'Subscription', and 'WorkflowAccessPolicy' resources on change.")
+	} else {
+		log.Info("Hot reloading enabled. Daprd will reload 'Component' and 'Subscription' resources on change.")
+	}
+
+	return concurrency.NewRunnerManager(runners...).Run(ctx)
 }

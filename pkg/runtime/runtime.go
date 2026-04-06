@@ -81,6 +81,7 @@ import (
 	"github.com/dapr/dapr/pkg/runtime/compstore"
 	rterrors "github.com/dapr/dapr/pkg/runtime/errors"
 	"github.com/dapr/dapr/pkg/runtime/hotreload"
+	"github.com/dapr/dapr/pkg/runtime/hotreload/reconciler"
 	"github.com/dapr/dapr/pkg/runtime/meta"
 	"github.com/dapr/dapr/pkg/runtime/processor"
 	"github.com/dapr/dapr/pkg/runtime/pubsub"
@@ -724,6 +725,17 @@ func (a *DaprRuntime) initRuntime(ctx context.Context) error {
 		if err = a.loadWorkflowAccessPolicies(ctx); err != nil {
 			log.Warnf("Failed to load workflow access policies: %s", err)
 		}
+
+		// Enable hot-reloading of workflow access policies so that changes
+		// take effect without restarting the sidecar.
+		a.reloader.SetPolicyRecompiler(reconciler.WorkflowAccessPolicyOptions{
+			Loader:    a.reloader.Loader(),
+			CompStore: a.compStore,
+			Recompiler: func(compiled *workflowacl.CompiledPolicies) {
+				a.daprGRPCAPI.SetWorkflowAccessPolicies(compiled)
+			},
+			Healthz: a.runtimeConfig.healthz,
+		})
 	}
 
 	if err = a.runnerCloser.AddCloser(a.daprGRPCAPI); err != nil {
@@ -1358,6 +1370,7 @@ func (a *DaprRuntime) loadWorkflowAccessPoliciesKubernetes(ctx context.Context) 
 			continue
 		}
 		policies = append(policies, policy)
+		a.compStore.AddWorkflowAccessPolicy(policy)
 	}
 
 	compiled := workflowacl.Compile(policies)
@@ -1378,6 +1391,9 @@ func (a *DaprRuntime) loadWorkflowAccessPoliciesStandalone(ctx context.Context) 
 		if err != nil {
 			log.Warnf("Error loading workflow access policies from %s: %s", dir, err)
 			continue
+		}
+		for _, p := range loaded {
+			a.compStore.AddWorkflowAccessPolicy(p)
 		}
 		policies = append(policies, loaded...)
 	}

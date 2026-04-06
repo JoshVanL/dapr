@@ -20,13 +20,14 @@ import (
 
 	componentsapi "github.com/dapr/dapr/pkg/apis/components/v1alpha1"
 	subapi "github.com/dapr/dapr/pkg/apis/subscriptions/v2alpha1"
+	wfaclapi "github.com/dapr/dapr/pkg/apis/workflowaccesspolicy/v1alpha1"
 	"github.com/dapr/dapr/pkg/components/secretstores"
 	"github.com/dapr/dapr/pkg/runtime/meta"
 )
 
 // Resource is a generic type constraint.
 type Resource interface {
-	componentsapi.Component | subapi.Subscription
+	componentsapi.Component | subapi.Subscription | wfaclapi.WorkflowAccessPolicy
 	meta.Resource
 }
 
