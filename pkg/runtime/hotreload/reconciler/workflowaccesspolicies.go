@@ -16,9 +16,10 @@ package reconciler
 import (
 	"context"
 
-	wfaclapi "github.com/dapr/dapr/pkg/apis/workflowaccesspolicy/v1alpha1"
 	workflowacl "github.com/dapr/dapr/pkg/acl/workflow"
+	wfaclapi "github.com/dapr/dapr/pkg/apis/workflowaccesspolicy/v1alpha1"
 	"github.com/dapr/dapr/pkg/healthz"
+	"github.com/dapr/dapr/pkg/internal/loader/validate"
 	"github.com/dapr/dapr/pkg/runtime/compstore"
 	"github.com/dapr/dapr/pkg/runtime/hotreload/loader"
 	"k8s.io/utils/clock"
@@ -72,6 +73,11 @@ func (w *workflowAccessPolicies) recompileAll() {
 //
 //nolint:unused
 func (w *workflowAccessPolicies) update(_ context.Context, policy wfaclapi.WorkflowAccessPolicy) {
+	if err := validate.WorkflowAccessPolicy(&policy); err != nil {
+		log.Warnf("WorkflowAccessPolicy %q failed validation, skipping: %s", policy.Name, err)
+		return
+	}
+
 	w.store.AddWorkflowAccessPolicy(policy)
 	w.recompileAll()
 }

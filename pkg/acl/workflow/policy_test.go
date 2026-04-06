@@ -286,3 +286,406 @@ func TestContainsWildcard(t *testing.T) {
 	assert.False(t, containsWildcard("ExactMatch"))
 	assert.False(t, containsWildcard(""))
 }
+
+// --- Edge case tests ---
+
+func TestEvaluate_DefaultActionFieldIgnored(t *testing.T) {
+	// DefaultAction is defined in the spec but Compile/Evaluate never reads it.
+	// This test documents that setting DefaultAction: "allow" has no effect.
+	cp := Compile([]wfaclapi.WorkflowAccessPolicy{{
+		Spec: wfaclapi.WorkflowAccessPolicySpec{
+			DefaultAction: wfaclapi.PolicyActionAllow,
+			Rules: []wfaclapi.WorkflowAccessPolicyRule{{
+				Callers: []wfaclapi.WorkflowCaller{{AppID: "app-a"}},
+				Operations: []wfaclapi.WorkflowOperationRule{{
+					Type:   wfaclapi.WorkflowOperationTypeWorkflow,
+					Name:   "SpecificWF",
+					Action: wfaclapi.PolicyActionAllow,
+				}},
+			}},
+		},
+	}})
+
+	// Even though DefaultAction is "allow", unmatched operations still deny.
+	assert.True(t, cp.Evaluate("app-a", OperationTypeWorkflow, "SpecificWF"))
+	assert.False(t, cp.Evaluate("app-a", OperationTypeWorkflow, "OtherWF"))
+}
+
+func TestEvaluate_EmptyCallersActsAsWildcard(t *testing.T) {
+	// When Callers is empty, the rule matches every caller because the
+	// callerAppIDs map has length 0 and the check at line 103 is skipped.
+	// In Kubernetes mode, MinItems=1 prevents this, but standalone mode allows it.
+	cp := Compile([]wfaclapi.WorkflowAccessPolicy{
+		makePolicy("test", []wfaclapi.WorkflowAccessPolicyRule{{
+			Callers: []wfaclapi.WorkflowCaller{}, // empty
+			Operations: []wfaclapi.WorkflowOperationRule{{
+				Type:   wfaclapi.WorkflowOperationTypeWorkflow,
+				Name:   "*",
+				Action: wfaclapi.PolicyActionAllow,
+			}},
+		}}),
+	})
+
+	assert.True(t, cp.Evaluate("any-app", OperationTypeWorkflow, "AnyWF"))
+	assert.True(t, cp.Evaluate("other-app", OperationTypeWorkflow, "AnyWF"))
+}
+
+func TestEvaluate_CrossPolicyConflictingActions(t *testing.T) {
+	// Two policies with identical patterns but opposite actions.
+	// Deny should win regardless of the order policies are provided.
+	allowPolicy := makePolicy("allow-policy", []wfaclapi.WorkflowAccessPolicyRule{{
+		Callers: []wfaclapi.WorkflowCaller{{AppID: "app-a"}},
+		Operations: []wfaclapi.WorkflowOperationRule{{
+			Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "Process*", Action: wfaclapi.PolicyActionAllow,
+		}},
+	}})
+	denyPolicy := makePolicy("deny-policy", []wfaclapi.WorkflowAccessPolicyRule{{
+		Callers: []wfaclapi.WorkflowCaller{{AppID: "app-a"}},
+		Operations: []wfaclapi.WorkflowOperationRule{{
+			Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "Process*", Action: wfaclapi.PolicyActionDeny,
+		}},
+	}})
+
+	// Allow first, deny second.
+	cp := Compile([]wfaclapi.WorkflowAccessPolicy{allowPolicy, denyPolicy})
+	assert.False(t, cp.Evaluate("app-a", OperationTypeWorkflow, "ProcessOrder"))
+
+	// Deny first, allow second — still deny wins.
+	cp = Compile([]wfaclapi.WorkflowAccessPolicy{denyPolicy, allowPolicy})
+	assert.False(t, cp.Evaluate("app-a", OperationTypeWorkflow, "ProcessOrder"))
+}
+
+func TestEvaluate_QuestionMarkGlob(t *testing.T) {
+	cp := Compile([]wfaclapi.WorkflowAccessPolicy{
+		makePolicy("test", []wfaclapi.WorkflowAccessPolicyRule{{
+			Callers: []wfaclapi.WorkflowCaller{{AppID: "app-a"}},
+			Operations: []wfaclapi.WorkflowOperationRule{{
+				Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "Process?", Action: wfaclapi.PolicyActionAllow,
+			}},
+		}}),
+	})
+
+	assert.True(t, cp.Evaluate("app-a", OperationTypeWorkflow, "ProcessA"))
+	assert.True(t, cp.Evaluate("app-a", OperationTypeWorkflow, "ProcessZ"))
+	assert.False(t, cp.Evaluate("app-a", OperationTypeWorkflow, "ProcessAB"))
+	assert.False(t, cp.Evaluate("app-a", OperationTypeWorkflow, "Process"))
+}
+
+func TestEvaluate_CharacterClassGlob(t *testing.T) {
+	cp := Compile([]wfaclapi.WorkflowAccessPolicy{
+		makePolicy("test", []wfaclapi.WorkflowAccessPolicyRule{{
+			Callers: []wfaclapi.WorkflowCaller{{AppID: "app-a"}},
+			Operations: []wfaclapi.WorkflowOperationRule{
+				{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "[A-Z]*", Action: wfaclapi.PolicyActionAllow},
+				{Type: wfaclapi.WorkflowOperationTypeActivity, Name: "Process[ABC]", Action: wfaclapi.PolicyActionAllow},
+			},
+		}}),
+	})
+
+	assert.True(t, cp.Evaluate("app-a", OperationTypeWorkflow, "ProcessOrder"))
+	assert.False(t, cp.Evaluate("app-a", OperationTypeWorkflow, "processOrder"))
+	assert.True(t, cp.Evaluate("app-a", OperationTypeActivity, "ProcessA"))
+	assert.True(t, cp.Evaluate("app-a", OperationTypeActivity, "ProcessC"))
+	assert.False(t, cp.Evaluate("app-a", OperationTypeActivity, "ProcessD"))
+}
+
+func TestEvaluate_CaseSensitive(t *testing.T) {
+	cp := Compile([]wfaclapi.WorkflowAccessPolicy{
+		makePolicy("test", []wfaclapi.WorkflowAccessPolicyRule{{
+			Callers: []wfaclapi.WorkflowCaller{{AppID: "app-a"}},
+			Operations: []wfaclapi.WorkflowOperationRule{
+				{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "ProcessOrder", Action: wfaclapi.PolicyActionAllow},
+				{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "Process*", Action: wfaclapi.PolicyActionAllow},
+			},
+		}}),
+	})
+
+	assert.True(t, cp.Evaluate("app-a", OperationTypeWorkflow, "ProcessOrder"))
+	assert.False(t, cp.Evaluate("app-a", OperationTypeWorkflow, "processorder"))
+	assert.False(t, cp.Evaluate("app-a", OperationTypeWorkflow, "PROCESSORDER"))
+	assert.True(t, cp.Evaluate("app-a", OperationTypeWorkflow, "ProcessAnything"))
+	assert.False(t, cp.Evaluate("app-a", OperationTypeWorkflow, "processanything"))
+}
+
+func TestEvaluate_TypeIsolation(t *testing.T) {
+	cp := Compile([]wfaclapi.WorkflowAccessPolicy{
+		makePolicy("test", []wfaclapi.WorkflowAccessPolicyRule{{
+			Callers: []wfaclapi.WorkflowCaller{{AppID: "app-a"}},
+			Operations: []wfaclapi.WorkflowOperationRule{
+				{Type: wfaclapi.WorkflowOperationTypeActivity, Name: "*", Action: wfaclapi.PolicyActionAllow},
+			},
+		}}),
+	})
+
+	// Activity rule should NOT match workflow queries.
+	assert.False(t, cp.Evaluate("app-a", OperationTypeWorkflow, "AnyWorkflow"))
+	assert.True(t, cp.Evaluate("app-a", OperationTypeActivity, "AnyActivity"))
+
+	// Reverse: workflow-only rule.
+	cp2 := Compile([]wfaclapi.WorkflowAccessPolicy{
+		makePolicy("test", []wfaclapi.WorkflowAccessPolicyRule{{
+			Callers: []wfaclapi.WorkflowCaller{{AppID: "app-a"}},
+			Operations: []wfaclapi.WorkflowOperationRule{
+				{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "*", Action: wfaclapi.PolicyActionAllow},
+			},
+		}}),
+	})
+
+	assert.True(t, cp2.Evaluate("app-a", OperationTypeWorkflow, "AnyWorkflow"))
+	assert.False(t, cp2.Evaluate("app-a", OperationTypeActivity, "AnyActivity"))
+}
+
+func TestEvaluate_MultipleRulesForSameCaller(t *testing.T) {
+	cp := Compile([]wfaclapi.WorkflowAccessPolicy{
+		makePolicy("test", []wfaclapi.WorkflowAccessPolicyRule{
+			{
+				Callers: []wfaclapi.WorkflowCaller{{AppID: "app-a"}},
+				Operations: []wfaclapi.WorkflowOperationRule{
+					{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "WF1", Action: wfaclapi.PolicyActionAllow},
+				},
+			},
+			{
+				Callers: []wfaclapi.WorkflowCaller{{AppID: "app-a"}},
+				Operations: []wfaclapi.WorkflowOperationRule{
+					{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "WF2", Action: wfaclapi.PolicyActionAllow},
+				},
+			},
+		}),
+	})
+
+	assert.True(t, cp.Evaluate("app-a", OperationTypeWorkflow, "WF1"))
+	assert.True(t, cp.Evaluate("app-a", OperationTypeWorkflow, "WF2"))
+	assert.False(t, cp.Evaluate("app-a", OperationTypeWorkflow, "WF3"))
+}
+
+func TestEvaluate_ExactMatchBeatsGlobAtSamePrefix(t *testing.T) {
+	cp := Compile([]wfaclapi.WorkflowAccessPolicy{
+		makePolicy("test", []wfaclapi.WorkflowAccessPolicyRule{{
+			Callers: []wfaclapi.WorkflowCaller{{AppID: "app-a"}},
+			Operations: []wfaclapi.WorkflowOperationRule{
+				{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "ProcessOrder*", Action: wfaclapi.PolicyActionAllow},
+				{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "ProcessOrder", Action: wfaclapi.PolicyActionDeny},
+			},
+		}}),
+	})
+
+	// Exact match "ProcessOrder" (deny) beats glob "ProcessOrder*" (allow)
+	// because isExact=true wins over isExact=false.
+	assert.False(t, cp.Evaluate("app-a", OperationTypeWorkflow, "ProcessOrder"))
+	// But "ProcessOrderX" only matches the glob, so it's allowed.
+	assert.True(t, cp.Evaluate("app-a", OperationTypeWorkflow, "ProcessOrderX"))
+}
+
+func TestEvaluate_EmptyOperationName(t *testing.T) {
+	cp := Compile([]wfaclapi.WorkflowAccessPolicy{
+		makePolicy("test", []wfaclapi.WorkflowAccessPolicyRule{{
+			Callers: []wfaclapi.WorkflowCaller{{AppID: "app-a"}},
+			Operations: []wfaclapi.WorkflowOperationRule{
+				{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "*", Action: wfaclapi.PolicyActionAllow},
+			},
+		}}),
+	})
+
+	// Empty operation name should still match "*".
+	assert.True(t, cp.Evaluate("app-a", OperationTypeWorkflow, ""))
+}
+
+func TestEvaluate_SpecialCharactersInName(t *testing.T) {
+	cp := Compile([]wfaclapi.WorkflowAccessPolicy{
+		makePolicy("test", []wfaclapi.WorkflowAccessPolicyRule{{
+			Callers: []wfaclapi.WorkflowCaller{{AppID: "app-a"}},
+			Operations: []wfaclapi.WorkflowOperationRule{
+				{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "my.workflow", Action: wfaclapi.PolicyActionAllow},
+				{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "my-workflow", Action: wfaclapi.PolicyActionAllow},
+				{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "my_workflow", Action: wfaclapi.PolicyActionAllow},
+			},
+		}}),
+	})
+
+	assert.True(t, cp.Evaluate("app-a", OperationTypeWorkflow, "my.workflow"))
+	assert.True(t, cp.Evaluate("app-a", OperationTypeWorkflow, "my-workflow"))
+	assert.True(t, cp.Evaluate("app-a", OperationTypeWorkflow, "my_workflow"))
+	assert.False(t, cp.Evaluate("app-a", OperationTypeWorkflow, "myXworkflow"))
+}
+
+func TestEvaluate_ManyPoliciesStress(t *testing.T) {
+	var policies []wfaclapi.WorkflowAccessPolicy
+	for i := 0; i < 50; i++ {
+		var ops []wfaclapi.WorkflowOperationRule
+		for j := 0; j < 10; j++ {
+			ops = append(ops, wfaclapi.WorkflowOperationRule{
+				Type:   wfaclapi.WorkflowOperationTypeWorkflow,
+				Name:   "WF_*",
+				Action: wfaclapi.PolicyActionDeny,
+			})
+		}
+		policies = append(policies, makePolicy("policy", []wfaclapi.WorkflowAccessPolicyRule{{
+			Callers:    []wfaclapi.WorkflowCaller{{AppID: "app-a"}},
+			Operations: ops,
+		}}))
+	}
+
+	// Add one policy that allows a specific workflow.
+	policies = append(policies, makePolicy("allow", []wfaclapi.WorkflowAccessPolicyRule{{
+		Callers: []wfaclapi.WorkflowCaller{{AppID: "app-a"}},
+		Operations: []wfaclapi.WorkflowOperationRule{{
+			Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "WF_SpecificOne", Action: wfaclapi.PolicyActionAllow,
+		}},
+	}}))
+
+	cp := Compile(policies)
+	// Exact match "WF_SpecificOne" (allow) beats glob "WF_*" (deny).
+	assert.True(t, cp.Evaluate("app-a", OperationTypeWorkflow, "WF_SpecificOne"))
+	assert.False(t, cp.Evaluate("app-a", OperationTypeWorkflow, "WF_Other"))
+}
+
+func TestCompile_AllRulesInvalidGlobSkipped(t *testing.T) {
+	cp := Compile([]wfaclapi.WorkflowAccessPolicy{
+		makePolicy("test", []wfaclapi.WorkflowAccessPolicyRule{{
+			Callers: []wfaclapi.WorkflowCaller{{AppID: "app-a"}},
+			Operations: []wfaclapi.WorkflowOperationRule{
+				{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "[invalid", Action: wfaclapi.PolicyActionAllow},
+				{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "[also-invalid", Action: wfaclapi.PolicyActionAllow},
+			},
+		}}),
+	})
+
+	// All operations invalid → rule has 0 compiled ops → not added.
+	// But CompiledPolicies is still non-nil (policies exist), so default deny.
+	assert.NotNil(t, cp)
+	assert.False(t, cp.Evaluate("app-a", OperationTypeWorkflow, "anything"))
+}
+
+func TestCompile_EmptyRulesInPolicy(t *testing.T) {
+	// Policy with nil rules — compiles to non-nil CompiledPolicies
+	// (policies exist = default deny), but with 0 compiled rules.
+	cp := Compile([]wfaclapi.WorkflowAccessPolicy{
+		makePolicy("empty", nil),
+	})
+
+	assert.NotNil(t, cp)
+	assert.False(t, cp.Evaluate("app-a", OperationTypeWorkflow, "anything"))
+}
+
+func TestEvaluate_CallerNotInAnyRule(t *testing.T) {
+	cp := Compile([]wfaclapi.WorkflowAccessPolicy{
+		makePolicy("test", []wfaclapi.WorkflowAccessPolicyRule{{
+			Callers: []wfaclapi.WorkflowCaller{{AppID: "app-a"}},
+			Operations: []wfaclapi.WorkflowOperationRule{
+				{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "*", Action: wfaclapi.PolicyActionAllow},
+			},
+		}}),
+	})
+
+	// app-b not in any rule → no match → default deny.
+	assert.False(t, cp.Evaluate("app-b", OperationTypeWorkflow, "AnyWF"))
+}
+
+func TestEvaluate_WildcardCallerWithDenyOverride(t *testing.T) {
+	cp := Compile([]wfaclapi.WorkflowAccessPolicy{
+		makePolicy("test", []wfaclapi.WorkflowAccessPolicyRule{
+			{
+				// Wildcard caller: allow all workflows.
+				Callers: []wfaclapi.WorkflowCaller{}, // empty = matches everyone
+				Operations: []wfaclapi.WorkflowOperationRule{
+					{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "*", Action: wfaclapi.PolicyActionAllow},
+				},
+			},
+			{
+				// Specific deny for app-a on SecretWF.
+				Callers: []wfaclapi.WorkflowCaller{{AppID: "app-a"}},
+				Operations: []wfaclapi.WorkflowOperationRule{
+					{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "SecretWF", Action: wfaclapi.PolicyActionDeny},
+				},
+			},
+		}),
+	})
+
+	// app-a: "SecretWF" — both rules match, but "SecretWF" (exact, deny) is more specific than "*" (glob, allow).
+	assert.False(t, cp.Evaluate("app-a", OperationTypeWorkflow, "SecretWF"))
+	// app-a: other workflows — only wildcard rule matches → allow.
+	assert.True(t, cp.Evaluate("app-a", OperationTypeWorkflow, "PublicWF"))
+	// app-b: SecretWF — only wildcard rule matches (app-b not in deny rule) → allow.
+	assert.True(t, cp.Evaluate("app-b", OperationTypeWorkflow, "SecretWF"))
+}
+
+// --- Standalone validation edge cases ---
+// These test how the engine handles invalid input that would be rejected by
+// Kubernetes but silently passes through in standalone mode (yaml.Unmarshal).
+
+func TestCompile_Standalone_InvalidActionSilentlyFails(t *testing.T) {
+	cp := Compile([]wfaclapi.WorkflowAccessPolicy{
+		makePolicy("test", []wfaclapi.WorkflowAccessPolicyRule{{
+			Callers: []wfaclapi.WorkflowCaller{{AppID: "app-a"}},
+			Operations: []wfaclapi.WorkflowOperationRule{
+				{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "WF", Action: wfaclapi.PolicyAction("invalid")},
+			},
+		}}),
+	})
+
+	// "invalid" action is not "allow", so Evaluate returns false (effective deny).
+	assert.False(t, cp.Evaluate("app-a", OperationTypeWorkflow, "WF"))
+}
+
+func TestCompile_Standalone_InvalidTypeSilentlyFails(t *testing.T) {
+	cp := Compile([]wfaclapi.WorkflowAccessPolicy{
+		makePolicy("test", []wfaclapi.WorkflowAccessPolicyRule{{
+			Callers: []wfaclapi.WorkflowCaller{{AppID: "app-a"}},
+			Operations: []wfaclapi.WorkflowOperationRule{
+				{Type: wfaclapi.WorkflowOperationType("bogus"), Name: "*", Action: wfaclapi.PolicyActionAllow},
+			},
+		}}),
+	})
+
+	// "bogus" type never matches workflow or activity queries → dead rule.
+	assert.False(t, cp.Evaluate("app-a", OperationTypeWorkflow, "WF"))
+	assert.False(t, cp.Evaluate("app-a", OperationTypeActivity, "Act"))
+}
+
+func TestCompile_Standalone_EmptyNamePattern(t *testing.T) {
+	cp := Compile([]wfaclapi.WorkflowAccessPolicy{
+		makePolicy("test", []wfaclapi.WorkflowAccessPolicyRule{{
+			Callers: []wfaclapi.WorkflowCaller{{AppID: "app-a"}},
+			Operations: []wfaclapi.WorkflowOperationRule{
+				{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "", Action: wfaclapi.PolicyActionAllow},
+			},
+		}}),
+	})
+
+	// Empty pattern only matches empty operation name.
+	assert.True(t, cp.Evaluate("app-a", OperationTypeWorkflow, ""))
+	assert.False(t, cp.Evaluate("app-a", OperationTypeWorkflow, "AnyWF"))
+}
+
+func TestCompile_Standalone_EmptyAppIDInCaller(t *testing.T) {
+	cp := Compile([]wfaclapi.WorkflowAccessPolicy{
+		makePolicy("test", []wfaclapi.WorkflowAccessPolicyRule{{
+			Callers: []wfaclapi.WorkflowCaller{{AppID: ""}},
+			Operations: []wfaclapi.WorkflowOperationRule{
+				{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "*", Action: wfaclapi.PolicyActionAllow},
+			},
+		}}),
+	})
+
+	// Empty AppID in callers map — only matches callers with empty ID.
+	assert.True(t, cp.Evaluate("", OperationTypeWorkflow, "WF"))
+	assert.False(t, cp.Evaluate("app-a", OperationTypeWorkflow, "WF"))
+}
+
+func TestCompile_Standalone_NoDefaultAction(t *testing.T) {
+	// DefaultAction is "" (omitted) — Compile ignores it, engine uses hard-coded deny.
+	cp := Compile([]wfaclapi.WorkflowAccessPolicy{{
+		Spec: wfaclapi.WorkflowAccessPolicySpec{
+			DefaultAction: "", // omitted in standalone YAML
+			Rules: []wfaclapi.WorkflowAccessPolicyRule{{
+				Callers: []wfaclapi.WorkflowCaller{{AppID: "app-a"}},
+				Operations: []wfaclapi.WorkflowOperationRule{
+					{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "Allowed", Action: wfaclapi.PolicyActionAllow},
+				},
+			}},
+		},
+	}})
+
+	assert.True(t, cp.Evaluate("app-a", OperationTypeWorkflow, "Allowed"))
+	assert.False(t, cp.Evaluate("app-a", OperationTypeWorkflow, "Other"))
+}

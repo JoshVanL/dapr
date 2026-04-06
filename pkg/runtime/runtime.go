@@ -67,6 +67,7 @@ import (
 	diagUtils "github.com/dapr/dapr/pkg/diagnostics/utils"
 	"github.com/dapr/dapr/pkg/internal/loader"
 	"github.com/dapr/dapr/pkg/internal/loader/disk"
+	"github.com/dapr/dapr/pkg/internal/loader/validate"
 	"github.com/dapr/dapr/pkg/internal/loader/kubernetes"
 	"github.com/dapr/dapr/pkg/messaging"
 	invokev1 "github.com/dapr/dapr/pkg/messaging/v1"
@@ -1437,6 +1438,11 @@ func loadWorkflowAccessPoliciesFromDir(dir string, appID string) ([]wfaclapi.Wor
 		}
 
 		if policy.Kind != "WorkflowAccessPolicy" {
+			continue
+		}
+
+		if err := validate.WorkflowAccessPolicy(&policy); err != nil {
+			log.Warnf("WorkflowAccessPolicy %q in %s failed validation: %s", policy.Name, name, err)
 			continue
 		}
 

@@ -90,6 +90,10 @@ func WithClusterNamespaceListFromStore(t *testing.T, store *store.Store) Option 
 	return handleClusterListResourceFromStore(t, "/api/v1/namespaces", store)
 }
 
+func WithClusterDaprWorkflowAccessPolicyListFromStore(t *testing.T, store *store.Store) Option {
+	return handleClusterListResourceFromStore(t, "/apis/dapr.io/v1alpha1/workflowaccesspolicies", store)
+}
+
 func WithClusterDaprHTTPEndpointList(t *testing.T, endpoints *httpendapi.HTTPEndpointList) Option {
 	return handleClusterListResource(t, "/apis/dapr.io/v1alpha1/httpendpoints", endpoints)
 }

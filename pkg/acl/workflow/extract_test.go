@@ -152,3 +152,92 @@ func TestExtractOperationName_Activity(t *testing.T) {
 		require.Error(t, err)
 	})
 }
+
+// --- Additional edge case tests ---
+
+func TestParseActorType_NameWithDots(t *testing.T) {
+	// Namespace with dots in the actor type string.
+	opType, ok := ParseActorType("dapr.internal.my.namespace.myapp.workflow")
+	assert.Equal(t, OperationTypeWorkflow, opType)
+	assert.True(t, ok)
+
+	opType, ok = ParseActorType("dapr.internal.my.namespace.myapp.activity")
+	assert.Equal(t, OperationTypeActivity, opType)
+	assert.True(t, ok)
+}
+
+func TestParseActorType_JustPrefix(t *testing.T) {
+	opType, ok := ParseActorType("dapr.internal.")
+	assert.Empty(t, opType)
+	assert.False(t, ok)
+}
+
+func TestExtractOperationName_WorkflowNilStartEvent(t *testing.T) {
+	req := &protos.CreateWorkflowInstanceRequest{
+		StartEvent: &protos.HistoryEvent{
+			// No ExecutionStarted event set.
+		},
+	}
+	data, err := proto.Marshal(req)
+	require.NoError(t, err)
+
+	_, _, err = ExtractOperationName(OperationTypeWorkflow, "CreateWorkflowInstance", data)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ExecutionStarted")
+}
+
+func TestExtractOperationName_WorkflowEmptyData(t *testing.T) {
+	_, _, err := ExtractOperationName(OperationTypeWorkflow, "CreateWorkflowInstance", []byte{})
+	// Empty protobuf unmarshals to zero-value struct, but StartEvent will be nil.
+	// The code checks for nil ExecutionStarted and returns an error.
+	require.Error(t, err)
+}
+
+func TestExtractOperationName_ActivityNilTaskScheduled(t *testing.T) {
+	his := &protos.HistoryEvent{
+		// No TaskScheduled event set.
+	}
+	data, err := proto.Marshal(his)
+	require.NoError(t, err)
+
+	_, _, err = ExtractOperationName(OperationTypeActivity, "Execute", data)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "TaskScheduled")
+}
+
+func TestExtractOperationName_ActivityEmptyData(t *testing.T) {
+	_, _, err := ExtractOperationName(OperationTypeActivity, "Execute", []byte{})
+	// Empty protobuf → nil TaskScheduled → error.
+	require.Error(t, err)
+}
+
+func TestExtractOperationName_UnknownOpType(t *testing.T) {
+	name, subject, err := ExtractOperationName(OperationType("unknown"), "AnyMethod", nil)
+	require.NoError(t, err)
+	assert.False(t, subject)
+	assert.Empty(t, name)
+}
+
+func TestExtractOperationName_WorkflowNonSubjectMethods(t *testing.T) {
+	// All methods other than CreateWorkflowInstance should not be subject to enforcement.
+	for _, method := range []string{"AddWorkflowEvent", "PurgeWorkflowState", "GetWorkflowState", "AnyOtherMethod"} {
+		t.Run(method, func(t *testing.T) {
+			name, subject, err := ExtractOperationName(OperationTypeWorkflow, method, nil)
+			require.NoError(t, err)
+			assert.False(t, subject)
+			assert.Empty(t, name)
+		})
+	}
+}
+
+func TestExtractOperationName_ActivityNonSubjectMethods(t *testing.T) {
+	// All methods other than Execute should not be subject to enforcement.
+	for _, method := range []string{"SomeOtherMethod", "Init", "Reminder", ""} {
+		t.Run(method, func(t *testing.T) {
+			name, subject, err := ExtractOperationName(OperationTypeActivity, method, nil)
+			require.NoError(t, err)
+			assert.False(t, subject)
+			assert.Empty(t, name)
+		})
+	}
+}
