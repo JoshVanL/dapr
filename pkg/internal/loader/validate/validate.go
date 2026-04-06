@@ -13,8 +13,10 @@ limitations under the License.
 
 // Package validate provides CRD-based validation for Dapr resources in
 // standalone mode. It parses the embedded CRD YAML, builds a structural
-// schema, and compiles a CEL validator that enforces the same constraints
-// the Kubernetes API server would enforce via CRD admission.
+// schema, and validates resources against both OpenAPI schema constraints
+// (enum, minLength, minItems, required, etc.) and CEL XValidation rules.
+// This gives standalone mode the same validation the Kubernetes API server
+// provides via CRD admission.
 package validate
 
 import (
@@ -28,6 +30,7 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	structuralschema "k8s.io/apiextensions-apiserver/pkg/apiserver/schema"
 	"k8s.io/apiextensions-apiserver/pkg/apiserver/schema/cel"
+	apivalidation "k8s.io/apiextensions-apiserver/pkg/apiserver/validation"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/util/validation/field"
@@ -41,11 +44,12 @@ var log = logger.NewLogger("dapr.loader.validate")
 // Validator validates resources against the OpenAPI schema and CEL rules
 // embedded in a CRD YAML. It is safe for concurrent use.
 type Validator struct {
-	celValidator *cel.Validator
-	initOnce     sync.Once
-	initErr      error
-	crdYAML      []byte
-	name         string
+	celValidator    *cel.Validator
+	schemaValidator apivalidation.SchemaValidator
+	initOnce        sync.Once
+	initErr         error
+	crdYAML         []byte
+	name            string
 }
 
 // NewValidator creates a Validator that will lazily parse the given CRD YAML
@@ -85,6 +89,7 @@ func (v *Validator) init() {
 
 	v1Schema := crd.Spec.Versions[0].Schema.OpenAPIV3Schema
 
+	// Convert v1 JSONSchemaProps to internal for both validators.
 	var internalSchema apiextinternal.JSONSchemaProps
 	if err := apiextconv.Convert_v1_JSONSchemaProps_To_apiextensions_JSONSchemaProps(
 		v1Schema, &internalSchema, nil,
@@ -93,21 +98,33 @@ func (v *Validator) init() {
 		return
 	}
 
+	// Build the OpenAPI schema validator (validates enum, minLength, minItems,
+	// required, type constraints, etc.).
+	schemaValidator, _, err := apivalidation.NewSchemaValidator(&internalSchema)
+	if err != nil {
+		v.initErr = fmt.Errorf("failed to create schema validator: %w", err)
+		return
+	}
+	v.schemaValidator = schemaValidator
+
+	// Build structural schema for CEL validation.
 	structural, err := structuralschema.NewStructural(&internalSchema)
 	if err != nil {
 		v.initErr = fmt.Errorf("failed to create structural schema: %w", err)
 		return
 	}
 
+	// Compile CEL validators from XValidation rules (if any).
 	v.celValidator = cel.NewValidator(structural, true, celconfig.PerCallLimit)
 }
 
-// Validate checks the given resource against the CRD schema and CEL rules.
-// The resource must be JSON-serializable. Returns nil if valid.
+// Validate checks the given resource against both the CRD's OpenAPI schema
+// constraints (enum, minLength, minItems, required, etc.) and any CEL
+// XValidation rules. The resource must be JSON-serializable. Returns nil if valid.
 func (v *Validator) Validate(resource any) error {
 	v.initOnce.Do(v.init)
 	if v.initErr != nil {
-		log.Warnf("%s CEL validator unavailable, skipping validation: %s", v.name, v.initErr)
+		log.Warnf("%s validator unavailable, skipping validation: %s", v.name, v.initErr)
 		return nil
 	}
 
@@ -121,7 +138,11 @@ func (v *Validator) Validate(resource any) error {
 		return fmt.Errorf("failed to unmarshal %s: %w", v.name, err)
 	}
 
-	errs, _ := v.celValidator.Validate(
+	// Validate against OpenAPI schema (enum, minLength, minItems, etc.).
+	errs := apivalidation.ValidateCustomResource(field.NewPath(""), obj, v.schemaValidator)
+
+	// Validate against CEL XValidation rules (if any are defined in the CRD).
+	celErrs, _ := v.celValidator.Validate(
 		context.Background(),
 		field.NewPath(""),
 		nil,
@@ -129,6 +150,7 @@ func (v *Validator) Validate(resource any) error {
 		nil,
 		celconfig.RuntimeCELCostBudget,
 	)
+	errs = append(errs, celErrs...)
 
 	if len(errs) > 0 {
 		return errs.ToAggregate()
