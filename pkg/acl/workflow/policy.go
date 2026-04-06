@@ -135,8 +135,8 @@ func (cp *CompiledPolicies) Evaluate(callerAppID string, opType OperationType, o
 	return bestMatch.action == wfaclapi.PolicyActionAllow
 }
 
-// isMoreSpecific returns true if a is more specific than b.
-// Specificity rules (from proposal):
+// isMoreSpecific returns true if a is more specific than b. Specificity rules
+// (from proposal):
 // 1. Longest literal prefix wins.
 // 2. Exact match beats wildcard match.
 // 3. Deny beats allow at same specificity.

@@ -29,7 +29,6 @@ import (
 	workflowacl "github.com/dapr/dapr/pkg/acl/workflow"
 	actorapi "github.com/dapr/dapr/pkg/actors/api"
 	actorerrors "github.com/dapr/dapr/pkg/actors/errors"
-	"github.com/dapr/dapr/pkg/security/spiffe"
 	"github.com/dapr/dapr/pkg/api/grpc/metadata"
 	diag "github.com/dapr/dapr/pkg/diagnostics"
 	diagConsts "github.com/dapr/dapr/pkg/diagnostics/consts"
@@ -38,6 +37,7 @@ import (
 	invokev1 "github.com/dapr/dapr/pkg/messaging/v1"
 	commonv1pb "github.com/dapr/dapr/pkg/proto/common/v1"
 	internalv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
+	"github.com/dapr/dapr/pkg/security/spiffe"
 	"github.com/dapr/dapr/pkg/sse"
 )
 
@@ -408,16 +408,16 @@ func (a *api) callLocalValidateACL(ctx context.Context, req *invokev1.InvokeMeth
 // Returns nil if no policy applies or the call is allowed; returns
 // PermissionDenied if denied.
 func (a *api) callActorValidateWorkflowACL(ctx context.Context, in *internalv1pb.InternalInvokeRequest) error {
-	policies := a.workflowAccessPolicies.Load()
-	if policies == nil {
-		// No policies loaded — allow all (backward compatible).
-		return nil
-	}
-
 	actorType := in.GetActor().GetActorType()
 	opType, isWorkflowActor := workflowacl.ParseActorType(actorType)
 	if !isWorkflowActor {
 		// Not a workflow/activity actor — skip policy check.
+		return nil
+	}
+
+	policies := a.workflowAccessPolicies.Load()
+	if policies == nil {
+		// No policies loaded — allow all (backward compatible).
 		return nil
 	}
 

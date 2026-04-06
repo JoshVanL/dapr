@@ -200,7 +200,9 @@ func New(t *testing.T, fopts ...Option) *Operator {
 				listResiliencyFn:      opts.listResiliencyFn,
 				listSubscriptionsFn:   opts.listSubscriptionsFn,
 				listSubscriptionsV2Fn: opts.listSubscriptionsV2Fn,
-				subscriptionUpdateFn:  opts.subscriptionUpdateFn,
+				subscriptionUpdateFn:             opts.subscriptionUpdateFn,
+				listWorkflowAccessPoliciesFn:     opts.listWorkflowAccessPoliciesFn,
+				workflowAccessPolicyUpdateFn:     opts.workflowAccessPolicyUpdateFn,
 			}
 
 			operatorv1.RegisterOperatorServer(s, srv)
