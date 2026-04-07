@@ -289,9 +289,8 @@ func TestContainsWildcard(t *testing.T) {
 
 // --- Edge case tests ---
 
-func TestEvaluate_DefaultActionFieldIgnored(t *testing.T) {
-	// DefaultAction is defined in the spec but Compile/Evaluate never reads it.
-	// This test documents that setting DefaultAction: "allow" has no effect.
+func TestEvaluate_DefaultActionAllow(t *testing.T) {
+	// When DefaultAction is "allow", unmatched operations are allowed.
 	cp := Compile([]wfaclapi.WorkflowAccessPolicy{{
 		Spec: wfaclapi.WorkflowAccessPolicySpec{
 			DefaultAction: wfaclapi.PolicyActionAllow,
@@ -300,21 +299,72 @@ func TestEvaluate_DefaultActionFieldIgnored(t *testing.T) {
 				Operations: []wfaclapi.WorkflowOperationRule{{
 					Type:   wfaclapi.WorkflowOperationTypeWorkflow,
 					Name:   "SpecificWF",
+					Action: wfaclapi.PolicyActionDeny,
+				}},
+			}},
+		},
+	}})
+
+	// SpecificWF is explicitly denied.
+	assert.False(t, cp.Evaluate("app-a", OperationTypeWorkflow, "SpecificWF"))
+	// OtherWF has no matching rule — DefaultAction "allow" kicks in.
+	assert.True(t, cp.Evaluate("app-a", OperationTypeWorkflow, "OtherWF"))
+}
+
+func TestEvaluate_DefaultActionDeny(t *testing.T) {
+	// When DefaultAction is "deny" (or empty), unmatched operations are denied.
+	cp := Compile([]wfaclapi.WorkflowAccessPolicy{{
+		Spec: wfaclapi.WorkflowAccessPolicySpec{
+			DefaultAction: wfaclapi.PolicyActionDeny,
+			Rules: []wfaclapi.WorkflowAccessPolicyRule{{
+				Callers: []wfaclapi.WorkflowCaller{{AppID: "app-a"}},
+				Operations: []wfaclapi.WorkflowOperationRule{{
+					Type:   wfaclapi.WorkflowOperationTypeWorkflow,
+					Name:   "AllowedWF",
 					Action: wfaclapi.PolicyActionAllow,
 				}},
 			}},
 		},
 	}})
 
-	// Even though DefaultAction is "allow", unmatched operations still deny.
-	assert.True(t, cp.Evaluate("app-a", OperationTypeWorkflow, "SpecificWF"))
+	assert.True(t, cp.Evaluate("app-a", OperationTypeWorkflow, "AllowedWF"))
 	assert.False(t, cp.Evaluate("app-a", OperationTypeWorkflow, "OtherWF"))
 }
 
-func TestEvaluate_EmptyCallersActsAsWildcard(t *testing.T) {
-	// When Callers is empty, the rule matches every caller because the
-	// callerAppIDs map has length 0 and the check at line 103 is skipped.
-	// In Kubernetes mode, MinItems=1 prevents this, but standalone mode allows it.
+func TestEvaluate_DefaultActionEmpty(t *testing.T) {
+	// Empty DefaultAction defaults to "deny".
+	cp := Compile([]wfaclapi.WorkflowAccessPolicy{{
+		Spec: wfaclapi.WorkflowAccessPolicySpec{
+			DefaultAction: "", // empty = deny
+			Rules: []wfaclapi.WorkflowAccessPolicyRule{{
+				Callers: []wfaclapi.WorkflowCaller{{AppID: "app-a"}},
+				Operations: []wfaclapi.WorkflowOperationRule{{
+					Type:   wfaclapi.WorkflowOperationTypeWorkflow,
+					Name:   "AllowedWF",
+					Action: wfaclapi.PolicyActionAllow,
+				}},
+			}},
+		},
+	}})
+
+	assert.True(t, cp.Evaluate("app-a", OperationTypeWorkflow, "AllowedWF"))
+	assert.False(t, cp.Evaluate("app-a", OperationTypeWorkflow, "OtherWF"))
+}
+
+func TestEvaluate_MultiplePoliciesDenyWinsDefault(t *testing.T) {
+	// If ANY policy has DefaultAction deny, the aggregate is deny.
+	cp := Compile([]wfaclapi.WorkflowAccessPolicy{
+		{Spec: wfaclapi.WorkflowAccessPolicySpec{DefaultAction: wfaclapi.PolicyActionAllow}},
+		{Spec: wfaclapi.WorkflowAccessPolicySpec{DefaultAction: wfaclapi.PolicyActionDeny}},
+	})
+
+	assert.False(t, cp.Evaluate("app-a", OperationTypeWorkflow, "AnyWF"))
+}
+
+func TestEvaluate_EmptyCallersSkipped(t *testing.T) {
+	// Rules with empty callers are skipped as defense-in-depth.
+	// The CRD validates MinItems=1, but standalone mode could bypass validation.
+	// An empty callers list would otherwise match ALL callers.
 	cp := Compile([]wfaclapi.WorkflowAccessPolicy{
 		makePolicy("test", []wfaclapi.WorkflowAccessPolicyRule{{
 			Callers: []wfaclapi.WorkflowCaller{}, // empty
@@ -326,8 +376,8 @@ func TestEvaluate_EmptyCallersActsAsWildcard(t *testing.T) {
 		}}),
 	})
 
-	assert.True(t, cp.Evaluate("any-app", OperationTypeWorkflow, "AnyWF"))
-	assert.True(t, cp.Evaluate("other-app", OperationTypeWorkflow, "AnyWF"))
+	// Empty callers rule is skipped → no matching rule → default deny.
+	assert.False(t, cp.Evaluate("any-app", OperationTypeWorkflow, "AnyWF"))
 }
 
 func TestEvaluate_CrossPolicyConflictingActions(t *testing.T) {
@@ -581,12 +631,12 @@ func TestEvaluate_CallerNotInAnyRule(t *testing.T) {
 	assert.False(t, cp.Evaluate("app-b", OperationTypeWorkflow, "AnyWF"))
 }
 
-func TestEvaluate_WildcardCallerWithDenyOverride(t *testing.T) {
+func TestEvaluate_BroadCallerWithDenyOverride(t *testing.T) {
 	cp := Compile([]wfaclapi.WorkflowAccessPolicy{
 		makePolicy("test", []wfaclapi.WorkflowAccessPolicyRule{
 			{
-				// Wildcard caller: allow all workflows.
-				Callers: []wfaclapi.WorkflowCaller{}, // empty = matches everyone
+				// Both app-a and app-b are allowed for all workflows.
+				Callers: []wfaclapi.WorkflowCaller{{AppID: "app-a"}, {AppID: "app-b"}},
 				Operations: []wfaclapi.WorkflowOperationRule{
 					{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "*", Action: wfaclapi.PolicyActionAllow},
 				},
@@ -603,10 +653,12 @@ func TestEvaluate_WildcardCallerWithDenyOverride(t *testing.T) {
 
 	// app-a: "SecretWF" — both rules match, but "SecretWF" (exact, deny) is more specific than "*" (glob, allow).
 	assert.False(t, cp.Evaluate("app-a", OperationTypeWorkflow, "SecretWF"))
-	// app-a: other workflows — only wildcard rule matches → allow.
+	// app-a: other workflows — only broad rule matches → allow.
 	assert.True(t, cp.Evaluate("app-a", OperationTypeWorkflow, "PublicWF"))
-	// app-b: SecretWF — only wildcard rule matches (app-b not in deny rule) → allow.
+	// app-b: SecretWF — only broad rule matches (app-b not in deny rule) → allow.
 	assert.True(t, cp.Evaluate("app-b", OperationTypeWorkflow, "SecretWF"))
+	// app-c: not in any rule → default deny.
+	assert.False(t, cp.Evaluate("app-c", OperationTypeWorkflow, "PublicWF"))
 }
 
 // --- Standalone validation edge cases ---
@@ -673,7 +725,7 @@ func TestCompile_Standalone_EmptyAppIDInCaller(t *testing.T) {
 }
 
 func TestCompile_Standalone_NoDefaultAction(t *testing.T) {
-	// DefaultAction is "" (omitted) — Compile ignores it, engine uses hard-coded deny.
+	// DefaultAction is "" (omitted) — treated as "deny".
 	cp := Compile([]wfaclapi.WorkflowAccessPolicy{{
 		Spec: wfaclapi.WorkflowAccessPolicySpec{
 			DefaultAction: "", // omitted in standalone YAML

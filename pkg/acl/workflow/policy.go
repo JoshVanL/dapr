@@ -27,7 +27,8 @@ var log = logger.NewLogger("dapr.acl.workflow")
 // target app. It is built from one or more WorkflowAccessPolicy resources that
 // apply to the app (via scopes).
 type CompiledPolicies struct {
-	rules []compiledRule
+	rules         []compiledRule
+	defaultAction wfaclapi.PolicyAction // "allow" or "deny" — deny if any policy says deny
 }
 
 type compiledRule struct {
@@ -51,9 +52,30 @@ func Compile(policies []wfaclapi.WorkflowAccessPolicy) *CompiledPolicies {
 		return nil
 	}
 
+	// Compute the aggregate default action. If ANY policy specifies "deny"
+	// (or leaves it empty, which defaults to "deny"), the result is deny.
+	// Only if ALL policies explicitly say "allow" does the default become allow.
+	defaultAction := wfaclapi.PolicyActionAllow
+	for _, policy := range policies {
+		da := policy.Spec.DefaultAction
+		if da == "" || da == wfaclapi.PolicyActionDeny {
+			defaultAction = wfaclapi.PolicyActionDeny
+			break
+		}
+	}
+
 	var rules []compiledRule
 	for _, policy := range policies {
 		for _, rule := range policy.Spec.Rules {
+			// Defense-in-depth: skip rules with empty callers. The CRD
+			// validates MinItems=1 but standalone mode could bypass validation.
+			// An empty callers list would match ALL callers, violating
+			// least-privilege.
+			if len(rule.Callers) == 0 {
+				log.Warnf("WorkflowAccessPolicy '%s' has a rule with empty callers, skipping (defense-in-depth)", policy.Name)
+				continue
+			}
+
 			cr := compiledRule{
 				callerAppIDs: make(map[string]struct{}, len(rule.Callers)),
 			}
@@ -84,7 +106,26 @@ func Compile(policies []wfaclapi.WorkflowAccessPolicy) *CompiledPolicies {
 		}
 	}
 
-	return &CompiledPolicies{rules: rules}
+	return &CompiledPolicies{rules: rules, defaultAction: defaultAction}
+}
+
+// IsCallerKnown checks whether the given caller appears in ANY rule's callers
+// list. Used for methods where we can't extract a specific operation name
+// (e.g., AddWorkflowEvent, PurgeWorkflowState) — if the caller isn't known
+// to any rule, they have no business touching this workflow.
+func (cp *CompiledPolicies) IsCallerKnown(callerAppID string) bool {
+	if cp == nil {
+		return true
+	}
+
+	for i := range cp.rules {
+		rule := &cp.rules[i]
+		if _, ok := rule.callerAppIDs[callerAppID]; ok {
+			return true
+		}
+	}
+
+	return false
 }
 
 // Evaluate checks whether the given caller is allowed to perform the specified
@@ -128,8 +169,8 @@ func (cp *CompiledPolicies) Evaluate(callerAppID string, opType OperationType, o
 	}
 
 	if bestMatch == nil {
-		// No rule matched — default deny when policies exist.
-		return false
+		// No rule matched — use the aggregate default action.
+		return cp.defaultAction == wfaclapi.PolicyActionAllow
 	}
 
 	return bestMatch.action == wfaclapi.PolicyActionAllow

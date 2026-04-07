@@ -30,6 +30,7 @@ type PolicyRecompiler func(policies *workflowacl.CompiledPolicies)
 
 // WorkflowAccessPolicyOptions holds options for creating a WorkflowAccessPolicy reconciler.
 type WorkflowAccessPolicyOptions struct {
+	AppID      string
 	Loader     loader.Interface
 	CompStore  *compstore.ComponentStore
 	Recompiler PolicyRecompiler
@@ -37,6 +38,7 @@ type WorkflowAccessPolicyOptions struct {
 }
 
 type workflowAccessPolicies struct {
+	appID      string
 	store      *compstore.ComponentStore
 	recompiler PolicyRecompiler
 	loader.Loader[wfaclapi.WorkflowAccessPolicy]
@@ -49,6 +51,7 @@ func NewWorkflowAccessPolicies(opts WorkflowAccessPolicyOptions) *Reconciler[wfa
 		clock:   clock.RealClock{},
 		manager: &workflowAccessPolicies{
 			Loader:     opts.Loader.WorkflowAccessPolicies(),
+			appID:      opts.AppID,
 			store:      opts.CompStore,
 			recompiler: opts.Recompiler,
 		},
@@ -57,15 +60,21 @@ func NewWorkflowAccessPolicies(opts WorkflowAccessPolicyOptions) *Reconciler[wfa
 	return r
 }
 
-// recompileAll fetches all policies from the compstore, compiles them, and
-// atomically swaps them on the gRPC API.
+// recompileAll fetches all policies from the compstore, filters by app scope,
+// compiles them, and atomically swaps them on the gRPC API.
 //
 //nolint:unused
 func (w *workflowAccessPolicies) recompileAll() {
-	policies := w.store.ListWorkflowAccessPolicies()
-	compiled := workflowacl.Compile(policies)
+	all := w.store.ListWorkflowAccessPolicies()
+	var scoped []wfaclapi.WorkflowAccessPolicy
+	for _, p := range all {
+		if p.IsAppScoped(w.appID) {
+			scoped = append(scoped, p)
+		}
+	}
+	compiled := workflowacl.Compile(scoped)
 	w.recompiler(compiled)
-	log.Infof("Recompiled %d workflow access policy resource(s)", len(policies))
+	log.Infof("Recompiled %d workflow access policy resource(s) (of %d total)", len(scoped), len(all))
 }
 
 // The go linter does not yet understand that these functions are being used by

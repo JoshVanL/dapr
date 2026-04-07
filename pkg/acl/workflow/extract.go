@@ -59,9 +59,10 @@ func ParseActorType(actorType string) (OperationType, bool) {
 
 // ExtractAppIDFromActorType extracts the app ID from a workflow/activity actor
 // type string. The format is "dapr.internal.<namespace>.<appID>.workflow" or
-// "dapr.internal.<namespace>.<appID>.activity". Returns empty string if the
-// format is not recognized.
-func ExtractAppIDFromActorType(actorType string) string {
+// "dapr.internal.<namespace>.<appID>.activity". The namespace is required to
+// correctly split the actor type when either namespace or appID contains dots.
+// Returns empty string if the format is not recognized.
+func ExtractAppIDFromActorType(actorType string, namespace string) string {
 	// Strip the "dapr.internal." prefix.
 	rest := strings.TrimPrefix(actorType, actorTypePrefix)
 	if rest == actorType {
@@ -78,7 +79,13 @@ func ExtractAppIDFromActorType(actorType string) string {
 		return ""
 	}
 
-	// rest is now "<namespace>.<appID>". The appID is the last segment.
+	// rest is now "<namespace>.<appID>". Strip the known namespace prefix.
+	prefix := namespace + "."
+	if strings.HasPrefix(rest, prefix) {
+		return rest[len(prefix):]
+	}
+
+	// Fallback if namespace doesn't match (shouldn't happen in practice).
 	if idx := strings.LastIndex(rest, "."); idx >= 0 {
 		return rest[idx+1:]
 	}

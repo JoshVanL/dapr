@@ -735,6 +735,7 @@ func (a *DaprRuntime) initRuntime(ctx context.Context) error {
 		// Enable hot-reloading of workflow access policies so that changes
 		// take effect without restarting the sidecar.
 		a.reloader.SetPolicyRecompiler(reconciler.WorkflowAccessPolicyOptions{
+			AppID:     a.runtimeConfig.id,
 			Loader:    a.reloader.Loader(),
 			CompStore: a.compStore,
 			Recompiler: func(compiled *workflowacl.CompiledPolicies) {
@@ -1447,6 +1448,11 @@ func (a *DaprRuntime) buildWorkflowACLChecker() actorrouter.WorkflowACLChecker {
 			return status.Errorf(codes.Internal, "workflow access policy: failed to extract operation name: %v", err)
 		}
 		if !subject {
+			if !policies.IsCallerKnown(callerAppID) {
+				return status.Errorf(codes.PermissionDenied,
+					"workflow access policy: app '%s' is not authorized to access workflows",
+					callerAppID)
+			}
 			return nil
 		}
 
