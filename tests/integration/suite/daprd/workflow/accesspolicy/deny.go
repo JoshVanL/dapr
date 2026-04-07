@@ -68,7 +68,7 @@ func (d *deny) Setup(t *testing.T) []framework.Option {
 	policyStore.Add(&wfaclapi.WorkflowAccessPolicy{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "dapr.io/v1alpha1", Kind: "WorkflowAccessPolicy"},
 		ObjectMeta: metav1.ObjectMeta{Name: "deny-test", Namespace: "default"},
-		Scoped:     common.Scoped{}, // empty scopes = applies to all apps
+		Scoped:     common.Scoped{Scopes: []string{"wfacl-target"}},
 		Spec: wfaclapi.WorkflowAccessPolicySpec{
 			DefaultAction: wfaclapi.PolicyActionDeny,
 			Rules: []wfaclapi.WorkflowAccessPolicyRule{{

@@ -17,7 +17,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -105,18 +104,13 @@ func isPermissionDenied(err error) bool {
 	}
 
 	// Walk the error chain for wrapped gRPC errors.
-	var unwrapped error = err
-	for unwrapped != nil {
+	for unwrapped := errors.Unwrap(err); unwrapped != nil; unwrapped = errors.Unwrap(unwrapped) {
 		if st, ok := status.FromError(unwrapped); ok && st.Code() == codes.PermissionDenied {
 			return true
 		}
-		unwrapped = errors.Unwrap(unwrapped)
 	}
 
-	// Fallback: check the error string for the gRPC code.
-	// This handles cases where the gRPC status is embedded in a
-	// non-wrapping error (e.g., from the actor router layer).
-	return strings.Contains(err.Error(), "code = PermissionDenied")
+	return false
 }
 
 // failChildWorkflow creates a SubOrchestrationInstanceFailed event on the

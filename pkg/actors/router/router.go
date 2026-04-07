@@ -49,8 +49,9 @@ type Interface interface {
 	CallStream(ctx context.Context, req *internalv1pb.InternalInvokeRequest, fn func(*internalv1pb.InternalInvokeResponse) (bool, error)) error
 }
 
-// WorkflowACLChecker validates workflow access policies for actor calls.
-// Returns nil if the call is allowed, or an error (PermissionDenied) if denied.
+// WorkflowACLChecker validates workflow access policies for local actor calls.
+// For remote calls, enforcement happens at the callee's CallActor gRPC handler.
+// For local calls (same sidecar), this checker provides the same enforcement.
 type WorkflowACLChecker func(callerAppID string, req *internalv1pb.InternalInvokeRequest) error
 
 type Options struct {
@@ -70,7 +71,7 @@ type router struct {
 	appID       string
 	workflowACL WorkflowACLChecker
 
-	table      table.Interface
+	table     table.Interface
 	placement  placement.Interface
 	resiliency resiliency.Provider
 	reminders  reminders.Interface
@@ -233,15 +234,6 @@ func (r *router) callReminder(ctx context.Context, req *api.Reminder) error {
 }
 
 func (r *router) callActor(ctx context.Context, req *internalv1pb.InternalInvokeRequest) (*internalv1pb.InternalInvokeResponse, error) {
-	// Check workflow access policy before routing. This ensures enforcement
-	// works regardless of whether the actor is placed locally or remotely.
-	// Wrap PermissionDenied as a permanent error to prevent retries.
-	if r.workflowACL != nil {
-		if err := r.workflowACL(r.appID, req); err != nil {
-			return nil, backoff.Permanent(err)
-		}
-	}
-
 	lar, cctx, cancel, err := r.placement.LookupActor(ctx, &api.LookupActorRequest{
 		ActorType: req.GetActor().GetActorType(),
 		ActorID:   req.GetActor().GetActorId(),
@@ -253,6 +245,16 @@ func (r *router) callActor(ctx context.Context, req *internalv1pb.InternalInvoke
 	if lar.Local {
 		defer cancel(nil)
 		ctx = cctx
+
+		// For local actor calls, enforce workflow access policies here since
+		// the call won't go through the remote CallActor gRPC handler where
+		// enforcement normally happens. This ensures same-app workflow calls
+		// are also subject to policy enforcement.
+		if r.workflowACL != nil {
+			if err := r.workflowACL(r.appID, req); err != nil {
+				return nil, backoff.Permanent(err)
+			}
+		}
 
 		var resp *internalv1pb.InternalInvokeResponse
 		resp, err = r.callLocalActor(ctx, req)

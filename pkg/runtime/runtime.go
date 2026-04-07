@@ -26,7 +26,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
@@ -140,7 +139,6 @@ type DaprRuntime struct {
 	runnerCloser          *concurrency.RunnerCloserManager
 	clock                 clock.Clock
 	reloader              *hotreload.Reloader
-	workflowPolicies      atomic.Pointer[workflowacl.CompiledPolicies]
 
 	grpcAPIServer      grpc.Server
 	grpcInternalServer grpc.Server
@@ -740,7 +738,6 @@ func (a *DaprRuntime) initRuntime(ctx context.Context) error {
 			Loader:    a.reloader.Loader(),
 			CompStore: a.compStore,
 			Recompiler: func(compiled *workflowacl.CompiledPolicies) {
-				a.workflowPolicies.Store(compiled)
 				a.daprGRPCAPI.SetWorkflowAccessPolicies(compiled)
 			},
 			Healthz: a.runtimeConfig.healthz,
@@ -1388,7 +1385,6 @@ func (a *DaprRuntime) loadWorkflowAccessPoliciesKubernetes(ctx context.Context) 
 	}
 
 	compiled := workflowacl.Compile(policies)
-	a.workflowPolicies.Store(compiled)
 	a.daprGRPCAPI.SetWorkflowAccessPolicies(compiled)
 
 	if compiled != nil {
@@ -1414,7 +1410,6 @@ func (a *DaprRuntime) loadWorkflowAccessPoliciesStandalone(ctx context.Context) 
 	}
 
 	compiled := workflowacl.Compile(policies)
-	a.workflowPolicies.Store(compiled)
 	a.daprGRPCAPI.SetWorkflowAccessPolicies(compiled)
 
 	if compiled != nil {
@@ -1425,15 +1420,15 @@ func (a *DaprRuntime) loadWorkflowAccessPoliciesStandalone(ctx context.Context) 
 }
 
 // buildWorkflowACLChecker creates a WorkflowACLChecker for the actor router.
-// This enables workflow access policy enforcement for both local and remote
-// actor calls, regardless of where placement puts the actor.
+// This enforces workflow access policies on local actor calls (same sidecar).
+// Remote calls are enforced at the callee's CallActor gRPC handler.
 func (a *DaprRuntime) buildWorkflowACLChecker() actorrouter.WorkflowACLChecker {
 	if !a.globalConfig.IsFeatureEnabled(config.WorkflowAccessPolicy) {
 		return nil
 	}
 
 	return func(callerAppID string, req *internalv1pb.InternalInvokeRequest) error {
-		policies := a.workflowPolicies.Load()
+		policies := a.daprGRPCAPI.GetWorkflowAccessPolicies()
 		if policies == nil {
 			return nil
 		}
@@ -1441,13 +1436,6 @@ func (a *DaprRuntime) buildWorkflowACLChecker() actorrouter.WorkflowACLChecker {
 		actorType := req.GetActor().GetActorType()
 		opType, isWorkflowActor := workflowacl.ParseActorType(actorType)
 		if !isWorkflowActor {
-			return nil
-		}
-
-		// Only enforce for cross-app calls. An app calling its own
-		// workflows should not be subject to policy enforcement.
-		targetAppID := workflowacl.ExtractAppIDFromActorType(actorType)
-		if targetAppID == callerAppID {
 			return nil
 		}
 

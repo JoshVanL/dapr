@@ -69,16 +69,27 @@ func (a *allow) Setup(t *testing.T) []framework.Option {
 	policyStore.Add(&wfaclapi.WorkflowAccessPolicy{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "dapr.io/v1alpha1", Kind: "WorkflowAccessPolicy"},
 		ObjectMeta: metav1.ObjectMeta{Name: "allow-test", Namespace: "default"},
-		Scoped:     common.Scoped{}, // empty scopes = applies to all apps
+		Scoped:     common.Scoped{Scopes: []string{"wfacl-target"}},
 		Spec: wfaclapi.WorkflowAccessPolicySpec{
 			DefaultAction: wfaclapi.PolicyActionDeny,
-			Rules: []wfaclapi.WorkflowAccessPolicyRule{{
-				Callers: []wfaclapi.WorkflowCaller{{AppID: "wfacl-caller"}},
-				Operations: []wfaclapi.WorkflowOperationRule{
-					{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "AllowedWorkflow", Action: wfaclapi.PolicyActionAllow},
-					{Type: wfaclapi.WorkflowOperationTypeActivity, Name: "AllowedActivity", Action: wfaclapi.PolicyActionAllow},
+			Rules: []wfaclapi.WorkflowAccessPolicyRule{
+				{
+					// Allow the external caller to schedule the workflow and activity.
+					Callers: []wfaclapi.WorkflowCaller{{AppID: "wfacl-caller"}},
+					Operations: []wfaclapi.WorkflowOperationRule{
+						{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "AllowedWorkflow", Action: wfaclapi.PolicyActionAllow},
+						{Type: wfaclapi.WorkflowOperationTypeActivity, Name: "AllowedActivity", Action: wfaclapi.PolicyActionAllow},
+					},
 				},
-			}},
+				{
+					// Allow the target app to execute its own activities internally
+					// (the workflow engine re-invokes via reminders using self-calls).
+					Callers: []wfaclapi.WorkflowCaller{{AppID: "wfacl-target"}},
+					Operations: []wfaclapi.WorkflowOperationRule{
+						{Type: wfaclapi.WorkflowOperationTypeActivity, Name: "*", Action: wfaclapi.PolicyActionAllow},
+					},
+				},
+			},
 		},
 	})
 

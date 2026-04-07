@@ -88,6 +88,8 @@ type API interface {
 
 	// SetWorkflowAccessPolicies atomically updates the workflow access policies.
 	SetWorkflowAccessPolicies(policies *workflowacl.CompiledPolicies)
+	// GetWorkflowAccessPolicies returns the current compiled workflow access policies.
+	GetWorkflowAccessPolicies() *workflowacl.CompiledPolicies
 }
 
 type api struct {
@@ -146,6 +148,11 @@ func NewAPI(opts APIOpts) API {
 // policies used for enforcement in CallActor/CallActorStream.
 func (a *api) SetWorkflowAccessPolicies(policies *workflowacl.CompiledPolicies) {
 	a.workflowAccessPolicies.Store(policies)
+}
+
+// GetWorkflowAccessPolicies returns the current compiled workflow access policies.
+func (a *api) GetWorkflowAccessPolicies() *workflowacl.CompiledPolicies {
+	return a.workflowAccessPolicies.Load()
 }
 
 // validateAndGetPubsubAndTopic validates the request parameters and returns the pubsub interface, pubsub name, topic name, rawPayload metadata if set

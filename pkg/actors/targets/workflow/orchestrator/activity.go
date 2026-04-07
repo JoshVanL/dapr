@@ -23,6 +23,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/dapr/dapr/pkg/actors/targets/workflow/common"
 	invokev1 "github.com/dapr/dapr/pkg/messaging/v1"
 	internalsv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 	wfenginestate "github.com/dapr/dapr/pkg/runtime/wfengine/state"
@@ -91,6 +92,7 @@ func (o *orchestrator) callActivity(ctx context.Context, e *backend.HistoryEvent
 		// If the call was denied by a workflow access policy, fail the
 		// activity task immediately rather than retrying.
 		if isPermissionDenied(err) {
+			log.Errorf("Workflow actor '%s': activity '%s' denied by workflow access policy: %v", o.actorID, ts.GetName(), err)
 			return o.failActivity(ctx, e, err)
 		}
 		return fmt.Errorf("failed to invoke activity actor '%s' to execute '%s': %w", targetActorID, ts.GetName(), err)
@@ -101,6 +103,7 @@ func (o *orchestrator) callActivity(ctx context.Context, e *backend.HistoryEvent
 
 // failActivity creates a TaskFailed event on the parent orchestrator when
 // the activity call is permanently rejected (e.g. by a WorkflowAccessPolicy).
+// Uses a reminder to deliver the event in a fresh execution cycle.
 func (o *orchestrator) failActivity(ctx context.Context, e *backend.HistoryEvent, callErr error) error {
 	failedEvent := &protos.HistoryEvent{
 		EventId:   -1,
@@ -116,12 +119,11 @@ func (o *orchestrator) failActivity(ctx context.Context, e *backend.HistoryEvent
 		},
 	}
 
-	eventBytes, err := proto.Marshal(failedEvent)
-	if err != nil {
-		return fmt.Errorf("failed to marshal TaskFailed event: %w", err)
+	if _, err := o.createWorkflowReminder(ctx, common.ReminderPrefixActivityResult, failedEvent, time.Now(), o.appID); err != nil {
+		return fmt.Errorf("failed to create activity failure reminder: %w", err)
 	}
 
-	return o.addWorkflowEvent(ctx, eventBytes)
+	return nil
 }
 
 func buildActivityActorID(workflowID string, taskID int32, generation uint64) string {
