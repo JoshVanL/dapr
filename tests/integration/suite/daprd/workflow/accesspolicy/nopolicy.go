@@ -23,7 +23,6 @@ import (
 
 	"github.com/dapr/dapr/tests/integration/framework"
 	"github.com/dapr/dapr/tests/integration/framework/process/daprd"
-	"github.com/dapr/dapr/tests/integration/framework/process/sentry"
 	"github.com/dapr/dapr/tests/integration/framework/process/workflow"
 	"github.com/dapr/dapr/tests/integration/suite"
 	"github.com/dapr/durabletask-go/api"
@@ -36,33 +35,28 @@ func init() {
 
 // nopolicy tests that when no WorkflowAccessPolicy resources exist (but the
 // feature flag is enabled), all cross-app workflow calls succeed (backward
-// compatible behavior).
+// compatible behavior). No mTLS needed because no policies means nil
+// CompiledPolicies which short-circuits before identity extraction.
 type nopolicy struct {
 	wf *workflow.Workflow
 }
 
 func (n *nopolicy) Setup(t *testing.T) []framework.Option {
-	sen := sentry.New(t)
-
-	sentryOpts := daprd.WithSentry(t, sen)
-
-	// No policy resource files — feature enabled but no policies.
+	// No sentry/mTLS needed — no policies means allow-all before identity check.
 	n.wf = workflow.New(t,
 		workflow.WithDaprds(2),
 		workflow.WithDaprdOptions(0,
 			daprd.WithAppID("nopol-caller"),
 			daprd.WithConfigManifests(t, configWithFeatureFlag()),
-			sentryOpts,
 		),
 		workflow.WithDaprdOptions(1,
 			daprd.WithAppID("nopol-target"),
 			daprd.WithConfigManifests(t, configWithFeatureFlag()),
-			sentryOpts,
 		),
 	)
 
 	return []framework.Option{
-		framework.WithProcesses(sen, n.wf),
+		framework.WithProcesses(n.wf),
 	}
 }
 
@@ -96,4 +90,16 @@ func (n *nopolicy) Run(t *testing.T, ctx context.Context) {
 		assert.True(t, api.OrchestrationMetadataIsComplete(metadata))
 		assert.Equal(t, `"no-policy-ok"`, metadata.GetOutput().GetValue())
 	})
+}
+
+func configWithFeatureFlag() string {
+	return `
+apiVersion: dapr.io/v1alpha1
+kind: Configuration
+metadata:
+  name: wfaclconfig
+spec:
+  features:
+  - name: WorkflowAccessPolicy
+    enabled: true`
 }

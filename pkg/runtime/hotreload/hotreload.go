@@ -61,7 +61,11 @@ type Reloader struct {
 	loader                  loader.Interface
 	componentsReconciler    *reconciler.Reconciler[compapi.Component]
 	subscriptionsReconciler *reconciler.Reconciler[subapi.Subscription]
-	policyReconciler        *reconciler.Reconciler[wfaclapi.WorkflowAccessPolicy]
+
+	// policyOptsCh receives options for the WorkflowAccessPolicy reconciler.
+	// SetPolicyRecompiler sends on this channel; Run() receives from it.
+	// This synchronizes the race between initRuntime() and Run().
+	policyOptsCh chan reconciler.WorkflowAccessPolicyOptions
 }
 
 func NewDisk(opts OptionsReloaderDisk) (*Reloader, error) {
@@ -96,8 +100,7 @@ func NewDisk(opts OptionsReloaderDisk) (*Reloader, error) {
 			Authorizer: opts.Authorizer,
 			Healthz:    opts.Healthz,
 		}),
-		// policyReconciler is initialized later via SetPolicyRecompiler,
-		// since the gRPC API is not available at construction time.
+		policyOptsCh: make(chan reconciler.WorkflowAccessPolicyOptions, 1),
 	}, nil
 }
 
@@ -131,8 +134,7 @@ func NewOperator(opts OptionsReloaderOperator) *Reloader {
 			Authorizer: opts.Authorizer,
 			Healthz:    opts.Healthz,
 		}),
-		// policyReconciler is initialized later via SetPolicyRecompiler,
-		// since the gRPC API is not available at construction time.
+		policyOptsCh: make(chan reconciler.WorkflowAccessPolicyOptions, 1),
 	}
 }
 
@@ -141,15 +143,24 @@ func (r *Reloader) Loader() loader.Interface {
 	return r.loader
 }
 
-// SetPolicyRecompiler initializes the WorkflowAccessPolicy reconciler with the
-// given recompiler callback. This must be called before Run() when workflow
-// access policies are enabled.
+// SetPolicyRecompiler sends options for the WorkflowAccessPolicy reconciler.
+// Run() waits for this signal before starting the reconciler. This is safe
+// to call concurrently with Run() from initRuntime().
 func (r *Reloader) SetPolicyRecompiler(opts reconciler.WorkflowAccessPolicyOptions) {
-	if !r.isEnabled {
+	if !r.isEnabled || r.policyOptsCh == nil {
 		return
 	}
 
-	r.policyReconciler = reconciler.NewWorkflowAccessPolicies(opts)
+	r.policyOptsCh <- opts
+}
+
+// SignalNoPolicyRecompiler signals Run() that no policy reconciler will be
+// created. Must be called if SetPolicyRecompiler is not going to be called,
+// so Run() does not block waiting.
+func (r *Reloader) SignalNoPolicyRecompiler() {
+	if r.isEnabled && r.policyOptsCh != nil {
+		close(r.policyOptsCh)
+	}
 }
 
 func (r *Reloader) Run(ctx context.Context) error {
@@ -160,14 +171,27 @@ func (r *Reloader) Run(ctx context.Context) error {
 		return nil
 	}
 
-	runners := []func(context.Context) error{
+	// Wait for initRuntime to signal whether a policy reconciler is needed.
+	// This synchronizes with the concurrent call to SetPolicyRecompiler or
+	// SignalNoPolicyRecompiler from initRuntime.
+	var policyReconciler *reconciler.Reconciler[wfaclapi.WorkflowAccessPolicy]
+	select {
+	case opts, ok := <-r.policyOptsCh:
+		if ok {
+			policyReconciler = reconciler.NewWorkflowAccessPolicies(opts)
+		}
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
+	runners := []concurrency.Runner{
 		r.loader.Run,
 		r.componentsReconciler.Run,
 		r.subscriptionsReconciler.Run,
 	}
 
-	if r.policyReconciler != nil {
-		runners = append(runners, r.policyReconciler.Run)
+	if policyReconciler != nil {
+		runners = append(runners, policyReconciler.Run)
 		log.Info("Hot reloading enabled. Daprd will reload 'Component', 'Subscription', and 'WorkflowAccessPolicy' resources on change.")
 	} else {
 		log.Info("Hot reloading enabled. Daprd will reload 'Component' and 'Subscription' resources on change.")

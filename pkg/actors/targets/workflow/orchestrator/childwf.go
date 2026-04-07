@@ -15,14 +15,19 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
+	"github.com/dapr/dapr/pkg/actors/targets/workflow/common"
 	invokev1 "github.com/dapr/dapr/pkg/messaging/v1"
 	internalsv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 	"github.com/dapr/dapr/pkg/runtime/wfengine/todo"
@@ -75,8 +80,79 @@ func (o *orchestrator) callChildWorkflows(ctx context.Context, startEventName st
 
 		_, err = o.router.Call(ctx, req)
 		if err != nil {
+			// If the call was denied by a workflow access policy, fail the
+			// child orchestration immediately rather than retrying.
+			if isPermissionDenied(err) {
+				return o.failChildWorkflow(ctx, e, err)
+			}
 			return fmt.Errorf("failed to call child workflow '%s': %w", id, err)
 		}
+	}
+
+	return nil
+}
+
+// isPermissionDenied checks whether the error (possibly wrapped) contains a
+// gRPC PermissionDenied status code.
+func isPermissionDenied(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Try direct gRPC status extraction.
+	if st, ok := status.FromError(err); ok && st.Code() == codes.PermissionDenied {
+		return true
+	}
+
+	// Walk the error chain for wrapped gRPC errors.
+	var unwrapped error = err
+	for unwrapped != nil {
+		if st, ok := status.FromError(unwrapped); ok && st.Code() == codes.PermissionDenied {
+			return true
+		}
+		unwrapped = errors.Unwrap(unwrapped)
+	}
+
+	// Fallback: check the error string for the gRPC code.
+	// This handles cases where the gRPC status is embedded in a
+	// non-wrapping error (e.g., from the actor router layer).
+	return strings.Contains(err.Error(), "code = PermissionDenied")
+}
+
+// failChildWorkflow creates a SubOrchestrationInstanceFailed event on the
+// parent orchestrator when the child workflow call is permanently rejected
+// (e.g. by a WorkflowAccessPolicy). It uses a reminder-based approach to
+// deliver the failure event in a fresh execution cycle, avoiding conflicts
+// with the current run loop's ClearInbox/saveInternalState calls.
+func (o *orchestrator) failChildWorkflow(ctx context.Context, e *protos.HistoryEvent, callErr error) error {
+	// Get the TaskScheduledId from the ParentInstance in the ExecutionStarted
+	// event. This ID corresponds to the SubOrchestrationInstanceCreated event
+	// in the parent's history that the engine needs to correlate with this failure.
+	var taskScheduledID int32
+	if es := e.GetExecutionStarted(); es != nil && es.GetParentInstance() != nil {
+		taskScheduledID = es.GetParentInstance().GetTaskScheduledId()
+	}
+
+	failedEvent := &protos.HistoryEvent{
+		EventId:   -1,
+		Timestamp: timestamppb.New(time.Now()),
+		EventType: &protos.HistoryEvent_SubOrchestrationInstanceFailed{
+			SubOrchestrationInstanceFailed: &protos.SubOrchestrationInstanceFailedEvent{
+				TaskScheduledId: taskScheduledID,
+				FailureDetails: &protos.TaskFailureDetails{
+					ErrorType:    "WorkflowAccessPolicyDenied",
+					ErrorMessage: callErr.Error(),
+				},
+			},
+		},
+	}
+
+	// Create a reminder that carries the failure event. When this
+	// reminder fires (in a fresh execution cycle after the current run
+	// completes), handleReminder routes it to addWorkflowEvent which
+	// adds the event to the inbox and triggers re-execution.
+	if _, err := o.createWorkflowReminder(ctx, common.ReminderPrefixActivityResult, failedEvent, time.Now(), o.appID); err != nil {
+		return fmt.Errorf("failed to create failure reminder: %w", err)
 	}
 
 	return nil

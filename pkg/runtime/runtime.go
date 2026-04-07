@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
@@ -45,7 +46,12 @@ import (
 
 	"sigs.k8s.io/yaml"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	workflowacl "github.com/dapr/dapr/pkg/acl/workflow"
+	actorrouter "github.com/dapr/dapr/pkg/actors/router"
+	internalv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 	"github.com/dapr/dapr/pkg/actors"
 	"github.com/dapr/dapr/pkg/actors/hostconfig"
 	"github.com/dapr/dapr/pkg/api/grpc"
@@ -134,6 +140,7 @@ type DaprRuntime struct {
 	runnerCloser          *concurrency.RunnerCloserManager
 	clock                 clock.Clock
 	reloader              *hotreload.Reloader
+	workflowPolicies      atomic.Pointer[workflowacl.CompiledPolicies]
 
 	grpcAPIServer      grpc.Server
 	grpcInternalServer grpc.Server
@@ -733,10 +740,15 @@ func (a *DaprRuntime) initRuntime(ctx context.Context) error {
 			Loader:    a.reloader.Loader(),
 			CompStore: a.compStore,
 			Recompiler: func(compiled *workflowacl.CompiledPolicies) {
+				a.workflowPolicies.Store(compiled)
 				a.daprGRPCAPI.SetWorkflowAccessPolicies(compiled)
 			},
 			Healthz: a.runtimeConfig.healthz,
 		})
+	} else {
+		// Signal the reloader that no policy reconciler is needed so Run()
+		// doesn't block waiting.
+		a.reloader.SignalNoPolicyRecompiler()
 	}
 
 	if err = a.runnerCloser.AddCloser(a.daprGRPCAPI); err != nil {
@@ -1187,6 +1199,7 @@ func (a *DaprRuntime) initActors(ctx context.Context) error {
 		GRPC:              a.grpc,
 		SchedulerClient:   a.jobsManager.Client(),
 		SchedulerReloader: a.jobsManager,
+		WorkflowACL:       a.buildWorkflowACLChecker(),
 	}); err != nil {
 		return err
 	}
@@ -1375,6 +1388,7 @@ func (a *DaprRuntime) loadWorkflowAccessPoliciesKubernetes(ctx context.Context) 
 	}
 
 	compiled := workflowacl.Compile(policies)
+	a.workflowPolicies.Store(compiled)
 	a.daprGRPCAPI.SetWorkflowAccessPolicies(compiled)
 
 	if compiled != nil {
@@ -1400,6 +1414,7 @@ func (a *DaprRuntime) loadWorkflowAccessPoliciesStandalone(ctx context.Context) 
 	}
 
 	compiled := workflowacl.Compile(policies)
+	a.workflowPolicies.Store(compiled)
 	a.daprGRPCAPI.SetWorkflowAccessPolicies(compiled)
 
 	if compiled != nil {
@@ -1407,6 +1422,54 @@ func (a *DaprRuntime) loadWorkflowAccessPoliciesStandalone(ctx context.Context) 
 	}
 
 	return nil
+}
+
+// buildWorkflowACLChecker creates a WorkflowACLChecker for the actor router.
+// This enables workflow access policy enforcement for both local and remote
+// actor calls, regardless of where placement puts the actor.
+func (a *DaprRuntime) buildWorkflowACLChecker() actorrouter.WorkflowACLChecker {
+	if !a.globalConfig.IsFeatureEnabled(config.WorkflowAccessPolicy) {
+		return nil
+	}
+
+	return func(callerAppID string, req *internalv1pb.InternalInvokeRequest) error {
+		policies := a.workflowPolicies.Load()
+		if policies == nil {
+			return nil
+		}
+
+		actorType := req.GetActor().GetActorType()
+		opType, isWorkflowActor := workflowacl.ParseActorType(actorType)
+		if !isWorkflowActor {
+			return nil
+		}
+
+		// Only enforce for cross-app calls. An app calling its own
+		// workflows should not be subject to policy enforcement.
+		targetAppID := workflowacl.ExtractAppIDFromActorType(actorType)
+		if targetAppID == callerAppID {
+			return nil
+		}
+
+		method := req.GetMessage().GetMethod()
+		data := req.GetMessage().GetData().GetValue()
+
+		opName, subject, err := workflowacl.ExtractOperationName(opType, method, data)
+		if err != nil {
+			return status.Errorf(codes.Internal, "workflow access policy: failed to extract operation name: %v", err)
+		}
+		if !subject {
+			return nil
+		}
+
+		if !policies.Evaluate(callerAppID, opType, opName) {
+			return status.Errorf(codes.PermissionDenied,
+				"workflow access policy: app '%s' is not allowed to schedule %s '%s'",
+				callerAppID, opType, opName)
+		}
+
+		return nil
+	}
 }
 
 func loadWorkflowAccessPoliciesFromDir(dir string, appID string) ([]wfaclapi.WorkflowAccessPolicy, error) {
@@ -1437,7 +1500,7 @@ func loadWorkflowAccessPoliciesFromDir(dir string, appID string) ([]wfaclapi.Wor
 			continue // Not a WorkflowAccessPolicy, skip
 		}
 
-		if policy.Kind != "WorkflowAccessPolicy" {
+		if policy.TypeMeta.Kind != "WorkflowAccessPolicy" {
 			continue
 		}
 

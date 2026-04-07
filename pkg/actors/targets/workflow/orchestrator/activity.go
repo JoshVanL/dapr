@@ -21,11 +21,13 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	invokev1 "github.com/dapr/dapr/pkg/messaging/v1"
 	internalsv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 	wfenginestate "github.com/dapr/dapr/pkg/runtime/wfengine/state"
 	"github.com/dapr/dapr/pkg/runtime/wfengine/todo"
+	"github.com/dapr/durabletask-go/api/protos"
 	"github.com/dapr/durabletask-go/backend"
 )
 
@@ -86,10 +88,40 @@ func (o *orchestrator) callActivity(ctx context.Context, e *backend.HistoryEvent
 		WithContentType(invokev1.ProtobufContentType),
 	)
 	if err != nil {
+		// If the call was denied by a workflow access policy, fail the
+		// activity task immediately rather than retrying.
+		if isPermissionDenied(err) {
+			return o.failActivity(ctx, e, err)
+		}
 		return fmt.Errorf("failed to invoke activity actor '%s' to execute '%s': %w", targetActorID, ts.GetName(), err)
 	}
 
 	return nil
+}
+
+// failActivity creates a TaskFailed event on the parent orchestrator when
+// the activity call is permanently rejected (e.g. by a WorkflowAccessPolicy).
+func (o *orchestrator) failActivity(ctx context.Context, e *backend.HistoryEvent, callErr error) error {
+	failedEvent := &protos.HistoryEvent{
+		EventId:   -1,
+		Timestamp: timestamppb.New(time.Now()),
+		EventType: &protos.HistoryEvent_TaskFailed{
+			TaskFailed: &protos.TaskFailedEvent{
+				TaskScheduledId: e.GetEventId(),
+				FailureDetails: &protos.TaskFailureDetails{
+					ErrorType:    "WorkflowAccessPolicyDenied",
+					ErrorMessage: callErr.Error(),
+				},
+			},
+		},
+	}
+
+	eventBytes, err := proto.Marshal(failedEvent)
+	if err != nil {
+		return fmt.Errorf("failed to marshal TaskFailed event: %w", err)
+	}
+
+	return o.addWorkflowEvent(ctx, eventBytes)
 }
 
 func buildActivityActorID(workflowID string, taskID int32, generation uint64) string {

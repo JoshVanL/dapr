@@ -57,6 +57,34 @@ func ParseActorType(actorType string) (OperationType, bool) {
 	}
 }
 
+// ExtractAppIDFromActorType extracts the app ID from a workflow/activity actor
+// type string. The format is "dapr.internal.<namespace>.<appID>.workflow" or
+// "dapr.internal.<namespace>.<appID>.activity". Returns empty string if the
+// format is not recognized.
+func ExtractAppIDFromActorType(actorType string) string {
+	// Strip the "dapr.internal." prefix.
+	rest := strings.TrimPrefix(actorType, actorTypePrefix)
+	if rest == actorType {
+		return "" // no prefix match
+	}
+
+	// Strip the ".workflow" or ".activity" suffix.
+	switch {
+	case strings.HasSuffix(rest, suffixWorkflow):
+		rest = strings.TrimSuffix(rest, suffixWorkflow)
+	case strings.HasSuffix(rest, suffixActivity):
+		rest = strings.TrimSuffix(rest, suffixActivity)
+	default:
+		return ""
+	}
+
+	// rest is now "<namespace>.<appID>". The appID is the last segment.
+	if idx := strings.LastIndex(rest, "."); idx >= 0 {
+		return rest[idx+1:]
+	}
+	return rest
+}
+
 // ExtractOperationName extracts the workflow or activity name from the request
 // method and payload. Returns the name and true if extraction succeeded, or
 // empty string and false if the method is not subject to access control

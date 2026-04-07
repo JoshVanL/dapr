@@ -49,18 +49,26 @@ type Interface interface {
 	CallStream(ctx context.Context, req *internalv1pb.InternalInvokeRequest, fn func(*internalv1pb.InternalInvokeResponse) (bool, error)) error
 }
 
+// WorkflowACLChecker validates workflow access policies for actor calls.
+// Returns nil if the call is allowed, or an error (PermissionDenied) if denied.
+type WorkflowACLChecker func(callerAppID string, req *internalv1pb.InternalInvokeRequest) error
+
 type Options struct {
 	Namespace          string
+	AppID              string
 	Table              table.Interface
 	Placement          placement.Interface
 	Resiliency         resiliency.Provider
 	Reminders          reminders.Interface
 	GRPC               *manager.Manager
 	MaxRequestBodySize int
+	WorkflowACL        WorkflowACLChecker
 }
 
 type router struct {
-	namespace string
+	namespace   string
+	appID       string
+	workflowACL WorkflowACLChecker
 
 	table      table.Interface
 	placement  placement.Interface
@@ -80,13 +88,15 @@ type router struct {
 
 func New(opts Options) Interface {
 	return &router{
-		namespace:  opts.Namespace,
-		table:      opts.Table,
-		placement:  opts.Placement,
-		resiliency: opts.Resiliency,
-		grpc:       opts.GRPC,
-		reminders:  opts.Reminders,
-		clock:      clock.RealClock{},
+		namespace:   opts.Namespace,
+		appID:       opts.AppID,
+		workflowACL: opts.WorkflowACL,
+		table:       opts.Table,
+		placement:   opts.Placement,
+		resiliency:  opts.Resiliency,
+		grpc:        opts.GRPC,
+		reminders:   opts.Reminders,
+		clock:       clock.RealClock{},
 		callOptions: []grpc.CallOption{
 			grpc.MaxCallRecvMsgSize(opts.MaxRequestBodySize),
 			grpc.MaxCallSendMsgSize(opts.MaxRequestBodySize),
@@ -223,6 +233,15 @@ func (r *router) callReminder(ctx context.Context, req *api.Reminder) error {
 }
 
 func (r *router) callActor(ctx context.Context, req *internalv1pb.InternalInvokeRequest) (*internalv1pb.InternalInvokeResponse, error) {
+	// Check workflow access policy before routing. This ensures enforcement
+	// works regardless of whether the actor is placed locally or remotely.
+	// Wrap PermissionDenied as a permanent error to prevent retries.
+	if r.workflowACL != nil {
+		if err := r.workflowACL(r.appID, req); err != nil {
+			return nil, backoff.Permanent(err)
+		}
+	}
+
 	lar, cctx, cancel, err := r.placement.LookupActor(ctx, &api.LookupActorRequest{
 		ActorType: req.GetActor().GetActorType(),
 		ActorID:   req.GetActor().GetActorId(),

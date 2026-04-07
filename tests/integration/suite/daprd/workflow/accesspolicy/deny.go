@@ -17,16 +17,30 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
+	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/dapr/dapr/pkg/apis/common"
+	compapi "github.com/dapr/dapr/pkg/apis/components/v1alpha1"
+	configapi "github.com/dapr/dapr/pkg/apis/configuration/v1alpha1"
+	wfaclapi "github.com/dapr/dapr/pkg/apis/workflowaccesspolicy/v1alpha1"
 	"github.com/dapr/dapr/tests/integration/framework"
+	"github.com/dapr/dapr/tests/integration/framework/iowriter/logger"
+	"github.com/dapr/dapr/tests/integration/framework/manifest"
 	"github.com/dapr/dapr/tests/integration/framework/process/daprd"
+	"github.com/dapr/dapr/tests/integration/framework/process/kubernetes"
+	"github.com/dapr/dapr/tests/integration/framework/process/kubernetes/store"
+	"github.com/dapr/dapr/tests/integration/framework/process/operator"
+	"github.com/dapr/dapr/tests/integration/framework/process/placement"
+	"github.com/dapr/dapr/tests/integration/framework/process/scheduler"
 	"github.com/dapr/dapr/tests/integration/framework/process/sentry"
-	"github.com/dapr/dapr/tests/integration/framework/process/workflow"
 	"github.com/dapr/dapr/tests/integration/suite"
 	"github.com/dapr/durabletask-go/api"
+	"github.com/dapr/durabletask-go/client"
 	"github.com/dapr/durabletask-go/task"
 )
 
@@ -37,63 +51,117 @@ func init() {
 // deny tests that cross-app workflow calls are rejected when the
 // WorkflowAccessPolicy explicitly denies or does not mention the caller/operation.
 type deny struct {
-	wf *workflow.Workflow
+	daprd0   *daprd.Daprd
+	daprd1   *daprd.Daprd
+	place    *placement.Placement
+	sched    *scheduler.Scheduler
+	kubeapi  *kubernetes.Kubernetes
+	operator *operator.Operator
 }
 
 func (d *deny) Setup(t *testing.T) []framework.Option {
-	sen := sentry.New(t)
+	sen := sentry.New(t, sentry.WithTrustDomain("integration.test.dapr.io"))
 
-	// Policy: allows "wfacl-caller" to call "AllowedWF" only.
-	// "DeniedWF" is explicitly denied. "UnmentionedWF" has no rule (default deny).
-	policyYAML := `
-apiVersion: dapr.io/v1alpha1
-kind: WorkflowAccessPolicy
-metadata:
-  name: deny-test
-spec:
-  defaultAction: deny
-  rules:
-  - callers:
-    - appID: "wfacl-caller"
-    operations:
-    - type: workflow
-      name: "AllowedWF"
-      action: allow
-    - type: workflow
-      name: "DeniedWF"
-      action: deny
-`
+	policyStore := store.New(metav1.GroupVersionKind{
+		Group: "dapr.io", Version: "v1alpha1", Kind: "WorkflowAccessPolicy",
+	})
+	policyStore.Add(&wfaclapi.WorkflowAccessPolicy{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "dapr.io/v1alpha1", Kind: "WorkflowAccessPolicy"},
+		ObjectMeta: metav1.ObjectMeta{Name: "deny-test", Namespace: "default"},
+		Scoped:     common.Scoped{}, // empty scopes = applies to all apps
+		Spec: wfaclapi.WorkflowAccessPolicySpec{
+			DefaultAction: wfaclapi.PolicyActionDeny,
+			Rules: []wfaclapi.WorkflowAccessPolicyRule{{
+				Callers: []wfaclapi.WorkflowCaller{{AppID: "wfacl-caller"}},
+				Operations: []wfaclapi.WorkflowOperationRule{
+					{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "AllowedWF", Action: wfaclapi.PolicyActionAllow},
+					{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "DeniedWF", Action: wfaclapi.PolicyActionDeny},
+				},
+			}},
+		},
+	})
 
-	sentryOpts := daprd.WithSentry(t, sen)
-
-	d.wf = workflow.New(t,
-		workflow.WithDaprds(2),
-		workflow.WithDaprdOptions(0,
-			daprd.WithAppID("wfacl-caller"),
-			daprd.WithConfigManifests(t, configWithFeatureFlag()),
-			sentryOpts,
+	boolTrue := true
+	d.kubeapi = kubernetes.New(t,
+		kubernetes.WithBaseOperatorAPI(t,
+			spiffeid.RequireTrustDomainFromString("integration.test.dapr.io"),
+			"default",
+			sen.Port(),
 		),
-		workflow.WithDaprdOptions(1,
-			daprd.WithAppID("wfacl-target"),
-			daprd.WithConfigManifests(t, configWithFeatureFlag()),
-			daprd.WithResourceFiles(policyYAML),
-			sentryOpts,
-		),
+		kubernetes.WithClusterDaprConfigurationList(t, &configapi.ConfigurationList{
+			Items: []configapi.Configuration{{
+				TypeMeta:   metav1.TypeMeta{APIVersion: "dapr.io/v1alpha1", Kind: "Configuration"},
+				ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "daprsystem"},
+				Spec: configapi.ConfigurationSpec{
+					Features: []configapi.FeatureSpec{
+						{Name: "WorkflowAccessPolicy", Enabled: &boolTrue},
+					},
+					MTLSSpec: &configapi.MTLSSpec{
+						ControlPlaneTrustDomain: "integration.test.dapr.io",
+						SentryAddress:           sen.Address(),
+					},
+				},
+			}},
+		}),
+		kubernetes.WithClusterDaprComponentList(t, &compapi.ComponentList{
+			Items: []compapi.Component{manifest.ActorInMemoryStateComponent("default", "mystore")},
+		}),
+		kubernetes.WithClusterDaprWorkflowAccessPolicyListFromStore(t, policyStore),
 	)
 
+	d.operator = operator.New(t,
+		operator.WithNamespace("default"),
+		operator.WithKubeconfigPath(d.kubeapi.KubeconfigPath(t)),
+		operator.WithTrustAnchorsFile(sen.TrustAnchorsFile(t)),
+	)
+
+	d.place = placement.New(t, placement.WithSentry(t, sen))
+
+	d.sched = scheduler.New(t,
+		scheduler.WithSentry(sen),
+		scheduler.WithKubeconfig(d.kubeapi.KubeconfigPath(t)),
+		scheduler.WithMode("kubernetes"),
+		scheduler.WithID("dapr-scheduler-server-0"),
+	)
+
+	commonOpts := []daprd.Option{
+		daprd.WithMode("kubernetes"),
+		daprd.WithConfigs("daprsystem"),
+		daprd.WithNamespace("default"),
+		daprd.WithSentry(t, sen),
+		daprd.WithControlPlaneAddress(d.operator.Address()),
+		daprd.WithPlacementAddresses(d.place.Address()),
+		daprd.WithSchedulerAddresses(d.sched.Address()),
+		daprd.WithDisableK8sSecretStore(true),
+		daprd.WithControlPlaneTrustDomain("integration.test.dapr.io"),
+	}
+
+	d.daprd0 = daprd.New(t, append(commonOpts,
+		daprd.WithAppID("wfacl-caller"),
+	)...)
+
+	d.daprd1 = daprd.New(t, append(commonOpts,
+		daprd.WithAppID("wfacl-target"),
+	)...)
+
 	return []framework.Option{
-		framework.WithProcesses(sen, d.wf),
+		framework.WithProcesses(sen, d.kubeapi, d.operator, d.sched, d.place, d.daprd0, d.daprd1),
 	}
 }
 
 func (d *deny) Run(t *testing.T, ctx context.Context) {
-	d.wf.WaitUntilRunning(t, ctx)
+	d.operator.WaitUntilRunning(t, ctx)
+	d.place.WaitUntilRunning(t, ctx)
+	d.sched.WaitUntilRunning(t, ctx)
+	d.daprd0.WaitUntilRunning(t, ctx)
+	d.daprd1.WaitUntilRunning(t, ctx)
 
-	targetAppID := d.wf.DaprN(1).AppID()
+	registry0 := task.NewTaskRegistry()
+	registry1 := task.NewTaskRegistry()
 
-	// Register orchestrators on caller. Each tries to schedule a sub-orchestrator
-	// on the target app, which will be allowed or denied by the policy.
-	d.wf.Registry().AddOrchestratorN("TestDeniedWF", func(ctx *task.OrchestrationContext) (any, error) {
+	targetAppID := d.daprd1.AppID()
+
+	require.NoError(t, registry0.AddOrchestratorN("TestDeniedWF", func(ctx *task.OrchestrationContext) (any, error) {
 		var output string
 		err := ctx.CallSubOrchestrator("DeniedWF",
 			task.WithSubOrchestratorAppID(targetAppID)).
@@ -102,9 +170,9 @@ func (d *deny) Run(t *testing.T, ctx context.Context) {
 			return nil, fmt.Errorf("sub-orchestrator failed: %w", err)
 		}
 		return output, nil
-	})
+	}))
 
-	d.wf.Registry().AddOrchestratorN("TestUnmentionedWF", func(ctx *task.OrchestrationContext) (any, error) {
+	require.NoError(t, registry0.AddOrchestratorN("TestUnmentionedWF", func(ctx *task.OrchestrationContext) (any, error) {
 		var output string
 		err := ctx.CallSubOrchestrator("UnmentionedWF",
 			task.WithSubOrchestratorAppID(targetAppID)).
@@ -113,26 +181,34 @@ func (d *deny) Run(t *testing.T, ctx context.Context) {
 			return nil, fmt.Errorf("sub-orchestrator failed: %w", err)
 		}
 		return output, nil
-	})
+	}))
 
-	// Register the target workflows (they would succeed if policy allowed them).
-	d.wf.RegistryN(1).AddOrchestratorN("DeniedWF", func(ctx *task.OrchestrationContext) (any, error) {
+	require.NoError(t, registry1.AddOrchestratorN("DeniedWF", func(ctx *task.OrchestrationContext) (any, error) {
 		return "should-not-reach", nil
-	})
-	d.wf.RegistryN(1).AddOrchestratorN("UnmentionedWF", func(ctx *task.OrchestrationContext) (any, error) {
+	}))
+
+	require.NoError(t, registry1.AddOrchestratorN("UnmentionedWF", func(ctx *task.OrchestrationContext) (any, error) {
 		return "should-not-reach", nil
-	})
+	}))
 
-	client0 := d.wf.BackendClient(t, ctx)
-	d.wf.BackendClientN(t, ctx, 1)
+	client0 := client.NewTaskHubGrpcClient(d.daprd0.GRPCConn(t, ctx), logger.New(t))
+	require.NoError(t, client0.StartWorkItemListener(ctx, registry0))
+	client1 := client.NewTaskHubGrpcClient(d.daprd1.GRPCConn(t, ctx), logger.New(t))
+	require.NoError(t, client1.StartWorkItemListener(ctx, registry1))
 
-	t.Run("explicitly denied workflow fails", func(t *testing.T) {
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.GreaterOrEqual(c, len(d.daprd0.GetMetadata(t, ctx).ActorRuntime.ActiveActors), 1)
+		assert.GreaterOrEqual(c, len(d.daprd1.GetMetadata(t, ctx).ActorRuntime.ActiveActors), 1)
+	}, time.Second*20, time.Millisecond*100)
+
+	t.Run("explicitly denied workflow fails with error", func(t *testing.T) {
 		id, err := client0.ScheduleNewOrchestration(ctx, "TestDeniedWF")
 		require.NoError(t, err)
 
 		metadata, err := client0.WaitForOrchestrationCompletion(ctx, id, api.WithFetchPayloads(true))
 		require.NoError(t, err)
-		assert.True(t, api.OrchestrationMetadataIsFailed(metadata))
+		require.NotNil(t, metadata.GetFailureDetails(),
+			"orchestration should fail because the sub-orchestrator call is denied")
 		assert.Contains(t, metadata.GetFailureDetails().GetErrorMessage(), "not allowed")
 	})
 
@@ -142,7 +218,8 @@ func (d *deny) Run(t *testing.T, ctx context.Context) {
 
 		metadata, err := client0.WaitForOrchestrationCompletion(ctx, id, api.WithFetchPayloads(true))
 		require.NoError(t, err)
-		assert.True(t, api.OrchestrationMetadataIsFailed(metadata))
+		require.NotNil(t, metadata.GetFailureDetails(),
+			"orchestration should fail because no rule matches (default deny)")
 		assert.Contains(t, metadata.GetFailureDetails().GetErrorMessage(), "not allowed")
 	})
 }

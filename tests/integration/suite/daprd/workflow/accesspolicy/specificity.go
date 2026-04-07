@@ -17,16 +17,30 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
+	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/dapr/dapr/pkg/apis/common"
+	compapi "github.com/dapr/dapr/pkg/apis/components/v1alpha1"
+	configapi "github.com/dapr/dapr/pkg/apis/configuration/v1alpha1"
+	wfaclapi "github.com/dapr/dapr/pkg/apis/workflowaccesspolicy/v1alpha1"
 	"github.com/dapr/dapr/tests/integration/framework"
+	"github.com/dapr/dapr/tests/integration/framework/iowriter/logger"
+	"github.com/dapr/dapr/tests/integration/framework/manifest"
 	"github.com/dapr/dapr/tests/integration/framework/process/daprd"
+	"github.com/dapr/dapr/tests/integration/framework/process/kubernetes"
+	"github.com/dapr/dapr/tests/integration/framework/process/kubernetes/store"
+	"github.com/dapr/dapr/tests/integration/framework/process/operator"
+	"github.com/dapr/dapr/tests/integration/framework/process/placement"
+	"github.com/dapr/dapr/tests/integration/framework/process/scheduler"
 	"github.com/dapr/dapr/tests/integration/framework/process/sentry"
-	"github.com/dapr/dapr/tests/integration/framework/process/workflow"
 	"github.com/dapr/dapr/tests/integration/suite"
 	"github.com/dapr/durabletask-go/api"
+	"github.com/dapr/durabletask-go/client"
 	"github.com/dapr/durabletask-go/task"
 )
 
@@ -37,65 +51,120 @@ func init() {
 // specificity tests the most-specific-rule-wins behavior end-to-end.
 // Policy: deny *, allow Process*, deny ProcessSecret.
 type specificity struct {
-	wf *workflow.Workflow
+	daprd0   *daprd.Daprd
+	daprd1   *daprd.Daprd
+	place    *placement.Placement
+	sched    *scheduler.Scheduler
+	kubeapi  *kubernetes.Kubernetes
+	operator *operator.Operator
 }
 
 func (s *specificity) Setup(t *testing.T) []framework.Option {
-	sen := sentry.New(t)
+	sen := sentry.New(t, sentry.WithTrustDomain("integration.test.dapr.io"))
 
-	policyYAML := `
-apiVersion: dapr.io/v1alpha1
-kind: WorkflowAccessPolicy
-metadata:
-  name: specificity-test
-spec:
-  defaultAction: deny
-  rules:
-  - callers:
-    - appID: "spec-caller"
-    operations:
-    - type: workflow
-      name: "*"
-      action: deny
-    - type: workflow
-      name: "Process*"
-      action: allow
-    - type: workflow
-      name: "ProcessSecret"
-      action: deny
-`
+	policyStore := store.New(metav1.GroupVersionKind{
+		Group: "dapr.io", Version: "v1alpha1", Kind: "WorkflowAccessPolicy",
+	})
+	policyStore.Add(&wfaclapi.WorkflowAccessPolicy{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "dapr.io/v1alpha1", Kind: "WorkflowAccessPolicy"},
+		ObjectMeta: metav1.ObjectMeta{Name: "specificity-test", Namespace: "default"},
+		Scoped:     common.Scoped{}, // empty scopes = applies to all apps
+		Spec: wfaclapi.WorkflowAccessPolicySpec{
+			DefaultAction: wfaclapi.PolicyActionDeny,
+			Rules: []wfaclapi.WorkflowAccessPolicyRule{{
+				Callers: []wfaclapi.WorkflowCaller{{AppID: "spec-caller"}},
+				Operations: []wfaclapi.WorkflowOperationRule{
+					{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "*", Action: wfaclapi.PolicyActionDeny},
+					{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "Process*", Action: wfaclapi.PolicyActionAllow},
+					{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "ProcessSecret", Action: wfaclapi.PolicyActionDeny},
+				},
+			}},
+		},
+	})
 
-	sentryOpts := daprd.WithSentry(t, sen)
-
-	s.wf = workflow.New(t,
-		workflow.WithDaprds(2),
-		workflow.WithDaprdOptions(0,
-			daprd.WithAppID("spec-caller"),
-			daprd.WithConfigManifests(t, configWithFeatureFlag()),
-			sentryOpts,
+	boolTrue := true
+	s.kubeapi = kubernetes.New(t,
+		kubernetes.WithBaseOperatorAPI(t,
+			spiffeid.RequireTrustDomainFromString("integration.test.dapr.io"),
+			"default",
+			sen.Port(),
 		),
-		workflow.WithDaprdOptions(1,
-			daprd.WithAppID("spec-target"),
-			daprd.WithConfigManifests(t, configWithFeatureFlag()),
-			daprd.WithResourceFiles(policyYAML),
-			sentryOpts,
-		),
+		kubernetes.WithClusterDaprConfigurationList(t, &configapi.ConfigurationList{
+			Items: []configapi.Configuration{{
+				TypeMeta:   metav1.TypeMeta{APIVersion: "dapr.io/v1alpha1", Kind: "Configuration"},
+				ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "daprsystem"},
+				Spec: configapi.ConfigurationSpec{
+					Features: []configapi.FeatureSpec{
+						{Name: "WorkflowAccessPolicy", Enabled: &boolTrue},
+					},
+					MTLSSpec: &configapi.MTLSSpec{
+						ControlPlaneTrustDomain: "integration.test.dapr.io",
+						SentryAddress:           sen.Address(),
+					},
+				},
+			}},
+		}),
+		kubernetes.WithClusterDaprComponentList(t, &compapi.ComponentList{
+			Items: []compapi.Component{manifest.ActorInMemoryStateComponent("default", "mystore")},
+		}),
+		kubernetes.WithClusterDaprWorkflowAccessPolicyListFromStore(t, policyStore),
 	)
 
+	s.operator = operator.New(t,
+		operator.WithNamespace("default"),
+		operator.WithKubeconfigPath(s.kubeapi.KubeconfigPath(t)),
+		operator.WithTrustAnchorsFile(sen.TrustAnchorsFile(t)),
+	)
+
+	s.place = placement.New(t, placement.WithSentry(t, sen))
+
+	s.sched = scheduler.New(t,
+		scheduler.WithSentry(sen),
+		scheduler.WithKubeconfig(s.kubeapi.KubeconfigPath(t)),
+		scheduler.WithMode("kubernetes"),
+		scheduler.WithID("dapr-scheduler-server-0"),
+	)
+
+	commonOpts := []daprd.Option{
+		daprd.WithMode("kubernetes"),
+		daprd.WithConfigs("daprsystem"),
+		daprd.WithNamespace("default"),
+		daprd.WithSentry(t, sen),
+		daprd.WithControlPlaneAddress(s.operator.Address()),
+		daprd.WithPlacementAddresses(s.place.Address()),
+		daprd.WithSchedulerAddresses(s.sched.Address()),
+		daprd.WithDisableK8sSecretStore(true),
+		daprd.WithControlPlaneTrustDomain("integration.test.dapr.io"),
+	}
+
+	s.daprd0 = daprd.New(t, append(commonOpts,
+		daprd.WithAppID("spec-caller"),
+	)...)
+
+	s.daprd1 = daprd.New(t, append(commonOpts,
+		daprd.WithAppID("spec-target"),
+	)...)
+
 	return []framework.Option{
-		framework.WithProcesses(sen, s.wf),
+		framework.WithProcesses(sen, s.kubeapi, s.operator, s.sched, s.place, s.daprd0, s.daprd1),
 	}
 }
 
 func (s *specificity) Run(t *testing.T, ctx context.Context) {
-	s.wf.WaitUntilRunning(t, ctx)
+	s.operator.WaitUntilRunning(t, ctx)
+	s.place.WaitUntilRunning(t, ctx)
+	s.sched.WaitUntilRunning(t, ctx)
+	s.daprd0.WaitUntilRunning(t, ctx)
+	s.daprd1.WaitUntilRunning(t, ctx)
 
-	targetAppID := s.wf.DaprN(1).AppID()
+	registry0 := task.NewTaskRegistry()
+	registry1 := task.NewTaskRegistry()
 
-	// Caller orchestrators that schedule sub-orchestrators on target.
+	targetAppID := s.daprd1.AppID()
+
 	for _, wfName := range []string{"ProcessOrder", "ProcessSecret", "CancelOrder"} {
 		name := wfName
-		s.wf.Registry().AddOrchestratorN("Test_"+name, func(ctx *task.OrchestrationContext) (any, error) {
+		require.NoError(t, registry0.AddOrchestratorN("Test_"+name, func(ctx *task.OrchestrationContext) (any, error) {
 			var output string
 			err := ctx.CallSubOrchestrator(name,
 				task.WithSubOrchestratorAppID(targetAppID)).
@@ -104,19 +173,25 @@ func (s *specificity) Run(t *testing.T, ctx context.Context) {
 				return nil, fmt.Errorf("sub-orchestrator %s failed: %w", name, err)
 			}
 			return output, nil
-		})
+		}))
 	}
 
-	// Target orchestrators.
 	for _, wfName := range []string{"ProcessOrder", "ProcessSecret", "CancelOrder"} {
 		name := wfName
-		s.wf.RegistryN(1).AddOrchestratorN(name, func(ctx *task.OrchestrationContext) (any, error) {
+		require.NoError(t, registry1.AddOrchestratorN(name, func(ctx *task.OrchestrationContext) (any, error) {
 			return "completed-" + name, nil
-		})
+		}))
 	}
 
-	client0 := s.wf.BackendClient(t, ctx)
-	s.wf.BackendClientN(t, ctx, 1)
+	client0 := client.NewTaskHubGrpcClient(s.daprd0.GRPCConn(t, ctx), logger.New(t))
+	require.NoError(t, client0.StartWorkItemListener(ctx, registry0))
+	client1 := client.NewTaskHubGrpcClient(s.daprd1.GRPCConn(t, ctx), logger.New(t))
+	require.NoError(t, client1.StartWorkItemListener(ctx, registry1))
+
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.GreaterOrEqual(c, len(s.daprd0.GetMetadata(t, ctx).ActorRuntime.ActiveActors), 1)
+		assert.GreaterOrEqual(c, len(s.daprd1.GetMetadata(t, ctx).ActorRuntime.ActiveActors), 1)
+	}, time.Second*20, time.Millisecond*100)
 
 	t.Run("ProcessOrder allowed (Process* matches, more specific than *)", func(t *testing.T) {
 		id, err := client0.ScheduleNewOrchestration(ctx, "Test_ProcessOrder")
@@ -129,18 +204,20 @@ func (s *specificity) Run(t *testing.T, ctx context.Context) {
 	t.Run("ProcessSecret denied (exact deny beats Process* allow)", func(t *testing.T) {
 		id, err := client0.ScheduleNewOrchestration(ctx, "Test_ProcessSecret")
 		require.NoError(t, err)
+
 		metadata, err := client0.WaitForOrchestrationCompletion(ctx, id, api.WithFetchPayloads(true))
 		require.NoError(t, err)
-		assert.True(t, api.OrchestrationMetadataIsFailed(metadata))
+		require.NotNil(t, metadata.GetFailureDetails())
 		assert.Contains(t, metadata.GetFailureDetails().GetErrorMessage(), "not allowed")
 	})
 
 	t.Run("CancelOrder denied (only * matches, which is deny)", func(t *testing.T) {
 		id, err := client0.ScheduleNewOrchestration(ctx, "Test_CancelOrder")
 		require.NoError(t, err)
+
 		metadata, err := client0.WaitForOrchestrationCompletion(ctx, id, api.WithFetchPayloads(true))
 		require.NoError(t, err)
-		assert.True(t, api.OrchestrationMetadataIsFailed(metadata))
+		require.NotNil(t, metadata.GetFailureDetails())
 		assert.Contains(t, metadata.GetFailureDetails().GetErrorMessage(), "not allowed")
 	})
 }
