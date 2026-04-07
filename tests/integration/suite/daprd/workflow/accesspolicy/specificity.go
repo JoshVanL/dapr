@@ -208,7 +208,7 @@ func (s *specificity) Run(t *testing.T, ctx context.Context) {
 		metadata, err := client0.WaitForOrchestrationCompletion(ctx, id, api.WithFetchPayloads(true))
 		require.NoError(t, err)
 		require.NotNil(t, metadata.GetFailureDetails())
-		assert.Contains(t, metadata.GetFailureDetails().GetErrorMessage(), "not allowed")
+		assert.Contains(t, metadata.GetFailureDetails().GetErrorMessage(), "denied by workflow access policy")
 	})
 
 	t.Run("CancelOrder denied (only * matches, which is deny)", func(t *testing.T) {
@@ -218,6 +218,6 @@ func (s *specificity) Run(t *testing.T, ctx context.Context) {
 		metadata, err := client0.WaitForOrchestrationCompletion(ctx, id, api.WithFetchPayloads(true))
 		require.NoError(t, err)
 		require.NotNil(t, metadata.GetFailureDetails())
-		assert.Contains(t, metadata.GetFailureDetails().GetErrorMessage(), "not allowed")
+		assert.Contains(t, metadata.GetFailureDetails().GetErrorMessage(), "denied by workflow access policy")
 	})
 }

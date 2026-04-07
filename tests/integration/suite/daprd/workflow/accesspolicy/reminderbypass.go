@@ -226,7 +226,7 @@ func (r *reminderbypass) Run(t *testing.T, ctx context.Context) {
 		require.NoError(t, err)
 		require.NotNil(t, metadata.GetFailureDetails(),
 			"attacker should not be able to schedule workflows on target")
-		assert.Contains(t, metadata.GetFailureDetails().GetErrorMessage(), "not allowed")
+		assert.Contains(t, metadata.GetFailureDetails().GetErrorMessage(), "denied by workflow access policy")
 	})
 
 	t.Run("attacker cannot call cross-app activity on target", func(t *testing.T) {
@@ -240,6 +240,6 @@ func (r *reminderbypass) Run(t *testing.T, ctx context.Context) {
 		require.NoError(t, err)
 		require.NotNil(t, metadata.GetFailureDetails(),
 			"attacker should not be able to call activities on target")
-		assert.Contains(t, metadata.GetFailureDetails().GetErrorMessage(), "not allowed")
+		assert.Contains(t, metadata.GetFailureDetails().GetErrorMessage(), "denied by workflow access policy")
 	})
 }

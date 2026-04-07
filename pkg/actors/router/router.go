@@ -383,6 +383,13 @@ func (r *router) callStream(ctx context.Context,
 		return r.callRemoteActorStream(ctx, lar, req, stream)
 	}
 
+	// Enforce workflow access policies for local streaming calls.
+	if r.workflowACL != nil {
+		if err := r.workflowACL(r.appID, req); err != nil {
+			return backoff.Permanent(err)
+		}
+	}
+
 	return r.callLocalActorStream(ctx, req, stream)
 }
 

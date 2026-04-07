@@ -135,11 +135,13 @@ func (o *orchestrator) failChildWorkflow(ctx context.Context, e *protos.HistoryE
 				TaskScheduledId: taskScheduledID,
 				FailureDetails: &protos.TaskFailureDetails{
 					ErrorType:    "WorkflowAccessPolicyDenied",
-					ErrorMessage: callErr.Error(),
+					ErrorMessage: "operation denied by workflow access policy",
 				},
 			},
 		},
 	}
+
+	log.Warnf("Workflow actor '%s': child workflow denied by access policy: %v", o.actorID, callErr)
 
 	// Create a reminder that carries the failure event. When this
 	// reminder fires (in a fresh execution cycle after the current run

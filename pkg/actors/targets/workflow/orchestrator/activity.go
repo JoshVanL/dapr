@@ -113,7 +113,7 @@ func (o *orchestrator) failActivity(ctx context.Context, e *backend.HistoryEvent
 				TaskScheduledId: e.GetEventId(),
 				FailureDetails: &protos.TaskFailureDetails{
 					ErrorType:    "WorkflowAccessPolicyDenied",
-					ErrorMessage: callErr.Error(),
+					ErrorMessage: "operation denied by workflow access policy",
 				},
 			},
 		},
