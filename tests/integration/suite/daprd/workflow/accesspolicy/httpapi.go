@@ -164,7 +164,7 @@ func (h *httpapi) Run(t *testing.T, ctx context.Context) {
 
 	assert.EventuallyWithT(t, func(c *assert.CollectT) {
 		assert.GreaterOrEqual(c, len(h.daprd.GetMetadata(t, ctx).ActorRuntime.ActiveActors), 1)
-	}, time.Second*20, time.Millisecond*100)
+	}, time.Second*20, time.Millisecond*10)
 
 	httpClient := client.HTTP(t)
 	baseURL := fmt.Sprintf("http://%s/v1.0-alpha1/workflows/dapr", h.daprd.HTTPAddress())
@@ -173,7 +173,7 @@ func (h *httpapi) Run(t *testing.T, ctx context.Context) {
 		url := baseURL + "/DeniedWF/start"
 		assert.EventuallyWithT(t, func(c *assert.CollectT) {
 			httpPostExpectDenied(c, httpClient, url)
-		}, time.Second*20, time.Millisecond*100)
+		}, time.Second*20, time.Millisecond*10)
 	})
 
 	t.Run("HTTP start allowed workflow succeeds", func(t *testing.T) {
@@ -190,7 +190,7 @@ func (h *httpapi) Run(t *testing.T, ctx context.Context) {
 			}
 			defer resp.Body.Close()
 			assert.Equal(c, http.StatusAccepted, resp.StatusCode)
-		}, time.Second*20, time.Millisecond*100)
+		}, time.Second*20, time.Millisecond*10)
 	})
 
 	t.Run("HTTP terminate exercises actor path", func(t *testing.T) {

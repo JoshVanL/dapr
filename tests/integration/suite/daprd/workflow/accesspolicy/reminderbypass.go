@@ -167,11 +167,6 @@ func (r *reminderbypass) Run(t *testing.T, ctx context.Context) {
 	r.target.WaitUntilRunning(t, ctx)
 	r.attacker.WaitUntilRunning(t, ctx)
 
-	assert.EventuallyWithT(t, func(c *assert.CollectT) {
-		assert.GreaterOrEqual(c, len(r.attacker.GetMetadata(t, ctx).ActorRuntime.ActiveActors), 1)
-		assert.GreaterOrEqual(c, len(r.target.GetMetadata(t, ctx).ActorRuntime.ActiveActors), 1)
-	}, time.Second*20, time.Millisecond*100)
-
 	// Set up orchestrator on attacker that tries to call workflows on target.
 	registry := task.NewTaskRegistry()
 	require.NoError(t, registry.AddOrchestratorN("AttackWorkflow", func(ctx *task.OrchestrationContext) (any, error) {
@@ -209,6 +204,11 @@ func (r *reminderbypass) Run(t *testing.T, ctx context.Context) {
 	require.NoError(t, attackerClient.StartWorkItemListener(ctx, registry))
 	targetClient := client.NewTaskHubGrpcClient(r.target.GRPCConn(t, ctx), logger.New(t))
 	require.NoError(t, targetClient.StartWorkItemListener(ctx, targetRegistry))
+
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.GreaterOrEqual(c, len(r.attacker.GetMetadata(t, ctx).ActorRuntime.ActiveActors), 1)
+		assert.GreaterOrEqual(c, len(r.target.GetMetadata(t, ctx).ActorRuntime.ActiveActors), 1)
+	}, time.Second*20, time.Millisecond*10)
 
 	t.Run("attacker cannot schedule cross-app workflow on target", func(t *testing.T) {
 		// The attacker tries to schedule an orchestrator that calls the target.

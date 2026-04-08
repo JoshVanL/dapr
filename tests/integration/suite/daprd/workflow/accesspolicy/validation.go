@@ -125,7 +125,7 @@ func (v *validation) Run(t *testing.T, ctx context.Context) {
 
 	assert.EventuallyWithT(t, func(c *assert.CollectT) {
 		assert.GreaterOrEqual(c, len(v.daprd.GetMetadata(t, ctx).ActorRuntime.ActiveActors), 1)
-	}, time.Second*20, time.Millisecond*100)
+	}, time.Second*20, time.Millisecond*10)
 
 	t.Run("invalid enum action is rejected", func(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(v.resDir, "policy.yaml"), []byte(`

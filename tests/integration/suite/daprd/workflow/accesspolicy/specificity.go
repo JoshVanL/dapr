@@ -191,7 +191,7 @@ func (s *specificity) Run(t *testing.T, ctx context.Context) {
 	assert.EventuallyWithT(t, func(c *assert.CollectT) {
 		assert.GreaterOrEqual(c, len(s.daprd0.GetMetadata(t, ctx).ActorRuntime.ActiveActors), 1)
 		assert.GreaterOrEqual(c, len(s.daprd1.GetMetadata(t, ctx).ActorRuntime.ActiveActors), 1)
-	}, time.Second*20, time.Millisecond*100)
+	}, time.Second*20, time.Millisecond*10)
 
 	t.Run("ProcessOrder allowed (Process* matches, more specific than *)", func(t *testing.T) {
 		id, err := client0.ScheduleNewOrchestration(ctx, "Test_ProcessOrder")

@@ -194,7 +194,7 @@ func (a *allow) Run(t *testing.T, ctx context.Context) {
 	assert.EventuallyWithT(t, func(c *assert.CollectT) {
 		assert.GreaterOrEqual(c, len(a.daprd0.GetMetadata(t, ctx).ActorRuntime.ActiveActors), 1)
 		assert.GreaterOrEqual(c, len(a.daprd1.GetMetadata(t, ctx).ActorRuntime.ActiveActors), 1)
-	}, time.Second*20, time.Millisecond*100)
+	}, time.Second*20, time.Millisecond*10)
 
 	t.Run("allowed cross-app workflow with activity succeeds", func(t *testing.T) {
 		id, err := client0.ScheduleNewOrchestration(ctx, "AllowedWorkflow")

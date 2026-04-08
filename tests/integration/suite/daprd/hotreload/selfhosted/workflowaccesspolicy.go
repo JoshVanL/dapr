@@ -101,7 +101,7 @@ func (w *workflowaccesspolicy) Run(t *testing.T, ctx context.Context) {
 
 	assert.EventuallyWithT(t, func(c *assert.CollectT) {
 		assert.GreaterOrEqual(c, len(w.daprd.GetMetadata(t, ctx).ActorRuntime.ActiveActors), 1)
-	}, time.Second*20, time.Millisecond*100)
+	}, time.Second*20, time.Millisecond*10)
 
 	t.Run("no policy file, workflow succeeds", func(t *testing.T) {
 		id, err := backendClient.ScheduleNewOrchestration(ctx, "TestWF")

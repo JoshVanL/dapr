@@ -162,7 +162,7 @@ func (h *grpcapi) Run(t *testing.T, ctx context.Context) {
 
 	assert.EventuallyWithT(t, func(c *assert.CollectT) {
 		assert.GreaterOrEqual(c, len(h.daprd.GetMetadata(t, ctx).ActorRuntime.ActiveActors), 1)
-	}, time.Second*20, time.Millisecond*100)
+	}, time.Second*20, time.Millisecond*10)
 
 	daprClient := runtimev1pb.NewDaprClient(h.daprd.GRPCConn(t, ctx))
 
