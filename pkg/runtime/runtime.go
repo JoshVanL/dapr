@@ -747,6 +747,11 @@ func (a *DaprRuntime) initRuntime(ctx context.Context) error {
 		// Signal the reloader that no policy reconciler is needed so Run()
 		// doesn't block waiting.
 		a.reloader.SignalNoPolicyRecompiler()
+
+		// Warn if policies may exist but the feature flag is disabled.
+		// This helps operators catch misconfigurations where they created
+		// WorkflowAccessPolicy resources but forgot to enable the feature.
+		a.warnIfPoliciesExistWithoutFeatureFlag(ctx)
 	}
 
 	if err = a.runnerCloser.AddCloser(a.daprGRPCAPI); err != nil {
@@ -1463,6 +1468,33 @@ func (a *DaprRuntime) buildWorkflowACLChecker() actorrouter.WorkflowACLChecker {
 		}
 
 		return nil
+	}
+}
+
+// warnIfPoliciesExistWithoutFeatureFlag checks whether WorkflowAccessPolicy
+// resources exist even though the feature flag is disabled. This helps catch
+// misconfigurations where an operator creates policies but forgets to enable
+// the WorkflowAccessPolicy feature flag.
+func (a *DaprRuntime) warnIfPoliciesExistWithoutFeatureFlag(ctx context.Context) {
+	switch a.runtimeConfig.mode {
+	case modes.KubernetesMode:
+		resp, err := a.operatorClient.ListWorkflowAccessPolicy(ctx, &operatorv1pb.ListWorkflowAccessPolicyRequest{
+			Namespace: a.namespace,
+		})
+		if err == nil && len(resp.GetPolicies()) > 0 {
+			log.Warnf("Found %d WorkflowAccessPolicy resource(s) but the WorkflowAccessPolicy feature flag is NOT enabled. "+
+				"Policies will NOT be enforced. Enable the feature flag in your Dapr configuration to activate enforcement.",
+				len(resp.GetPolicies()))
+		}
+	case modes.StandaloneMode:
+		for _, dir := range a.runtimeConfig.standalone.ResourcesPath {
+			policies, _ := loadWorkflowAccessPoliciesFromDir(dir, a.runtimeConfig.id)
+			if len(policies) > 0 {
+				log.Warnf("Found WorkflowAccessPolicy resource(s) in %s but the WorkflowAccessPolicy feature flag is NOT enabled. "+
+					"Policies will NOT be enforced. Enable the feature flag in your Dapr configuration to activate enforcement.", dir)
+				return
+			}
+		}
 	}
 }
 

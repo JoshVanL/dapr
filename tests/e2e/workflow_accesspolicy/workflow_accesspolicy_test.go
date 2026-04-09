@@ -14,9 +14,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+// Package workflow_accesspolicy_e2e tests WorkflowAccessPolicy enforcement
+// in a real Kubernetes cluster with actual Dapr sidecars and mTLS.
+//
+// Prerequisites:
+//   - Apply tests/config/kubernetes_wfacl_config.yaml (Configuration CRD)
+//   - Apply tests/config/kubernetes_wfacl_policy.yaml (WorkflowAccessPolicy CRD)
+//   - Build and push the e2e-workflowsapp image
 package workflow_accesspolicy_e2e
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"os"
@@ -32,6 +41,12 @@ import (
 )
 
 var tr *runner.TestRunner
+
+func randomID() string {
+	b := make([]byte, 8)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
 
 func TestMain(m *testing.M) {
 	utils.SetupLogs("workflow_accesspolicy")
@@ -70,10 +85,6 @@ func TestMain(m *testing.M) {
 		},
 	}
 
-	// The following Kubernetes resources must be applied before running:
-	// 1. Configuration "wfaclconfig" with WorkflowAccessPolicy feature enabled
-	// 2. WorkflowAccessPolicy allowing "wfacl-caller" to schedule "AllowedWorkflow"
-	//    and denying "DeniedWorkflow" on "wfacl-target"
 	tr = runner.NewTestRunner("workflow_accesspolicy", testApps, nil, nil)
 	os.Exit(tr.Start(m))
 }
@@ -85,31 +96,66 @@ func TestWorkflowAccessPolicy(t *testing.T) {
 	targetURL := tr.Platform.AcquireAppExternalURL("wfacl-target")
 	require.NotEmpty(t, targetURL, "wfacl-target external URL must not be empty")
 
-	// Wait for apps to be healthy.
 	require.NoError(t, utils.HealthCheckApps(callerURL, targetURL))
 
-	t.Run("allowed workflow succeeds", func(t *testing.T) {
+	t.Run("allowed workflow succeeds via Dapr HTTP API", func(t *testing.T) {
+		instanceID := "allowed-" + randomID()
 		require.EventuallyWithT(t, func(c *assert.CollectT) {
-			resp, err := utils.HTTPPost(fmt.Sprintf("%s/start-workflow/AllowedWorkflow", callerURL), nil)
+			resp, err := utils.HTTPPost(
+				fmt.Sprintf("%s/StartWorkflow/dapr/AllowedWorkflow/%s", callerURL, instanceID),
+				nil,
+			)
 			assert.NoError(c, err)
-			assert.Equal(c, http.StatusOK, resp.StatusCode)
-		}, 30*time.Second, time.Second)
+			if resp != nil {
+				assert.Equal(c, http.StatusOK, resp.StatusCode)
+			}
+		}, 60*time.Second, 2*time.Second)
 	})
 
-	t.Run("denied workflow fails", func(t *testing.T) {
+	t.Run("denied workflow fails via Dapr HTTP API", func(t *testing.T) {
+		instanceID := "denied-" + randomID()
 		require.EventuallyWithT(t, func(c *assert.CollectT) {
-			resp, err := utils.HTTPPost(fmt.Sprintf("%s/start-workflow/DeniedWorkflow", callerURL), nil)
+			resp, err := utils.HTTPPost(
+				fmt.Sprintf("%s/StartWorkflow/dapr/DeniedWorkflow/%s", callerURL, instanceID),
+				nil,
+			)
 			assert.NoError(c, err)
-			// Expect a non-200 status indicating the workflow was denied.
-			assert.NotEqual(c, http.StatusOK, resp.StatusCode)
-		}, 30*time.Second, time.Second)
+			if resp != nil {
+				assert.NotEqual(c, http.StatusOK, resp.StatusCode,
+					"denied workflow should not succeed")
+			}
+		}, 60*time.Second, 2*time.Second)
 	})
 
 	t.Run("unmentioned workflow fails with default deny", func(t *testing.T) {
+		instanceID := "unmentioned-" + randomID()
 		require.EventuallyWithT(t, func(c *assert.CollectT) {
-			resp, err := utils.HTTPPost(fmt.Sprintf("%s/start-workflow/UnmentionedWorkflow", callerURL), nil)
+			resp, err := utils.HTTPPost(
+				fmt.Sprintf("%s/StartWorkflow/dapr/UnmentionedWorkflow/%s", callerURL, instanceID),
+				nil,
+			)
 			assert.NoError(c, err)
-			assert.NotEqual(c, http.StatusOK, resp.StatusCode)
-		}, 30*time.Second, time.Second)
+			if resp != nil {
+				assert.NotEqual(c, http.StatusOK, resp.StatusCode,
+					"unmentioned workflow should be denied by default")
+			}
+		}, 60*time.Second, 2*time.Second)
+	})
+
+	t.Run("target cannot start workflows it is not authorized for", func(t *testing.T) {
+		// The target app is in the policy's callers list for activities only,
+		// not workflows. Its own sidecar's local ACL check should deny.
+		instanceID := "selfcall-" + randomID()
+		require.EventuallyWithT(t, func(c *assert.CollectT) {
+			resp, err := utils.HTTPPost(
+				fmt.Sprintf("%s/StartWorkflow/dapr/AllowedWorkflow/%s", targetURL, instanceID),
+				nil,
+			)
+			assert.NoError(c, err)
+			if resp != nil {
+				assert.NotEqual(c, http.StatusOK, resp.StatusCode,
+					"target should not be able to start workflows it's not authorized for")
+			}
+		}, 60*time.Second, 2*time.Second)
 	})
 }

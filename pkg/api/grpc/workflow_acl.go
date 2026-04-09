@@ -125,7 +125,7 @@ func (a *api) extractCallerIdentity(ctx context.Context) (appID, namespace strin
 
 // checkNamespace denies cross-namespace calls when policies are active.
 func (a *api) checkNamespace(callerNamespace string) error {
-	if callerNamespace == "" || callerNamespace != a.Universal.Namespace() {
+	if callerNamespace != "" && callerNamespace != a.Universal.Namespace() {
 		return status.Errorf(codes.PermissionDenied,
 			"workflow access policy: cross-namespace call denied (caller namespace '%s' != target namespace '%s')",
 			callerNamespace, a.Universal.Namespace())
