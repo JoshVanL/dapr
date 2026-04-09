@@ -709,6 +709,112 @@ func TestCompile_Standalone_EmptyNamePattern(t *testing.T) {
 	assert.False(t, cp.Evaluate("app-a", OperationTypeWorkflow, "AnyWF"))
 }
 
+// --- IsCallerKnown tests ---
+
+func TestIsCallerKnown_NilPoliciesAllowAll(t *testing.T) {
+	var cp *CompiledPolicies
+	assert.True(t, cp.IsCallerKnown("any-app"))
+}
+
+func TestIsCallerKnown_CallerWithAllowRule(t *testing.T) {
+	cp := Compile([]wfaclapi.WorkflowAccessPolicy{
+		makePolicy("test", []wfaclapi.WorkflowAccessPolicyRule{{
+			Callers: []wfaclapi.WorkflowCaller{{AppID: "app-a"}},
+			Operations: []wfaclapi.WorkflowOperationRule{
+				{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "WF1", Action: wfaclapi.PolicyActionAllow},
+			},
+		}}),
+	})
+
+	assert.True(t, cp.IsCallerKnown("app-a"))
+	assert.False(t, cp.IsCallerKnown("app-b"))
+}
+
+func TestIsCallerKnown_CallerOnlyInDenyRule(t *testing.T) {
+	// A caller that only appears in deny rules should NOT be considered known.
+	// This prevents deny-only callers from gaining access to non-subject methods
+	// like AddWorkflowEvent and PurgeWorkflowState.
+	cp := Compile([]wfaclapi.WorkflowAccessPolicy{
+		makePolicy("test", []wfaclapi.WorkflowAccessPolicyRule{{
+			Callers: []wfaclapi.WorkflowCaller{{AppID: "deny-only-app"}},
+			Operations: []wfaclapi.WorkflowOperationRule{
+				{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "*", Action: wfaclapi.PolicyActionDeny},
+			},
+		}}),
+	})
+
+	assert.False(t, cp.IsCallerKnown("deny-only-app"))
+}
+
+func TestIsCallerKnown_CallerInMixedRules(t *testing.T) {
+	// A caller that appears in both allow and deny rules IS known
+	// (they have at least one allow rule).
+	cp := Compile([]wfaclapi.WorkflowAccessPolicy{
+		makePolicy("test", []wfaclapi.WorkflowAccessPolicyRule{
+			{
+				Callers: []wfaclapi.WorkflowCaller{{AppID: "mixed-app"}},
+				Operations: []wfaclapi.WorkflowOperationRule{
+					{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "AllowedWF", Action: wfaclapi.PolicyActionAllow},
+				},
+			},
+			{
+				Callers: []wfaclapi.WorkflowCaller{{AppID: "mixed-app"}},
+				Operations: []wfaclapi.WorkflowOperationRule{
+					{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "DeniedWF", Action: wfaclapi.PolicyActionDeny},
+				},
+			},
+		}),
+	})
+
+	assert.True(t, cp.IsCallerKnown("mixed-app"))
+}
+
+func TestIsCallerKnown_CallerInRuleWithMixedActions(t *testing.T) {
+	// A rule with both allow and deny ops: the caller has an allow action.
+	cp := Compile([]wfaclapi.WorkflowAccessPolicy{
+		makePolicy("test", []wfaclapi.WorkflowAccessPolicyRule{{
+			Callers: []wfaclapi.WorkflowCaller{{AppID: "app-a"}},
+			Operations: []wfaclapi.WorkflowOperationRule{
+				{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "WF1", Action: wfaclapi.PolicyActionAllow},
+				{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "SecretWF", Action: wfaclapi.PolicyActionDeny},
+			},
+		}}),
+	})
+
+	assert.True(t, cp.IsCallerKnown("app-a"))
+}
+
+func TestIsCallerKnown_MultiplePolicies(t *testing.T) {
+	// Caller allowed in one policy, not mentioned in another.
+	cp := Compile([]wfaclapi.WorkflowAccessPolicy{
+		makePolicy("deny-policy", []wfaclapi.WorkflowAccessPolicyRule{{
+			Callers: []wfaclapi.WorkflowCaller{{AppID: "deny-app"}},
+			Operations: []wfaclapi.WorkflowOperationRule{
+				{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "*", Action: wfaclapi.PolicyActionDeny},
+			},
+		}}),
+		makePolicy("allow-policy", []wfaclapi.WorkflowAccessPolicyRule{{
+			Callers: []wfaclapi.WorkflowCaller{{AppID: "allow-app"}},
+			Operations: []wfaclapi.WorkflowOperationRule{
+				{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "*", Action: wfaclapi.PolicyActionAllow},
+			},
+		}}),
+	})
+
+	assert.True(t, cp.IsCallerKnown("allow-app"))
+	assert.False(t, cp.IsCallerKnown("deny-app"))
+	assert.False(t, cp.IsCallerKnown("unknown-app"))
+}
+
+func TestIsCallerKnown_EmptyPolicyNoRules(t *testing.T) {
+	// Non-nil compiled policies but no rules.
+	cp := Compile([]wfaclapi.WorkflowAccessPolicy{
+		makePolicy("empty", nil),
+	})
+
+	assert.False(t, cp.IsCallerKnown("any-app"))
+}
+
 func TestCompile_Standalone_EmptyAppIDInCaller(t *testing.T) {
 	cp := Compile([]wfaclapi.WorkflowAccessPolicy{
 		makePolicy("test", []wfaclapi.WorkflowAccessPolicyRule{{

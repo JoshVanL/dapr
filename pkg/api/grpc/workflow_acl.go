@@ -58,16 +58,18 @@ func (a *api) callActorValidateWorkflowACL(ctx context.Context, in *internalv1pb
 	}
 	if !subject {
 		// Method not subject to name-based matching (e.g. AddWorkflowEvent,
-		// PurgeWorkflowState). For these methods, we check if the caller is
-		// known to any rule — unknown callers have no business touching
-		// workflows on this sidecar.
+		// PurgeWorkflowState). For these methods, we check if the caller has
+		// at least one allow rule. Callers absent from all rules or only in
+		// deny rules are rejected.
 		if !policies.IsCallerKnown(callerAppID) {
+			a.logger.Warnf("Workflow access policy denied app '%s' for method '%s' (caller not in any allow rule)", callerAppID, method)
 			return status.Errorf(codes.PermissionDenied, "workflow access policy: app '%s' is not authorized to access workflows", callerAppID)
 		}
 		return nil
 	}
 
 	if !policies.Evaluate(callerAppID, opType, opName) {
+		a.logger.Warnf("Workflow access policy denied app '%s' from scheduling %s '%s'", callerAppID, opType, opName)
 		return status.Errorf(codes.PermissionDenied, "workflow access policy: app '%s' is not allowed to schedule %s '%s'", callerAppID, opType, opName)
 	}
 
@@ -100,6 +102,7 @@ func (a *api) callActorReminderValidateWorkflowACL(ctx context.Context, in *inte
 	}
 
 	if !policies.IsCallerKnown(callerAppID) {
+		a.logger.Warnf("Workflow access policy denied app '%s' from invoking workflow reminders", callerAppID)
 		return status.Errorf(codes.PermissionDenied, "workflow access policy: app '%s' is not authorized to invoke workflow reminders", callerAppID)
 	}
 
@@ -122,7 +125,7 @@ func (a *api) extractCallerIdentity(ctx context.Context) (appID, namespace strin
 
 // checkNamespace denies cross-namespace calls when policies are active.
 func (a *api) checkNamespace(callerNamespace string) error {
-	if callerNamespace != "" && callerNamespace != a.Universal.Namespace() {
+	if callerNamespace == "" || callerNamespace != a.Universal.Namespace() {
 		return status.Errorf(codes.PermissionDenied,
 			"workflow access policy: cross-namespace call denied (caller namespace '%s' != target namespace '%s')",
 			callerNamespace, a.Universal.Namespace())

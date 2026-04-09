@@ -42,9 +42,9 @@ import (
 	contribMetadata "github.com/dapr/components-contrib/metadata"
 	"github.com/dapr/components-contrib/pubsub"
 	"github.com/dapr/components-contrib/state"
+	workflowacl "github.com/dapr/dapr/pkg/acl/workflow"
 	actorapi "github.com/dapr/dapr/pkg/actors/api"
 	actorerrors "github.com/dapr/dapr/pkg/actors/errors"
-	workflowacl "github.com/dapr/dapr/pkg/acl/workflow"
 	apierrors "github.com/dapr/dapr/pkg/api/errors"
 	"github.com/dapr/dapr/pkg/api/grpc/metadata"
 	"github.com/dapr/dapr/pkg/api/universal"
@@ -94,14 +94,14 @@ type API interface {
 
 type api struct {
 	*universal.Universal
-	logger                logger.Logger
-	directMessaging       invokev1.DirectMessaging
-	channels              *channels.Channels
-	pubsubAdapter         runtimePubsub.Adapter
-	pubsubAdapterStreamer runtimePubsub.AdapterStreamer
-	outbox                outbox.Outbox
-	sendToOutputBindingFn func(ctx context.Context, name string, req *bindings.InvokeRequest) (*bindings.InvokeResponse, error)
-	tracingSpec           config.TracingSpec
+	logger                 logger.Logger
+	directMessaging        invokev1.DirectMessaging
+	channels               *channels.Channels
+	pubsubAdapter          runtimePubsub.Adapter
+	pubsubAdapterStreamer  runtimePubsub.AdapterStreamer
+	outbox                 outbox.Outbox
+	sendToOutputBindingFn  func(ctx context.Context, name string, req *bindings.InvokeRequest) (*bindings.InvokeResponse, error)
+	tracingSpec            config.TracingSpec
 	accessControlList      *config.AccessControlList
 	workflowAccessPolicies atomic.Pointer[workflowacl.CompiledPolicies]
 	processor              *processor.Processor

@@ -27,8 +27,9 @@ var log = logger.NewLogger("dapr.acl.workflow")
 // target app. It is built from one or more WorkflowAccessPolicy resources that
 // apply to the app (via scopes).
 type CompiledPolicies struct {
-	rules         []compiledRule
-	defaultAction wfaclapi.PolicyAction // "allow" or "deny" — deny if any policy says deny
+	rules          []compiledRule
+	defaultAction  wfaclapi.PolicyAction // "allow" or "deny" - deny if any policy says deny
+	allowedCallers map[string]struct{}   // callers that have at least one allow rule
 }
 
 type compiledRule struct {
@@ -106,26 +107,36 @@ func Compile(policies []wfaclapi.WorkflowAccessPolicy) *CompiledPolicies {
 		}
 	}
 
-	return &CompiledPolicies{rules: rules, defaultAction: defaultAction}
+	// Build the set of callers that have at least one allow action.
+	// IsCallerKnown uses this to avoid granting access to callers that
+	// only appear in deny rules.
+	allowed := make(map[string]struct{})
+	for i := range rules {
+		for _, op := range rules[i].operations {
+			if op.action == wfaclapi.PolicyActionAllow {
+				for id := range rules[i].callerAppIDs {
+					allowed[id] = struct{}{}
+				}
+				break
+			}
+		}
+	}
+
+	return &CompiledPolicies{rules: rules, defaultAction: defaultAction, allowedCallers: allowed}
 }
 
-// IsCallerKnown checks whether the given caller appears in ANY rule's callers
-// list. Used for methods where we can't extract a specific operation name
-// (e.g., AddWorkflowEvent, PurgeWorkflowState) — if the caller isn't known
-// to any rule, they have no business touching this workflow.
+// IsCallerKnown checks whether the given caller appears in at least one rule
+// that contains an allow action. Used for methods where we can't extract a
+// specific operation name (e.g., AddWorkflowEvent, PurgeWorkflowState).
+// Callers that only appear in deny rules are not considered "known" to prevent
+// a deny-only entry from granting broader access than being absent entirely.
 func (cp *CompiledPolicies) IsCallerKnown(callerAppID string) bool {
 	if cp == nil {
 		return true
 	}
 
-	for i := range cp.rules {
-		rule := &cp.rules[i]
-		if _, ok := rule.callerAppIDs[callerAppID]; ok {
-			return true
-		}
-	}
-
-	return false
+	_, ok := cp.allowedCallers[callerAppID]
+	return ok
 }
 
 // Evaluate checks whether the given caller is allowed to perform the specified
