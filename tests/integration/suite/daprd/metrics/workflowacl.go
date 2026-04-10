@@ -82,8 +82,10 @@ func (w *workflowacl) Setup(t *testing.T) []framework.Option {
 					},
 				},
 				{
+					// Target must be able to execute its own workflows and activities.
 					Callers: []wfaclapi.WorkflowCaller{{AppID: "metric-target"}},
 					Operations: []wfaclapi.WorkflowOperationRule{
+						{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "*", Action: wfaclapi.PolicyActionAllow},
 						{Type: wfaclapi.WorkflowOperationTypeActivity, Name: "*", Action: wfaclapi.PolicyActionAllow},
 					},
 				},

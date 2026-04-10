@@ -232,10 +232,12 @@ func (w *workflowaccesspolicies) Run(t *testing.T, ctx context.Context) {
 						}},
 					},
 					{
+						// Target must be able to process its own workflows and activities.
 						Callers: []wfaclapi.WorkflowCaller{{AppID: "wfacl-reload-target"}},
-						Operations: []wfaclapi.WorkflowOperationRule{{
-							Type: wfaclapi.WorkflowOperationTypeActivity, Name: "*", Action: wfaclapi.PolicyActionAllow,
-						}},
+						Operations: []wfaclapi.WorkflowOperationRule{
+							{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "*", Action: wfaclapi.PolicyActionAllow},
+							{Type: wfaclapi.WorkflowOperationTypeActivity, Name: "*", Action: wfaclapi.PolicyActionAllow},
+						},
 					},
 				},
 			},
