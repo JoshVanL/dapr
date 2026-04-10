@@ -1454,19 +1454,21 @@ func (a *DaprRuntime) buildWorkflowACLChecker() actorrouter.WorkflowACLChecker {
 		}
 		if !subject {
 			if !policies.IsCallerKnown(callerAppID) {
-				return status.Errorf(codes.PermissionDenied,
-					"workflow access policy: app '%s' is not authorized to access workflows",
-					callerAppID)
+				log.Warnf("Workflow access policy denied app '%s' for method '%s' on %s actor (caller not in any allow rule)", callerAppID, method, opType)
+				diag.DefaultMonitoring.WorkflowACLActionDenied(callerAppID, string(opType), method)
+				return status.Errorf(codes.PermissionDenied, "access denied by workflow access policy")
 			}
+			diag.DefaultMonitoring.WorkflowACLActionAllowed(callerAppID, string(opType), method)
 			return nil
 		}
 
 		if !policies.Evaluate(callerAppID, opType, opName) {
-			return status.Errorf(codes.PermissionDenied,
-				"workflow access policy: app '%s' is not allowed to schedule %s '%s'",
-				callerAppID, opType, opName)
+			log.Warnf("Workflow access policy denied app '%s' from scheduling %s '%s'", callerAppID, opType, opName)
+			diag.DefaultMonitoring.WorkflowACLActionDenied(callerAppID, string(opType), "schedule")
+			return status.Errorf(codes.PermissionDenied, "access denied by workflow access policy")
 		}
 
+		diag.DefaultMonitoring.WorkflowACLActionAllowed(callerAppID, string(opType), "schedule")
 		return nil
 	}
 }

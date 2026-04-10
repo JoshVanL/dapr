@@ -231,12 +231,6 @@ func httpPostExpectDenied(c *assert.CollectT, httpClient *http.Client, url strin
 		return
 	}
 	bodyStr := string(body)
-	assert.True(c,
-		strings.Contains(bodyStr, "PermissionDenied") ||
-			strings.Contains(bodyStr, "not allowed") ||
-			strings.Contains(bodyStr, "access policy") ||
-			strings.Contains(bodyStr, "not authorized"),
-		"expected policy denial in body, got: %s", bodyStr,
-	)
+	assert.Contains(c, bodyStr, "access denied by workflow access policy")
 	assert.NotEqual(c, http.StatusAccepted, resp.StatusCode)
 }

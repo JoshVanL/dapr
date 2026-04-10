@@ -11,7 +11,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package informer
+package metrics
 
 import (
 	"context"
@@ -45,13 +45,12 @@ import (
 )
 
 func init() {
-	suite.Register(new(workflowaccesspolicies))
+	suite.Register(new(workflowacl))
 }
 
-// workflowaccesspolicies tests operator hot-reloading of WorkflowAccessPolicy
-// resources using the Kubernetes informer. Uses two daprds (caller and target)
-// with mTLS to exercise cross-app enforcement through the operator.
-type workflowaccesspolicies struct {
+// workflowacl tests that workflow access policy enforcement emits
+// the expected allow/deny metrics.
+type workflowacl struct {
 	caller  *daprd.Daprd
 	target  *daprd.Daprd
 	pStore  *store.Store
@@ -61,13 +60,35 @@ type workflowaccesspolicies struct {
 	sched   *scheduler.Scheduler
 }
 
-func (w *workflowaccesspolicies) Setup(t *testing.T) []framework.Option {
+func (w *workflowacl) Setup(t *testing.T) []framework.Option {
 	sen := sentry.New(t, sentry.WithTrustDomain("integration.test.dapr.io"))
 
 	w.pStore = store.New(metav1.GroupVersionKind{
-		Group:   "dapr.io",
-		Version: "v1alpha1",
-		Kind:    "WorkflowAccessPolicy",
+		Group: "dapr.io", Version: "v1alpha1", Kind: "WorkflowAccessPolicy",
+	})
+	// Policy: only "metric-caller" may schedule workflows on the target.
+	// Default deny blocks all other callers.
+	w.pStore.Add(&wfaclapi.WorkflowAccessPolicy{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "dapr.io/v1alpha1", Kind: "WorkflowAccessPolicy"},
+		ObjectMeta: metav1.ObjectMeta{Name: "metric-test", Namespace: "default"},
+		Scoped:     common.Scoped{Scopes: []string{"metric-target"}},
+		Spec: wfaclapi.WorkflowAccessPolicySpec{
+			DefaultAction: wfaclapi.PolicyActionDeny,
+			Rules: []wfaclapi.WorkflowAccessPolicyRule{
+				{
+					Callers: []wfaclapi.WorkflowCaller{{AppID: "metric-caller"}},
+					Operations: []wfaclapi.WorkflowOperationRule{
+						{Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "AllowedWF", Action: wfaclapi.PolicyActionAllow},
+					},
+				},
+				{
+					Callers: []wfaclapi.WorkflowCaller{{AppID: "metric-target"}},
+					Operations: []wfaclapi.WorkflowOperationRule{
+						{Type: wfaclapi.WorkflowOperationTypeActivity, Name: "*", Action: wfaclapi.PolicyActionAllow},
+					},
+				},
+			},
+		},
 	})
 
 	boolTrue := true
@@ -82,13 +103,12 @@ func (w *workflowaccesspolicies) Setup(t *testing.T) []framework.Option {
 				TypeMeta:   metav1.TypeMeta{APIVersion: "dapr.io/v1alpha1", Kind: "Configuration"},
 				ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "daprsystem"},
 				Spec: configapi.ConfigurationSpec{
+					Features: []configapi.FeatureSpec{
+						{Name: "WorkflowAccessPolicy", Enabled: &boolTrue},
+					},
 					MTLSSpec: &configapi.MTLSSpec{
 						ControlPlaneTrustDomain: "integration.test.dapr.io",
 						SentryAddress:           sen.Address(),
-					},
-					Features: []configapi.FeatureSpec{
-						{Name: "HotReload", Enabled: &boolTrue},
-						{Name: "WorkflowAccessPolicy", Enabled: &boolTrue},
 					},
 				},
 			}},
@@ -106,7 +126,6 @@ func (w *workflowaccesspolicies) Setup(t *testing.T) []framework.Option {
 	)
 
 	w.place = placement.New(t, placement.WithSentry(t, sen))
-
 	w.sched = scheduler.New(t,
 		scheduler.WithSentry(sen),
 		scheduler.WithKubeconfig(w.kubeapi.KubeconfigPath(t)),
@@ -127,11 +146,10 @@ func (w *workflowaccesspolicies) Setup(t *testing.T) []framework.Option {
 	}
 
 	w.caller = daprd.New(t, append(commonOpts,
-		daprd.WithAppID("wfacl-reload-caller"),
+		daprd.WithAppID("metric-caller"),
 	)...)
-
 	w.target = daprd.New(t, append(commonOpts,
-		daprd.WithAppID("wfacl-reload-target"),
+		daprd.WithAppID("metric-target"),
 	)...)
 
 	return []framework.Option{
@@ -139,7 +157,7 @@ func (w *workflowaccesspolicies) Setup(t *testing.T) []framework.Option {
 	}
 }
 
-func (w *workflowaccesspolicies) Run(t *testing.T, ctx context.Context) {
+func (w *workflowacl) Run(t *testing.T, ctx context.Context) {
 	w.oper.WaitUntilRunning(t, ctx)
 	w.place.WaitUntilRunning(t, ctx)
 	w.sched.WaitUntilRunning(t, ctx)
@@ -149,9 +167,9 @@ func (w *workflowaccesspolicies) Run(t *testing.T, ctx context.Context) {
 	callerRegistry := task.NewTaskRegistry()
 	targetRegistry := task.NewTaskRegistry()
 
-	require.NoError(t, callerRegistry.AddOrchestratorN("CrossAppCall", func(ctx *task.OrchestrationContext) (any, error) {
+	require.NoError(t, callerRegistry.AddOrchestratorN("CallAllowed", func(ctx *task.OrchestrationContext) (any, error) {
 		var output string
-		err := ctx.CallSubOrchestrator("TargetWF",
+		err := ctx.CallSubOrchestrator("AllowedWF",
 			task.WithSubOrchestratorAppID(w.target.AppID())).
 			Await(&output)
 		if err != nil {
@@ -160,8 +178,22 @@ func (w *workflowaccesspolicies) Run(t *testing.T, ctx context.Context) {
 		return output, nil
 	}))
 
-	require.NoError(t, targetRegistry.AddOrchestratorN("TargetWF", func(ctx *task.OrchestrationContext) (any, error) {
-		return "target-ok", nil
+	require.NoError(t, callerRegistry.AddOrchestratorN("CallDenied", func(ctx *task.OrchestrationContext) (any, error) {
+		var output string
+		err := ctx.CallSubOrchestrator("DeniedWF",
+			task.WithSubOrchestratorAppID(w.target.AppID())).
+			Await(&output)
+		if err != nil {
+			return nil, fmt.Errorf("cross-app call failed: %w", err)
+		}
+		return output, nil
+	}))
+
+	require.NoError(t, targetRegistry.AddOrchestratorN("AllowedWF", func(ctx *task.OrchestrationContext) (any, error) {
+		return "allowed-ok", nil
+	}))
+	require.NoError(t, targetRegistry.AddOrchestratorN("DeniedWF", func(ctx *task.OrchestrationContext) (any, error) {
+		return "should-not-reach", nil
 	}))
 
 	callerClient := client.NewTaskHubGrpcClient(w.caller.GRPCConn(t, ctx), logger.New(t))
@@ -174,110 +206,35 @@ func (w *workflowaccesspolicies) Run(t *testing.T, ctx context.Context) {
 		assert.GreaterOrEqual(c, len(w.target.GetMetadata(t, ctx).ActorRuntime.ActiveActors), 1)
 	}, time.Second*20, time.Millisecond*10)
 
-	t.Run("no policies initially, cross-app workflow succeeds", func(t *testing.T) {
-		id, err := callerClient.ScheduleNewOrchestration(ctx, "CrossAppCall")
+	t.Run("allowed workflow emits allow metric", func(t *testing.T) {
+		id, err := callerClient.ScheduleNewOrchestration(ctx, "CallAllowed")
 		require.NoError(t, err)
 		metadata, err := callerClient.WaitForOrchestrationCompletion(ctx, id, api.WithFetchPayloads(true))
 		require.NoError(t, err)
-		assert.True(t, api.OrchestrationMetadataIsComplete(metadata))
-		assert.Nil(t, metadata.GetFailureDetails())
+		require.Nil(t, metadata.GetFailureDetails(), "allowed workflow should succeed")
+
+		assert.EventuallyWithT(t, func(c *assert.CollectT) {
+			metrics := w.target.Metrics(c, ctx).All()
+			// The target should have recorded an allow for the caller's
+			// workflow schedule operation.
+			allowKey := "dapr_runtime_workflow_acl_action_allowed_total|app_id:metric-target|namespace:|operation:schedule|src_app_id:metric-caller|type:workflow"
+			assert.GreaterOrEqual(c, int(metrics[allowKey]), 1,
+				"expected at least 1 workflow ACL allow metric on target")
+		}, time.Second*10, time.Millisecond*10)
 	})
 
-	t.Run("add deny policy via informer, cross-app workflow denied", func(t *testing.T) {
-		// Add a policy scoped to the target that denies the caller.
-		policy := &wfaclapi.WorkflowAccessPolicy{
-			TypeMeta:   metav1.TypeMeta{APIVersion: "dapr.io/v1alpha1", Kind: "WorkflowAccessPolicy"},
-			ObjectMeta: metav1.ObjectMeta{Name: "deny-caller", Namespace: "default"},
-			Scoped:     common.Scoped{Scopes: []string{"wfacl-reload-target"}},
-			Spec: wfaclapi.WorkflowAccessPolicySpec{
-				DefaultAction: wfaclapi.PolicyActionDeny,
-				Rules: []wfaclapi.WorkflowAccessPolicyRule{{
-					// Allow the target to run its own activities.
-					Callers: []wfaclapi.WorkflowCaller{{AppID: "wfacl-reload-target"}},
-					Operations: []wfaclapi.WorkflowOperationRule{{
-						Type: wfaclapi.WorkflowOperationTypeActivity, Name: "*", Action: wfaclapi.PolicyActionAllow,
-					}},
-				}},
-			},
-		}
-		w.pStore.Add(policy)
-		w.kubeapi.Informer().Add(t, policy)
+	t.Run("denied workflow emits deny metric", func(t *testing.T) {
+		id, err := callerClient.ScheduleNewOrchestration(ctx, "CallDenied")
+		require.NoError(t, err)
+		metadata, err := callerClient.WaitForOrchestrationCompletion(ctx, id, api.WithFetchPayloads(true))
+		require.NoError(t, err)
+		require.NotNil(t, metadata.GetFailureDetails(), "denied workflow should fail")
 
-		require.EventuallyWithT(t, func(c *assert.CollectT) {
-			id, err := callerClient.ScheduleNewOrchestration(ctx, "CrossAppCall")
-			if !assert.NoError(c, err) {
-				return
-			}
-			metadata, err := callerClient.WaitForOrchestrationCompletion(ctx, id, api.WithFetchPayloads(true))
-			if !assert.NoError(c, err) {
-				return
-			}
-			assert.NotNil(c, metadata.GetFailureDetails(),
-				"cross-app call should be denied after policy is added")
-		}, time.Second*20, time.Millisecond*500)
-	})
-
-	t.Run("modify policy to allow caller, cross-app workflow succeeds", func(t *testing.T) {
-		policy := &wfaclapi.WorkflowAccessPolicy{
-			TypeMeta:   metav1.TypeMeta{APIVersion: "dapr.io/v1alpha1", Kind: "WorkflowAccessPolicy"},
-			ObjectMeta: metav1.ObjectMeta{Name: "deny-caller", Namespace: "default"},
-			Scoped:     common.Scoped{Scopes: []string{"wfacl-reload-target"}},
-			Spec: wfaclapi.WorkflowAccessPolicySpec{
-				DefaultAction: wfaclapi.PolicyActionDeny,
-				Rules: []wfaclapi.WorkflowAccessPolicyRule{
-					{
-						Callers: []wfaclapi.WorkflowCaller{{AppID: "wfacl-reload-caller"}},
-						Operations: []wfaclapi.WorkflowOperationRule{{
-							Type: wfaclapi.WorkflowOperationTypeWorkflow, Name: "*", Action: wfaclapi.PolicyActionAllow,
-						}},
-					},
-					{
-						Callers: []wfaclapi.WorkflowCaller{{AppID: "wfacl-reload-target"}},
-						Operations: []wfaclapi.WorkflowOperationRule{{
-							Type: wfaclapi.WorkflowOperationTypeActivity, Name: "*", Action: wfaclapi.PolicyActionAllow,
-						}},
-					},
-				},
-			},
-		}
-		w.pStore.Set(policy)
-		w.kubeapi.Informer().Modify(t, policy)
-
-		require.EventuallyWithT(t, func(c *assert.CollectT) {
-			id, err := callerClient.ScheduleNewOrchestration(ctx, "CrossAppCall")
-			if !assert.NoError(c, err) {
-				return
-			}
-			metadata, err := callerClient.WaitForOrchestrationCompletion(ctx, id, api.WithFetchPayloads(true))
-			if !assert.NoError(c, err) {
-				return
-			}
-			assert.True(c, api.OrchestrationMetadataIsComplete(metadata))
-			assert.Nil(c, metadata.GetFailureDetails(),
-				"cross-app call should succeed after policy is modified to allow caller")
-		}, time.Second*20, time.Millisecond*500)
-	})
-
-	t.Run("delete policy, back to allow-all", func(t *testing.T) {
-		policy := &wfaclapi.WorkflowAccessPolicy{
-			TypeMeta:   metav1.TypeMeta{APIVersion: "dapr.io/v1alpha1", Kind: "WorkflowAccessPolicy"},
-			ObjectMeta: metav1.ObjectMeta{Name: "deny-caller", Namespace: "default"},
-		}
-		w.pStore.Set()
-		w.kubeapi.Informer().Delete(t, policy)
-
-		require.EventuallyWithT(t, func(c *assert.CollectT) {
-			id, err := callerClient.ScheduleNewOrchestration(ctx, "CrossAppCall")
-			if !assert.NoError(c, err) {
-				return
-			}
-			metadata, err := callerClient.WaitForOrchestrationCompletion(ctx, id, api.WithFetchPayloads(true))
-			if !assert.NoError(c, err) {
-				return
-			}
-			assert.True(c, api.OrchestrationMetadataIsComplete(metadata))
-			assert.Nil(c, metadata.GetFailureDetails(),
-				"cross-app call should succeed after all policies are deleted")
-		}, time.Second*20, time.Millisecond*500)
+		assert.EventuallyWithT(t, func(c *assert.CollectT) {
+			metrics := w.target.Metrics(c, ctx).All()
+			denyKey := "dapr_runtime_workflow_acl_action_denied_total|app_id:metric-target|namespace:|operation:schedule|src_app_id:metric-caller|type:workflow"
+			assert.GreaterOrEqual(c, int(metrics[denyKey]), 1,
+				"expected at least 1 workflow ACL deny metric on target")
+		}, time.Second*10, time.Millisecond*10)
 	})
 }

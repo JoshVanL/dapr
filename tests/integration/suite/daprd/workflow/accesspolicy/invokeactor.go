@@ -221,7 +221,7 @@ func (ia *invokeactor) Run(t *testing.T, ctx context.Context) {
 		require.Error(t, err)
 		// The target's ACL check denies the attacker because
 		// invokeactor-attacker is not in any allow rule.
-		assert.Contains(t, err.Error(), "not allowed to schedule workflow")
+		assert.Contains(t, err.Error(), "access denied by workflow access policy")
 	})
 
 	t.Run("crafted InvokeActor for non-subject method is denied", func(t *testing.T) {
@@ -235,6 +235,6 @@ func (ia *invokeactor) Run(t *testing.T, ctx context.Context) {
 			Data:      []byte{},
 		})
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not authorized")
+		assert.Contains(t, err.Error(), "access denied by workflow access policy")
 	})
 }

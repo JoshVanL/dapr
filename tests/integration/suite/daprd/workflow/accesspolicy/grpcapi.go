@@ -15,7 +15,6 @@ package accesspolicy
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -174,12 +173,7 @@ func (h *grpcapi) Run(t *testing.T, ctx context.Context) {
 		require.Error(t, err)
 		st, ok := grpcstatus.FromError(err)
 		require.True(t, ok, "expected gRPC status error")
-		assert.True(t,
-			strings.Contains(st.Message(), "not allowed") ||
-				strings.Contains(st.Message(), "access policy") ||
-				strings.Contains(st.Message(), "not authorized"),
-			"expected policy denial in gRPC status message, got: %s", st.Message(),
-		)
+		assert.Contains(t, st.Message(), "access denied by workflow access policy")
 	})
 
 	t.Run("gRPC start allowed workflow succeeds", func(t *testing.T) {
