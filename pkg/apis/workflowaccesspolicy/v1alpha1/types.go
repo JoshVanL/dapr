@@ -131,7 +131,6 @@ type WorkflowCaller struct {
 }
 
 // PolicyAction is the action to take: "allow" or "deny".
-// +kubebuilder:validation:Enum=allow;deny
 type PolicyAction string
 
 const (
@@ -140,7 +139,6 @@ const (
 )
 
 // WorkflowOperationType is the type of operation: "workflow" or "activity".
-// +kubebuilder:validation:Enum=workflow;activity
 type WorkflowOperationType string
 
 const (
@@ -149,7 +147,6 @@ const (
 )
 
 // WorkflowOperation is the specific operation being controlled (e.g., "schedule").
-// +kubebuilder:validation:Enum=schedule
 type WorkflowOperation string
 
 const (
