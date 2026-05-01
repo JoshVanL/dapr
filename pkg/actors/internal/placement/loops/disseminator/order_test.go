@@ -14,6 +14,7 @@ limitations under the License.
 package disseminator
 
 import (
+	"context"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/dapr/dapr/pkg/actors/api"
 	"github.com/dapr/dapr/pkg/actors/internal/placement/loops"
 	"github.com/dapr/dapr/pkg/actors/internal/placement/loops/disseminator/inflight"
 	"github.com/dapr/dapr/pkg/actors/internal/placement/loops/disseminator/timeout"
@@ -291,4 +293,151 @@ func TestHandleOrder_UnlockVersionMismatch(t *testing.T) {
 		assert.Equal(t, v1pb.HostOperation_UNLOCK, diss.currentOperation)
 		assert.True(t, ht.ReadyCalled())
 	})
+}
+
+func TestHandleOrder_LegacyPath_NilChangedTypes(t *testing.T) {
+	// Old placement server: LOCK arrives without ChangedActorTypes. The
+	// daprd must run the legacy path (HaltNonHosted on UPDATE,
+	// ReloadActorTypes on UNLOCK), as if the optimization did not exist.
+	diss, _, sched := newTestDisseminator(t)
+	diss.roundChangedTypes = make(map[string]struct{})
+
+	var haltNonHostedCalls atomic.Int32
+	diss.actorTable = tablefake.New().
+		WithTypes(func() []string { return []string{"actorA"} }).
+		WithHaltNonHosted(func(_ context.Context, _ func(*api.LookupActorRequest) bool) error {
+			haltNonHostedCalls.Add(1)
+			return nil
+		})
+
+	require.NoError(t, diss.handleOrder(t.Context(), &loops.StreamOrder{
+		Order: &v1pb.PlacementOrder{Operation: operationLock, Version: 1},
+	}))
+	assert.True(t, diss.roundAffectsMe, "nil ChangedActorTypes must force legacy path")
+
+	require.NoError(t, diss.handleOrder(t.Context(), &loops.StreamOrder{
+		Order: &v1pb.PlacementOrder{
+			Operation: operationUpdate, Version: 1, Tables: &v1pb.PlacementTables{},
+		},
+	}))
+	assert.Equal(t, int32(1), haltNonHostedCalls.Load(), "legacy path must call HaltNonHosted")
+
+	require.NoError(t, diss.handleOrder(t.Context(), &loops.StreamOrder{
+		Order: &v1pb.PlacementOrder{Operation: operationUnlock, Version: 1},
+	}))
+	assert.NotNil(t, sched.LastTypes(), "legacy path must call ReloadActorTypes")
+}
+
+func TestHandleOrder_NoOpRound_EmptyIntersection(t *testing.T) {
+	// New server signals that only "actorA" changed. Local daprd hosts
+	// "actorB", so the round is a no-op for us: UPDATE installs the table
+	// but skips HaltNonHosted; UNLOCK skips ReloadActorTypes.
+	diss, _, sched := newTestDisseminator(t)
+	diss.roundChangedTypes = make(map[string]struct{})
+
+	var haltNonHostedCalls atomic.Int32
+	diss.actorTable = tablefake.New().
+		WithTypes(func() []string { return []string{"actorB"} }).
+		WithHaltNonHosted(func(_ context.Context, _ func(*api.LookupActorRequest) bool) error {
+			haltNonHostedCalls.Add(1)
+			return nil
+		})
+
+	require.NoError(t, diss.handleOrder(t.Context(), &loops.StreamOrder{
+		Order: &v1pb.PlacementOrder{
+			Operation:         operationLock,
+			Version:           1,
+			ChangedActorTypes: []string{"actorA"},
+		},
+	}))
+	assert.False(t, diss.roundAffectsMe, "no overlap must mark round as no-op")
+
+	require.NoError(t, diss.handleOrder(t.Context(), &loops.StreamOrder{
+		Order: &v1pb.PlacementOrder{
+			Operation: operationUpdate, Version: 1, Tables: &v1pb.PlacementTables{},
+		},
+	}))
+	assert.Equal(t, int32(0), haltNonHostedCalls.Load(), "no-op round must skip HaltNonHosted")
+
+	require.NoError(t, diss.handleOrder(t.Context(), &loops.StreamOrder{
+		Order: &v1pb.PlacementOrder{Operation: operationUnlock, Version: 1},
+	}))
+	assert.Nil(t, sched.LastTypes(), "no-op round must skip ReloadActorTypes")
+	assert.False(t, diss.roundAffectsMe, "roundAffectsMe must reset at UNLOCK")
+}
+
+func TestHandleOrder_AffectingRound_TypeOverlap(t *testing.T) {
+	// New server signals "actorA" changed; daprd hosts "actorA" too.
+	// Legacy path must run.
+	diss, _, sched := newTestDisseminator(t)
+	diss.roundChangedTypes = make(map[string]struct{})
+
+	var haltNonHostedCalls atomic.Int32
+	diss.actorTable = tablefake.New().
+		WithTypes(func() []string { return []string{"actorA"} }).
+		WithHaltNonHosted(func(_ context.Context, _ func(*api.LookupActorRequest) bool) error {
+			haltNonHostedCalls.Add(1)
+			return nil
+		})
+
+	require.NoError(t, diss.handleOrder(t.Context(), &loops.StreamOrder{
+		Order: &v1pb.PlacementOrder{
+			Operation:         operationLock,
+			Version:           1,
+			ChangedActorTypes: []string{"actorA"},
+		},
+	}))
+	assert.True(t, diss.roundAffectsMe)
+
+	require.NoError(t, diss.handleOrder(t.Context(), &loops.StreamOrder{
+		Order: &v1pb.PlacementOrder{
+			Operation: operationUpdate, Version: 1, Tables: &v1pb.PlacementTables{},
+		},
+	}))
+	assert.Equal(t, int32(1), haltNonHostedCalls.Load())
+
+	require.NoError(t, diss.handleOrder(t.Context(), &loops.StreamOrder{
+		Order: &v1pb.PlacementOrder{Operation: operationUnlock, Version: 1},
+	}))
+	assert.NotNil(t, sched.LastTypes())
+}
+
+func TestHandleOrder_CompressedRound_LockNoOpThenAffecting(t *testing.T) {
+	// LOCK n with no overlap, then LOCK n+1 with overlap before UPDATE.
+	// roundAffectsMe sticks at true so UPDATE n+1 runs the legacy path.
+	diss, _, _ := newTestDisseminator(t)
+	diss.roundChangedTypes = make(map[string]struct{})
+
+	var haltNonHostedCalls atomic.Int32
+	diss.actorTable = tablefake.New().
+		WithTypes(func() []string { return []string{"actorA"} }).
+		WithHaltNonHosted(func(_ context.Context, _ func(*api.LookupActorRequest) bool) error {
+			haltNonHostedCalls.Add(1)
+			return nil
+		})
+
+	require.NoError(t, diss.handleOrder(t.Context(), &loops.StreamOrder{
+		Order: &v1pb.PlacementOrder{
+			Operation:         operationLock,
+			Version:           1,
+			ChangedActorTypes: []string{"actorB"},
+		},
+	}))
+	assert.False(t, diss.roundAffectsMe)
+
+	require.NoError(t, diss.handleOrder(t.Context(), &loops.StreamOrder{
+		Order: &v1pb.PlacementOrder{
+			Operation:         operationLock,
+			Version:           2,
+			ChangedActorTypes: []string{"actorA"},
+		},
+	}))
+	assert.True(t, diss.roundAffectsMe, "second LOCK with overlap must flip to legacy path")
+
+	require.NoError(t, diss.handleOrder(t.Context(), &loops.StreamOrder{
+		Order: &v1pb.PlacementOrder{
+			Operation: operationUpdate, Version: 2, Tables: &v1pb.PlacementTables{},
+		},
+	}))
+	assert.Equal(t, int32(1), haltNonHostedCalls.Load())
 }

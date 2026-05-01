@@ -67,7 +67,8 @@ func (d *disseminator) handleReportedHost(ctx context.Context, report *loops.Rep
 }
 
 func (d *disseminator) doReport(streamIDx uint64, host *v1pb.Host) {
-	if !d.store.Set(streamIDx, host) {
+	changed, changedTypes := d.store.Set(streamIDx, host)
+	if !changed {
 		log.Debugf("No store changes from stream %s:%d",
 			d.namespace, streamIDx)
 
@@ -99,7 +100,8 @@ func (d *disseminator) doReport(streamIDx uint64, host *v1pb.Host) {
 		s.currentState = v1pb.HostOperation_REPORT
 		s.receivingTable = nil
 		s.loop.Enqueue(&loops.DisseminateLock{
-			Version: d.currentVersion,
+			Version:      d.currentVersion,
+			ChangedTypes: changedTypes,
 		})
 	}
 }
@@ -198,6 +200,6 @@ func (d *disseminator) handleReportedUnlock(ctx context.Context, streamIDx uint6
 
 		// Batch all waiting connections into a single follow-up round (or
 		// one-shot table pushes when none of them register actors).
-		d.processWaitingDisseminate(ctx, false)
+		d.processWaitingDisseminate(ctx, nil)
 	}
 }

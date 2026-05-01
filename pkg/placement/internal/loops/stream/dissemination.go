@@ -23,8 +23,12 @@ const (
 	operationUpdate = "update"
 )
 
-// handleLock sends the lock operation to the stream.
-func (s *stream) handleLock(version uint64) error {
+// handleLock sends the lock operation to the stream. changedTypes is the
+// set of actor types whose hash ring changes in this round; daprd uses it
+// to short-circuit no-op rounds. Empty/nil is a valid signal for cases
+// where the round is driven by something other than entity-set churn (eg,
+// the one-shot table push from handleTable).
+func (s *stream) handleLock(version uint64, changedTypes []string) error {
 	// Set the current version on lock operations as this is the latest known
 	// version.
 	if s.currentVersion != nil && *s.currentVersion > version {
@@ -33,11 +37,12 @@ func (s *stream) handleLock(version uint64) error {
 
 	s.currentVersion = new(version)
 
-	log.Debugf("Sending LOCK for version %d to stream %s:%d", version, s.ns, s.idx)
+	log.Debugf("Sending LOCK for version %d to stream %s:%d (changedTypes=%v)", version, s.ns, s.idx, changedTypes)
 
 	return s.channel.Send(&v1pb.PlacementOrder{
-		Operation: operationLock,
-		Version:   version,
+		Operation:         operationLock,
+		Version:           version,
+		ChangedActorTypes: changedTypes,
 	})
 }
 

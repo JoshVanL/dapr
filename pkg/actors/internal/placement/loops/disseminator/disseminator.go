@@ -86,6 +86,17 @@ type disseminator struct {
 	// in that case, the final UNLOCK must release every type accumulated
 	// across the compressed rounds, not just the most recent UPDATE.
 	roundChangedTypes map[string]struct{}
+
+	// roundAffectsMe is sticky-OR'd across every LOCK in a compressed
+	// round and reset at UNLOCK. False means the placement server told us
+	// (via LOCK.ChangedActorTypes) that none of the changed types this
+	// round are hosted locally, so the UPDATE handler can install the
+	// table without running LockTypes / CancelClaimsForTypes /
+	// HaltNonHosted, and the UNLOCK handler can skip ReloadActorTypes.
+	// True forces the legacy path: either the server did not advertise
+	// changed types (old server), or at least one LOCK in this round
+	// touched a type we host.
+	roundAffectsMe bool
 }
 
 func New(ctx context.Context, opts Options) loop.Interface[loops.EventDiss] {
@@ -100,6 +111,7 @@ func New(ctx context.Context, opts Options) loop.Interface[loops.EventDiss] {
 	diss.currentVersion = 0
 	diss.timeoutVersion = 0
 	diss.roundChangedTypes = make(map[string]struct{})
+	diss.roundAffectsMe = false
 	diss.healthTarget = opts.HTarget
 	diss.ready = opts.Ready
 

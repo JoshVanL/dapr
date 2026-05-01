@@ -99,7 +99,7 @@ func (s *stream) Handle(ctx context.Context, event loops.EventStream) error {
 	var err error
 	switch e := event.(type) {
 	case *loops.DisseminateLock:
-		err = s.handleLock(e.Version)
+		err = s.handleLock(e.Version, e.ChangedTypes)
 	case *loops.DisseminateUpdate:
 		err = s.handleUpdate(e.Version, e.Tables)
 	case *loops.DisseminateUnlock:

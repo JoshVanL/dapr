@@ -135,22 +135,12 @@ func (i *Inflight) Open(ctx context.Context) {
 	}
 }
 
-// Set installs new placement tables and returns the actor types whose hash
-// rings changed compared to the previous tables (including newly-added and
-// removed types). The returned slice should be passed to LockTypes by the
-// caller.
+// Set installs new tables and returns the actor types whose hash ring
+// changed (added, removed, or different). Authoritative for slow-path
+// drain/lock decisions; may be a strict subset of LOCK.ChangedActorTypes.
 func (i *Inflight) Set(in *v1pb.PlacementTables, version uint64) []string {
 	oldEntries := i.hashTable.Entries
-	newEntries := make(map[string]*hashing.Consistent, len(in.GetEntries()))
-
-	for k, v := range in.GetEntries() {
-		loadMap := make(map[string]*hashing.Host, len(v.GetLoadMap()))
-		for lk, lv := range v.GetLoadMap() {
-			//nolint:staticcheck
-			loadMap[lk] = hashing.NewHost(lv.GetName(), lv.GetId(), lv.GetLoad(), lv.GetPort())
-		}
-		newEntries[k] = hashing.NewFromExisting(loadMap, in.GetReplicationFactor(), i.virtualNodesCache)
-	}
+	newEntries := i.buildEntries(in)
 
 	var changed []string
 	for k, newRing := range newEntries {
@@ -167,6 +157,27 @@ func (i *Inflight) Set(in *v1pb.PlacementTables, version uint64) []string {
 	i.hashTable.Version = strconv.FormatUint(version, 10)
 	i.hashTable.Entries = newEntries
 	return changed
+}
+
+// InstallTable installs new tables without computing a diff. No-op fast
+// path: caller has already verified no locally hosted type is in
+// LOCK.ChangedActorTypes. Slow path uses Set instead.
+func (i *Inflight) InstallTable(in *v1pb.PlacementTables, version uint64) {
+	i.hashTable.Version = strconv.FormatUint(version, 10)
+	i.hashTable.Entries = i.buildEntries(in)
+}
+
+func (i *Inflight) buildEntries(in *v1pb.PlacementTables) map[string]*hashing.Consistent {
+	entries := make(map[string]*hashing.Consistent, len(in.GetEntries()))
+	for k, v := range in.GetEntries() {
+		loadMap := make(map[string]*hashing.Host, len(v.GetLoadMap()))
+		for lk, lv := range v.GetLoadMap() {
+			//nolint:staticcheck
+			loadMap[lk] = hashing.NewHost(lv.GetName(), lv.GetId(), lv.GetLoad(), lv.GetPort())
+		}
+		entries[k] = hashing.NewFromExisting(loadMap, in.GetReplicationFactor(), i.virtualNodesCache)
+	}
+	return entries
 }
 
 // LockTypes marks the given actor types as blocked. New acquires for these

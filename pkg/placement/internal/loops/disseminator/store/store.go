@@ -82,10 +82,17 @@ func (s *Store) StatePlacementTable(version uint64) *v1pb.StatePlacementTable {
 	}
 }
 
-func (s *Store) Set(streamIDx uint64, host *v1pb.Host) bool {
+// Set installs the host and returns whether the table changed and the
+// symmetric difference of entities. The diff feeds
+// PlacementOrder.changed_actor_types as an advisory hint; daprd computes
+// the authoritative ring diff in Inflight.Set.
+func (s *Store) Set(streamIDx uint64, host *v1pb.Host) (bool, []string) {
 	if !s.HostChanged(streamIDx, host) {
-		return false
+		return false, nil
 	}
+
+	prior := s.hosts[streamIDx].GetEntities()
+	diff := symmetricDiff(prior, host.GetEntities())
 
 	// If the host has no entities, it should not be stored in the placement
 	// table. If it previously had entities (i.e. it exists in the store), delete
@@ -96,7 +103,48 @@ func (s *Store) Set(streamIDx uint64, host *v1pb.Host) bool {
 		s.hosts[streamIDx] = host
 	}
 
-	return true
+	return true, diff
+}
+
+// EntitiesOf returns the entity set currently stored for the given stream, or
+// nil if the stream is not in the store. Used by deletion paths to record the
+// types whose hash ring will change before the host is removed.
+func (s *Store) EntitiesOf(streamIDx uint64) []string {
+	h, ok := s.hosts[streamIDx]
+	if !ok {
+		return nil
+	}
+	return slices.Clone(h.GetEntities())
+}
+
+// symmetricDiff returns the symmetric difference of two sorted string slices.
+// Both inputs are required to be sorted (HostChanged sorts host.Entities, and
+// store.hosts entries were sorted on insert).
+func symmetricDiff(a, b []string) []string {
+	if len(a) == 0 {
+		return slices.Clone(b)
+	}
+	if len(b) == 0 {
+		return slices.Clone(a)
+	}
+	out := make([]string, 0)
+	i, j := 0, 0
+	for i < len(a) && j < len(b) {
+		switch {
+		case a[i] < b[j]:
+			out = append(out, a[i])
+			i++
+		case a[i] > b[j]:
+			out = append(out, b[j])
+			j++
+		default:
+			i++
+			j++
+		}
+	}
+	out = append(out, a[i:]...)
+	out = append(out, b[j:]...)
+	return out
 }
 
 func (s *Store) HostChanged(streamIDx uint64, host *v1pb.Host) bool {

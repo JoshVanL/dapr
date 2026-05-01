@@ -16,6 +16,7 @@ package disseminator
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -33,6 +34,21 @@ import (
 	"github.com/dapr/kit/events/loop"
 	"github.com/dapr/kit/logger"
 )
+
+// setToSortedSlice converts a string set to a sorted slice for use as
+// DisseminateLock.ChangedTypes. Sorting keeps the wire payload deterministic
+// for tests and gives a small varint-encoded length benefit.
+func setToSortedSlice(set map[string]struct{}) []string {
+	if len(set) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(set))
+	for t := range set {
+		out = append(out, t)
+	}
+	sort.Strings(out)
+	return out
+}
 
 var log = logger.NewLogger("dapr.placement.server.loops.disseminator")
 
@@ -309,6 +325,13 @@ func (d *disseminator) handleTimeout(ctx context.Context, timeout *loops.Dissemi
 
 	log.Warnf("Dissemination timeout for version %d", timeout.Version)
 
+	// changedTypes accumulates the union of actor types whose hash ring
+	// changes in the follow-up round emitted at the bottom of this handler:
+	// types of streams we are force-closing here, of streams whose deletion
+	// was queued during the round, and of new entities introduced by waiting
+	// connections we are about to add.
+	changedTypeSet := make(map[string]struct{})
+
 	// Only close streams that have NOT reached the current target state. Streams
 	// that responded successfully to the current dissemination phase are healthy
 	// and should not be punished for another stream's slowness.
@@ -321,6 +344,9 @@ func (d *disseminator) handleTimeout(ctx context.Context, timeout *loops.Dissemi
 		log.Warnf("Closing non-responding stream %s:%d (state=%s, expected=%s)",
 			d.namespace, idx, s.currentState.String(), d.currentOperation.String())
 
+		for _, t := range d.store.EntitiesOf(idx) {
+			changedTypeSet[t] = struct{}{}
+		}
 		d.store.Delete(idx)
 		monitoring.RecordRuntimesCount(d.connCount.Add(-1), d.namespace)
 		if s.hasActors {
@@ -338,6 +364,9 @@ func (d *disseminator) handleTimeout(ctx context.Context, timeout *loops.Dissemi
 	// These must be applied to the store before starting the next round,
 	// otherwise the deleted hosts remain in the table.
 	for _, toDelete := range d.waitingToDelete {
+		for _, t := range d.store.EntitiesOf(toDelete) {
+			changedTypeSet[t] = struct{}{}
+		}
 		d.store.Delete(toDelete)
 	}
 	d.waitingToDelete = nil
@@ -356,7 +385,10 @@ func (d *disseminator) handleTimeout(ctx context.Context, timeout *loops.Dissemi
 
 		for _, add := range waiting {
 			streamIDx := d.addStream(ctx, add)
-			d.store.Set(streamIDx, add.InitialHost)
+			_, addDiff := d.store.Set(streamIDx, add.InitialHost)
+			for _, t := range addDiff {
+				changedTypeSet[t] = struct{}{}
+			}
 		}
 	}
 
@@ -365,11 +397,13 @@ func (d *disseminator) handleTimeout(ctx context.Context, timeout *loops.Dissemi
 		// streams.
 		d.timeoutQ.Enqueue(d.currentVersion)
 		d.currentOperation = v1pb.HostOperation_LOCK
+		changedTypes := setToSortedSlice(changedTypeSet)
 		for _, s := range d.streams {
 			s.currentState = v1pb.HostOperation_REPORT
 			s.receivingTable = nil
 			s.loop.Enqueue(&loops.DisseminateLock{
-				Version: d.currentVersion,
+				Version:      d.currentVersion,
+				ChangedTypes: changedTypes,
 			})
 		}
 	} else {

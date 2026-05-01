@@ -28,6 +28,13 @@ message PlacementOrder {
   string operation = 2;
 
   uint64 version = 3;
+
+  // changed_actor_types is an advisory hint set on LOCK only: union of
+  // per-host entity-set diffs from this round. Daprd uses it to skip the
+  // UPDATE drain/halt when the intersection with locally hosted types is
+  // empty; otherwise daprd computes the authoritative ring diff in
+  // Inflight.Set. Nil = old server, fall back to legacy diff-on-UPDATE.
+  repeated string changed_actor_types = 4;
 }
 
 message PlacementTables {

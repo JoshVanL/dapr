@@ -56,6 +56,13 @@ type ReportedHost struct {
 type DisseminateLock struct {
 	*streambase
 	Version uint64
+
+	// ChangedTypes is the union of actor types whose hash ring changes in
+	// this dissemination round. The stream forwards it on the LOCK proto so
+	// daprd can short-circuit the round when it does not host any of these
+	// types. Empty/nil is the legacy signal: receivers fall back to
+	// computing the diff themselves at UPDATE.
+	ChangedTypes []string
 }
 
 type DisseminateUpdate struct {

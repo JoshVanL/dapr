@@ -76,20 +76,18 @@ func (d *disseminator) handleCloseStream(ctx context.Context, closeStream *loops
 		return
 	}
 
-	// If a post-round coalesce window is open, leave the deletion queued
-	// for the timer to process when the window expires. New streams that
-	// arrive while the timer is armed are queued as well (handleAdd
-	// routes them to waitingToDisseminate without preempting the timer),
-	// so rapid closes and adds during a rolling update are still batched
-	// into a single follow-up round.
+	// Already-armed coalesce timer batches us in.
 	if d.coalesceTimer != nil {
 		return
 	}
 
-	// In REPORT state, process accumulated deletions now. Multiple closes
-	// arriving in rapid succession (during a rolling update) will be batched
-	// naturally because handleAdd processes waitingToDelete before starting a
-	// new round, combining deletes and adds into a single dissemination.
+	// Arm coalesce on the first delete so a replacement connection
+	// arriving in the window folds into one round.
+	if d.coalesceWindow > 0 {
+		d.startCoalesceTimer()
+		return
+	}
+
 	d.processWaitingDeletes()
 }
 
@@ -143,7 +141,7 @@ func (d *disseminator) advancePhase(ctx context.Context) {
 			return
 		}
 
-		d.processWaitingDisseminate(ctx, false)
+		d.processWaitingDisseminate(ctx, nil)
 	}
 }
 
@@ -153,11 +151,13 @@ func (d *disseminator) advancePhase(ctx context.Context) {
 // only be called when currentOperation is REPORT and waitingToDelete has
 // already been drained (delete-rounds take priority over add-rounds).
 //
-// forceRound is set by callers that have already mutated the store (eg, by
-// applying queued deletions) and therefore must emit a full round even when
-// the queued adds themselves do not change the store - otherwise existing
-// streams would never see those prior store mutations.
-func (d *disseminator) processWaitingDisseminate(ctx context.Context, forceRound bool) {
+// priorChangedTypes is the set of actor types already affected before this
+// call (eg, types of streams whose deletion the caller just applied). It is
+// merged into the round's ChangedTypes so the LOCK signal carries a complete
+// picture. forceRound is implied by len(priorChangedTypes) > 0: when the
+// caller mutated the store before invoking us, a round must be emitted even
+// if the queued adds themselves do not further change the store.
+func (d *disseminator) processWaitingDisseminate(ctx context.Context, priorChangedTypes map[string]struct{}) {
 	if len(d.waitingToDisseminate) == 0 {
 		return
 	}
@@ -165,13 +165,20 @@ func (d *disseminator) processWaitingDisseminate(ctx context.Context, forceRound
 	waiting := d.waitingToDisseminate
 	d.waitingToDisseminate = nil
 
-	storeChanged := forceRound
+	if priorChangedTypes == nil {
+		priorChangedTypes = make(map[string]struct{})
+	}
+	storeChanged := len(priorChangedTypes) > 0
 	newStreamIDxs := make([]uint64, 0, len(waiting))
 	for _, add := range waiting {
 		streamIDx := d.addStream(ctx, add)
 		newStreamIDxs = append(newStreamIDxs, streamIDx)
-		if d.store.Set(streamIDx, add.InitialHost) {
+		changed, diff := d.store.Set(streamIDx, add.InitialHost)
+		if changed {
 			storeChanged = true
+			for _, t := range diff {
+				priorChangedTypes[t] = struct{}{}
+			}
 		}
 	}
 
@@ -198,11 +205,13 @@ func (d *disseminator) processWaitingDisseminate(ctx context.Context, forceRound
 	d.currentOperation = v1pb.HostOperation_LOCK
 	d.streamsInTargetState = 0
 
+	changedTypes := setToSortedSlice(priorChangedTypes)
 	for _, s := range d.streams {
 		s.currentState = v1pb.HostOperation_REPORT
 		s.receivingTable = nil
 		s.loop.Enqueue(&loops.DisseminateLock{
-			Version: d.currentVersion,
+			Version:      d.currentVersion,
+			ChangedTypes: changedTypes,
 		})
 	}
 }
@@ -227,14 +236,18 @@ func (d *disseminator) handleCoalesceFire(ctx context.Context) {
 	// a full follow-up round even if the queued adds themselves don't change
 	// the store (eg, new connections with no actor entities), otherwise
 	// existing streams would never receive the updated placement table
-	// reflecting the deletions.
-	storeChangedByDeletes := len(d.waitingToDelete) > 0
+	// reflecting the deletions. Snapshot each deleted host's entity set so
+	// the follow-up round's LOCK can advertise those types as changed.
+	priorChanged := make(map[string]struct{})
 	for _, toDelete := range d.waitingToDelete {
+		for _, t := range d.store.EntitiesOf(toDelete) {
+			priorChanged[t] = struct{}{}
+		}
 		d.store.Delete(toDelete)
 	}
 	d.waitingToDelete = nil
 
-	d.processWaitingDisseminate(ctx, storeChangedByDeletes)
+	d.processWaitingDisseminate(ctx, priorChanged)
 }
 
 // processWaitingDeletes processes all queued stream deletions in a single
@@ -244,7 +257,11 @@ func (d *disseminator) processWaitingDeletes() {
 		return
 	}
 
+	changedTypeSet := make(map[string]struct{})
 	for _, toDelete := range d.waitingToDelete {
+		for _, t := range d.store.EntitiesOf(toDelete) {
+			changedTypeSet[t] = struct{}{}
+		}
 		d.store.Delete(toDelete)
 	}
 	d.waitingToDelete = nil
@@ -254,11 +271,13 @@ func (d *disseminator) processWaitingDeletes() {
 	d.currentOperation = v1pb.HostOperation_LOCK
 	d.streamsInTargetState = 0
 
+	changedTypes := setToSortedSlice(changedTypeSet)
 	for _, s := range d.streams {
 		s.currentState = v1pb.HostOperation_REPORT
 		s.receivingTable = nil
 		s.loop.Enqueue(&loops.DisseminateLock{
-			Version: d.currentVersion,
+			Version:      d.currentVersion,
+			ChangedTypes: changedTypes,
 		})
 	}
 }

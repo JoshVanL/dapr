@@ -364,20 +364,20 @@ func TestProcessWaitingDisseminate_EmptyQueue_Noop(t *testing.T) {
 	d := newTestDisseminator(t)
 	addFakeStream(d, 0, []string{"actorA"})
 
-	d.processWaitingDisseminate(t.Context(), false)
+	d.processWaitingDisseminate(t.Context(), nil)
 
 	assert.Equal(t, v1pb.HostOperation_REPORT, d.currentOperation)
 	assert.Equal(t, uint64(0), d.currentVersion)
 }
 
-func TestProcessWaitingDisseminate_EmptyQueue_ForceRoundIgnored(t *testing.T) {
-	// forceRound only forces a follow-up round when there is queued work to
-	// drain. With nothing queued, the caller is responsible for not calling
-	// us at all.
+func TestProcessWaitingDisseminate_EmptyQueue_PriorChangedTypesIgnored(t *testing.T) {
+	// priorChangedTypes only forces a follow-up round when there is queued
+	// work to drain. With nothing queued, the caller is responsible for not
+	// calling us at all.
 	d := newTestDisseminator(t)
 	addFakeStream(d, 0, []string{"actorA"})
 
-	d.processWaitingDisseminate(t.Context(), true)
+	d.processWaitingDisseminate(t.Context(), map[string]struct{}{"actorA": {}})
 
 	assert.Equal(t, v1pb.HostOperation_REPORT, d.currentOperation)
 }

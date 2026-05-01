@@ -37,6 +37,32 @@ func (d *disseminator) handleAcquireRequest(req *loops.LockRequest) {
 	d.inflight.Acquire(req)
 }
 
+// lockAffectsLocalTypes returns true when this daprd should run the legacy
+// drain/halt/reload path for the round being signaled by LOCK. nil means
+// the server is older than the type-aware-LOCK rollout and did not advertise
+// the changed-types set; in that case we must run the legacy path. An empty
+// slice from a new server means a no-op round (unreachable in practice; the
+// server only emits LOCK when something changed). A non-empty slice with no
+// overlap against locally hosted types means the round does not affect us.
+func (d *disseminator) lockAffectsLocalTypes(changed []string) bool {
+	if changed == nil {
+		return true
+	}
+	if len(changed) == 0 {
+		return false
+	}
+	hosted := make(map[string]struct{})
+	for _, t := range d.actorTable.Types() {
+		hosted[t] = struct{}{}
+	}
+	for _, t := range changed {
+		if _, ok := hosted[t]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 func (d *disseminator) handleReportHost(report *loops.ReportHost) {
 	report.Host.Version = nil
 	report.Host.Operation = v1pb.HostOperation_REPORT
@@ -63,6 +89,16 @@ func (d *disseminator) handleOrder(ctx context.Context, order *loops.StreamOrder
 		// which actor types will change. Lookups continue to resolve
 		// against the current table; per-type queueing only kicks in at
 		// UPDATE once the diff is known.
+		//
+		// If the server advertised which types changed, intersect against
+		// the locally hosted set. An empty intersection means the round
+		// is a no-op for us and UPDATE/UNLOCK can skip the loop-blocking
+		// drain/halt/reload work. roundAffectsMe is sticky-OR'd so a
+		// follow-up LOCK in a compressed round (LOCK n no-op + LOCK n+1
+		// affects-me) flips the round into the legacy path before its
+		// UPDATE arrives.
+		d.roundAffectsMe = d.roundAffectsMe || d.lockAffectsLocalTypes(order.Order.GetChangedActorTypes())
+
 		d.timeoutQ.Dequeue(d.timeoutVersion)
 		d.timeoutVersion++
 		d.timeoutQ.Enqueue(d.timeoutVersion)
@@ -91,6 +127,27 @@ func (d *disseminator) handleOrder(ctx context.Context, order *loops.StreamOrder
 		}
 
 		d.timeoutQ.Dequeue(d.timeoutVersion)
+		d.currentOperation = v1pb.HostOperation_UPDATE
+
+		if !d.roundAffectsMe {
+			// No changed type is hosted locally. Install the new table
+			// for cross-host routing correctness, ack, and let the
+			// disseminator loop continue serving lookups without running
+			// the per-type drain or HaltNonHosted walk that would
+			// otherwise stall every interleaved LookupRequest until the
+			// drain timeout expires.
+			d.inflight.InstallTable(order.Order.GetTables(), version)
+			d.inflight.Open(ctx)
+			d.streamLoop.Enqueue(&loops.StreamSend{
+				Host: &v1pb.Host{
+					Operation: v1pb.HostOperation_UPDATE,
+					Version:   new(d.currentVersion),
+					Namespace: d.namespace,
+					Id:        d.id,
+				},
+			})
+			break
+		}
 
 		// Diff old vs new tables, install new tables, and block only the
 		// actor types whose hash ring actually changed. Open ensures the
@@ -104,8 +161,6 @@ func (d *disseminator) handleOrder(ctx context.Context, order *loops.StreamOrder
 		}
 		d.inflight.LockTypes(changed)
 		d.inflight.Open(ctx)
-
-		d.currentOperation = v1pb.HostOperation_UPDATE
 
 		// Drain in-flight claims for actor types whose hash ring changed
 		// in this UPDATE so the request layer can retry against the new
@@ -141,25 +196,32 @@ func (d *disseminator) handleOrder(ctx context.Context, order *loops.StreamOrder
 			return nil
 		}
 		d.currentVersion = version
+		d.currentOperation = v1pb.HostOperation_UNLOCK
 
-		// Release every type accumulated since the last UNLOCK. This
-		// covers the compressed-rounds case where the placement server
-		// emitted multiple LOCK+UPDATE pairs before a single trailing
-		// UNLOCK.
-		toUnlock := make([]string, 0, len(d.roundChangedTypes))
-		for t := range d.roundChangedTypes {
-			toUnlock = append(toUnlock, t)
+		if !d.roundAffectsMe {
+			log.Debugf("Dissemination complete for version %d (no locally hosted types affected), short-circuiting on disseminator %s/%s",
+				version, d.namespace, d.id,
+			)
+		} else {
+			// Release every type accumulated since the last UNLOCK. This
+			// covers the compressed-rounds case where the placement server
+			// emitted multiple LOCK+UPDATE pairs before a single trailing
+			// UNLOCK.
+			toUnlock := make([]string, 0, len(d.roundChangedTypes))
+			for t := range d.roundChangedTypes {
+				toUnlock = append(toUnlock, t)
+			}
+
+			log.Infof("Dissemination complete for version %d (changed types %v), unlocking disseminator %s/%s",
+				version, toUnlock, d.namespace, d.id,
+			)
+
+			d.scheduler.ReloadActorTypes(d.actorTable.Types())
+			d.inflight.UnlockTypes(toUnlock)
 		}
 
-		log.Infof("Dissemination complete for version %d (changed types %v), unlocking disseminator %s/%s",
-			version, toUnlock, d.namespace, d.id,
-		)
-
-		d.currentOperation = v1pb.HostOperation_UNLOCK
-		d.scheduler.ReloadActorTypes(d.actorTable.Types())
-
-		d.inflight.UnlockTypes(toUnlock)
 		clear(d.roundChangedTypes)
+		d.roundAffectsMe = false
 
 		d.streamLoop.Enqueue(&loops.StreamSend{
 			Host: &v1pb.Host{
