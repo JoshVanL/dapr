@@ -233,6 +233,7 @@ func (abe *Actors) RegisterActors(ctx context.Context) error {
 		WorkflowAccessPolicies:          abe.workflowAccessPolicies,
 		Signer:                          abe.signer,
 		WorkflowsRemoteActivityReminder: abe.workflowsRemoteActivityReminder,
+		XNSDispatcher:                   abe.xnsDispatcher,
 	}
 
 	opts := workflow.Options{

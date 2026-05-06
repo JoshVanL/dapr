@@ -132,6 +132,18 @@ func (a *activity) executeActivity(ctx context.Context, name string, invocation 
 		wfActorType = a.actorTypeBuilder.Workflow(router.GetSourceAppID())
 	}
 
+	// Cross-namespace parent: placement can't reach the parent's workflow
+	// actor directly. Schedule a durable xns-result reminder so the result
+	// travels back via the bridge.
+	if a.isCrossNamespaceParent(taskEvent) {
+		if shipErr := a.shipCrossNSResult(ctx, taskEvent, workflowID, wi.Result); shipErr != nil {
+			executionStatus = diag.StatusRecoverable
+			return wferrors.NewRecoverable(fmt.Errorf("activity actor '%s': failed to ship cross-ns result: %w", a.actorID, shipErr))
+		}
+		executionStatus = diag.StatusSuccess
+		return nil
+	}
+
 	// TODO: @joshvanl: remove `a.workflowsRemoteActivityReminder` check in later
 	// version.
 	if a.workflowsRemoteActivityReminder && a.actorNotReachable(ctx, wfActorType, workflowID) {

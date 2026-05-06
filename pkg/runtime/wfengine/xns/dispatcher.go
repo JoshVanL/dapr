@@ -25,13 +25,14 @@ package xns
 import (
 	"context"
 	"errors"
+	"sync"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	nr "github.com/dapr/components-contrib/nameresolution"
-	orchestrator "github.com/dapr/dapr/pkg/actors/targets/workflow/orchestrator"
+	xnscommon "github.com/dapr/dapr/pkg/actors/targets/workflow/common/xns"
 	internalv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 )
 
@@ -60,6 +61,7 @@ type Options struct {
 
 // Dispatcher implements orchestrator.XNSDispatcher.
 type Dispatcher struct {
+	mu            sync.RWMutex
 	resolver      nr.Resolver
 	resolverMulti nr.ResolverMulti
 	dial          func(ctx context.Context, address, id, namespace string, customOpts ...grpc.DialOption) (*grpc.ClientConn, func(destroy bool), error)
@@ -67,7 +69,10 @@ type Dispatcher struct {
 }
 
 // New returns a Dispatcher. The returned value satisfies
-// orchestrator.XNSDispatcher.
+// orchestrator.XNSDispatcher. The resolver and dial function may be
+// supplied at construction or set later via SetResolver / SetGRPCConnection
+// (the runtime initialises wfengine before its name resolver, so deferred
+// wiring is the common case).
 func New(opts Options) *Dispatcher {
 	return &Dispatcher{
 		resolver:      opts.Resolver,
@@ -77,7 +82,32 @@ func New(opts Options) *Dispatcher {
 	}
 }
 
-var _ orchestrator.XNSDispatcher = (*Dispatcher)(nil)
+// SetResolver wires the name-resolution component after construction.
+func (d *Dispatcher) SetResolver(r nr.Resolver) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.resolver = r
+	if rm, ok := r.(nr.ResolverMulti); ok {
+		d.resolverMulti = rm
+	}
+}
+
+// SetGRPCConnection wires the cross-trust-domain mTLS connection factory
+// after construction.
+func (d *Dispatcher) SetGRPCConnection(fn func(ctx context.Context, address, id, namespace string, customOpts ...grpc.DialOption) (*grpc.ClientConn, func(destroy bool), error)) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.dial = fn
+}
+
+// SetInternalGRPCPort wires the daprd-to-daprd port after construction.
+func (d *Dispatcher) SetInternalGRPCPort(port int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.port = port
+}
+
+var _ xnscommon.Dispatcher = (*Dispatcher)(nil)
 
 // DispatchWorkflow resolves the target sidecar, dials with mTLS, and invokes
 // CallWorkflowCrossNamespace. Errors are returned unwrapped (as gRPC status
@@ -112,17 +142,24 @@ func (d *Dispatcher) DeliverResult(ctx context.Context, parentNamespace, parentA
 // connect resolves the target sidecar's address and returns a gRPC client
 // connection with the proper cross-trust-domain mTLS options.
 func (d *Dispatcher) connect(ctx context.Context, namespace, appID string) (*grpc.ClientConn, func(destroy bool), error) {
-	if d.resolver == nil {
+	d.mu.RLock()
+	resolver := d.resolver
+	resolverMulti := d.resolverMulti
+	dial := d.dial
+	port := d.port
+	d.mu.RUnlock()
+
+	if resolver == nil {
 		return nil, nil, status.Error(codes.Unavailable, "cross-namespace dispatcher: name resolver not configured")
 	}
-	if d.dial == nil {
+	if dial == nil {
 		return nil, nil, status.Error(codes.Unavailable, "cross-namespace dispatcher: gRPC connection factory not configured")
 	}
 	if namespace == "" || appID == "" {
 		return nil, nil, status.Error(codes.InvalidArgument, "cross-namespace dispatcher: empty namespace or appID")
 	}
 
-	address, err := d.resolve(ctx, namespace, appID)
+	address, err := resolveAddress(ctx, resolver, resolverMulti, port, namespace, appID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -130,7 +167,7 @@ func (d *Dispatcher) connect(ctx context.Context, namespace, appID string) (*grp
 		return nil, nil, status.Errorf(codes.Unavailable, "cross-namespace dispatcher: empty address for '%s/%s'", namespace, appID)
 	}
 
-	conn, done, cerr := d.dial(ctx, address, appID, namespace)
+	conn, done, cerr := dial(ctx, address, appID, namespace)
 	if cerr != nil {
 		// Preserve the code if the connection factory already returned a
 		// gRPC status; otherwise wrap as Unavailable so caller retries.
@@ -142,15 +179,15 @@ func (d *Dispatcher) connect(ctx context.Context, namespace, appID string) (*grp
 	return conn, done, nil
 }
 
-func (d *Dispatcher) resolve(ctx context.Context, namespace, appID string) (string, error) {
+func resolveAddress(ctx context.Context, resolver nr.Resolver, resolverMulti nr.ResolverMulti, port int, namespace, appID string) (string, error) {
 	req := nr.ResolveRequest{
 		ID:        appID,
 		Namespace: namespace,
-		Port:      d.port,
+		Port:      port,
 	}
 
-	if d.resolverMulti != nil {
-		addrs, err := d.resolverMulti.ResolveIDMulti(ctx, req)
+	if resolverMulti != nil {
+		addrs, err := resolverMulti.ResolveIDMulti(ctx, req)
 		if err != nil {
 			return "", status.Errorf(codes.Unavailable, "cross-namespace dispatcher: resolve '%s/%s': %v", namespace, appID, err)
 		}
@@ -161,7 +198,7 @@ func (d *Dispatcher) resolve(ctx context.Context, namespace, appID string) (stri
 		return addr, nil
 	}
 
-	addr, err := d.resolver.ResolveID(ctx, req)
+	addr, err := resolver.ResolveID(ctx, req)
 	if err != nil {
 		return "", status.Errorf(codes.Unavailable, "cross-namespace dispatcher: resolve '%s/%s': %v", namespace, appID, err)
 	}

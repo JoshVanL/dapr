@@ -89,6 +89,7 @@ import (
 	"github.com/dapr/dapr/pkg/runtime/registry"
 	"github.com/dapr/dapr/pkg/runtime/scheduler"
 	"github.com/dapr/dapr/pkg/runtime/wfengine"
+	xnspkg "github.com/dapr/dapr/pkg/runtime/wfengine/xns"
 	"github.com/dapr/dapr/pkg/security"
 	"github.com/dapr/dapr/utils"
 	"github.com/dapr/kit/crypto/spiffe/signer"
@@ -108,6 +109,7 @@ type DaprRuntime struct {
 	actors                 actors.Interface
 	wfengine               wfengine.Interface
 	workflowAccessPolicies *workflowacl.Holder
+	xnsDispatcher          *xnspkg.Dispatcher
 
 	nameResolver          nr.Resolver
 	hostAddress           string
@@ -324,6 +326,13 @@ func newDaprRuntime(ctx context.Context,
 
 	workflowAccessPolicies := workflowacl.NewHolder()
 
+	// The cross-namespace bridge needs name resolution + a cross-trust-domain
+	// gRPC dialer. The resolver is initialised later in Run() (after this
+	// constructor); the dispatcher is constructed empty and populated then.
+	// Construct it with the daprd-internal port that any peer-side dial will
+	// resolve to.
+	xnsDispatcher := xnspkg.New(xnspkg.Options{InternalGRPCPort: runtimeConfig.internalGRPCPort})
+
 	wfe, err := wfengine.New(wfengine.Options{
 		AppID:                           runtimeConfig.id,
 		Namespace:                       namespace,
@@ -339,6 +348,7 @@ func newDaprRuntime(ctx context.Context,
 		Signer:                          wfSigner,
 		MaxRequestBodySize:              runtimeConfig.maxRequestBodySize,
 		WorkflowAccessPolicies:          workflowAccessPolicies,
+		XNSDispatcher:                   xnsDispatcher,
 	})
 	if err != nil {
 		return nil, err
@@ -388,6 +398,7 @@ func newDaprRuntime(ctx context.Context,
 		actors:                 actors,
 		wfengine:               wfe,
 		workflowAccessPolicies: workflowAccessPolicies,
+		xnsDispatcher:          xnsDispatcher,
 	}
 	close(rt.isAppHealthy)
 
@@ -684,6 +695,15 @@ func (a *DaprRuntime) initRuntime(ctx context.Context) error {
 	a.initProxy()
 
 	a.initDirectMessaging(a.nameResolver)
+
+	// Wire the cross-namespace workflow dispatcher with the resolver and
+	// gRPC connection factory now that both are initialised. Without this
+	// the orchestrator's xns-dispatch reminders fire and return
+	// "name resolver not configured" forever.
+	if a.xnsDispatcher != nil {
+		a.xnsDispatcher.SetResolver(a.nameResolver)
+		a.xnsDispatcher.SetGRPCConnection(a.grpc.GetGRPCConnection)
+	}
 
 	a.initPluggableComponents(ctx)
 

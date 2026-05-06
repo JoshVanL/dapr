@@ -27,6 +27,7 @@ import (
 	"github.com/dapr/dapr/pkg/actors/targets"
 	"github.com/dapr/dapr/pkg/actors/targets/workflow/common"
 	"github.com/dapr/dapr/pkg/actors/targets/workflow/common/lock"
+	xnscommon "github.com/dapr/dapr/pkg/actors/targets/workflow/common/xns"
 	"github.com/dapr/dapr/pkg/actors/targets/workflow/orchestrator/signing"
 	"github.com/dapr/dapr/pkg/runtime/wfengine/todo"
 	"github.com/dapr/kit/crypto/spiffe/signer"
@@ -56,6 +57,12 @@ type Options struct {
 	WorkflowAccessPolicies *workflowacl.Holder
 
 	WorkflowsRemoteActivityReminder bool
+
+	// XNSDispatcher performs the sidecar-to-sidecar service-invocation hop
+	// for cross-namespace result delivery. nil means the activity actor
+	// cannot ship results back to a parent in another namespace; same-ns
+	// activity completions are unaffected.
+	XNSDispatcher xnscommon.Dispatcher
 }
 
 type factory struct {
@@ -73,6 +80,7 @@ type factory struct {
 	actorTypeBuilder       *common.ActorTypeBuilder
 	workflowAccessPolicies *workflowacl.Holder
 	signing                *signing.Signing
+	xnsDispatcher          xnscommon.Dispatcher
 
 	scheduler todo.ActivityScheduler
 
@@ -117,6 +125,7 @@ func New(ctx context.Context, opts Options) (targets.Factory, error) {
 		actorTypeBuilder:       opts.ActorTypeBuilder,
 		workflowAccessPolicies: opts.WorkflowAccessPolicies,
 		state:                  state,
+		xnsDispatcher:          opts.XNSDispatcher,
 
 		workflowsRemoteActivityReminder: opts.WorkflowsRemoteActivityReminder,
 	}

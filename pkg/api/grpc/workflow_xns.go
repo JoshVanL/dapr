@@ -27,6 +27,7 @@ import (
 	actorapi "github.com/dapr/dapr/pkg/actors/api"
 	"github.com/dapr/dapr/pkg/actors/targets/workflow/common"
 	wfaclapi "github.com/dapr/dapr/pkg/apis/workflowaccesspolicy/v1alpha1"
+	"github.com/dapr/dapr/pkg/config"
 	diag "github.com/dapr/dapr/pkg/diagnostics"
 	commonv1pb "github.com/dapr/dapr/pkg/proto/common/v1"
 	internalv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
@@ -79,6 +80,18 @@ func xnsOpName(opType workflowacl.OperationType, method string, payload []byte) 
 //  5. Returns ACK. Durability is handed off the moment the reminder is
 //     persisted.
 func (a *api) CallWorkflowCrossNamespace(ctx context.Context, req *internalv1pb.CrossNSDispatchRequest) (*internalv1pb.CrossNSAck, error) {
+	if a.GlobalConfig() == nil || !a.GlobalConfig().IsFeatureEnabled(config.WorkflowCrossNamespace) {
+		return nil, status.Error(codes.Unimplemented, "WorkflowCrossNamespace feature is not enabled on this sidecar")
+	}
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "CallWorkflowCrossNamespace: nil request")
+	}
+	if req.GetTargetAppId() != a.AppID() {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"CallWorkflowCrossNamespace: target_app_id %q does not match this sidecar's app %q",
+			req.GetTargetAppId(), a.AppID())
+	}
+
 	callerAppID, callerNamespace, err := a.extractCallerIdentity(ctx)
 	if err != nil {
 		return nil, err
@@ -159,6 +172,18 @@ func (a *api) CallWorkflowCrossNamespace(ctx context.Context, req *internalv1pb.
 //     state, so stale-result-drop happens at reminder fire (not at gRPC
 //     ingress, where the parent's state may not be loaded yet).
 func (a *api) DeliverWorkflowResultCrossNamespace(ctx context.Context, req *internalv1pb.CrossNSResultRequest) (*internalv1pb.CrossNSAck, error) {
+	if a.GlobalConfig() == nil || !a.GlobalConfig().IsFeatureEnabled(config.WorkflowCrossNamespace) {
+		return nil, status.Error(codes.Unimplemented, "WorkflowCrossNamespace feature is not enabled on this sidecar")
+	}
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "DeliverWorkflowResultCrossNamespace: nil request")
+	}
+	if req.GetTargetAppId() != a.AppID() {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"DeliverWorkflowResultCrossNamespace: target_app_id %q does not match this sidecar's app %q",
+			req.GetTargetAppId(), a.AppID())
+	}
+
 	callerAppID, callerNamespace, err := a.extractCallerIdentity(ctx)
 	if err != nil {
 		return nil, err

@@ -18,11 +18,13 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/proto"
 
 	actorapi "github.com/dapr/dapr/pkg/actors/api"
+	"github.com/dapr/dapr/pkg/actors/targets/workflow/common"
 	invokev1 "github.com/dapr/dapr/pkg/messaging/v1"
 	internalsv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 	wferrors "github.com/dapr/dapr/pkg/runtime/wfengine/errors"
@@ -96,6 +98,55 @@ func decodeActivityInvocation(data []byte) (*protos.ActivityInvocation, *string,
 	return &protos.ActivityInvocation{HistoryEvent: &legacy}, taskScheduledName(&legacy), nil
 }
 
+// decodeReminderInvocation returns the ActivityInvocation carried by a
+// reminder. Same-namespace reminders carry the invocation directly. The
+// cross-namespace bridge (xns-exec-* reminders, created by
+// CallWorkflowCrossNamespace on the target sidecar) wraps the same
+// invocation bytes inside a CrossNSDispatchRequest so the payload is
+// self-contained on the target side; unwrapping is keyed off the reminder
+// name prefix.
+//
+// TODO: remove the legacy raw-HistoryEvent fallback in v1.19 once reminders
+// written by pre-propagation daprds have been drained from the rollout.
+func (a *activity) decodeReminderInvocation(reminder *actorapi.Reminder) (*protos.ActivityInvocation, error) {
+	if reminder.Data == nil {
+		return nil, errors.New("activity reminder has no data")
+	}
+
+	if strings.HasPrefix(reminder.Name, common.ReminderPrefixXNSExec) {
+		var dispatch internalsv1pb.CrossNSDispatchRequest
+		if err := reminder.Data.UnmarshalTo(&dispatch); err != nil {
+			return nil, fmt.Errorf("failed to decode cross-ns activity reminder: %w", err)
+		}
+		return decodeActivityInvocationBytes(dispatch.GetPayload())
+	}
+
+	var invocation protos.ActivityInvocation
+	if err := reminder.Data.UnmarshalTo(&invocation); err != nil {
+		var legacy backend.HistoryEvent
+		if legacyErr := reminder.Data.UnmarshalTo(&legacy); legacyErr != nil {
+			return nil, fmt.Errorf("failed to decode activity reminder (new format: %v; legacy: %w)", err, legacyErr)
+		}
+		invocation.HistoryEvent = &legacy
+	}
+	return &invocation, nil
+}
+
+// decodeActivityInvocationBytes unmarshals an inner activity payload into
+// an ActivityInvocation, accepting both the new envelope and the legacy
+// raw HistoryEvent shape.
+func decodeActivityInvocationBytes(data []byte) (*protos.ActivityInvocation, error) {
+	var invocation protos.ActivityInvocation
+	if err := proto.Unmarshal(data, &invocation); err == nil && invocation.GetHistoryEvent() != nil {
+		return &invocation, nil
+	}
+	var legacy backend.HistoryEvent
+	if err := proto.Unmarshal(data, &legacy); err != nil {
+		return nil, fmt.Errorf("failed to decode activity invocation payload: %w", err)
+	}
+	return &protos.ActivityInvocation{HistoryEvent: &legacy}, nil
+}
+
 // taskScheduledName returns a pointer to the TaskScheduled event's name on
 // the given history event
 func taskScheduledName(e *backend.HistoryEvent) *string {
@@ -110,25 +161,23 @@ func taskScheduledName(e *backend.HistoryEvent) *string {
 func (a *activity) handleReminder(ctx context.Context, reminder *actorapi.Reminder) error {
 	log.Debugf("Activity actor '%s': invoking reminder '%s'", a.actorID, reminder.Name)
 
-	// Try the new ActivityInvocation envelope format first. Fall back to
-	// the legacy raw HistoryEvent payload for reminders created by
-	// pre-propagation code.
-	// TODO: remove this legacy fallback in v1.19 once reminders written by
-	// pre-propagation daprds have been drained from the rollout.
-	var invocation protos.ActivityInvocation
-	if err := reminder.Data.UnmarshalTo(&invocation); err != nil {
-		var legacy backend.HistoryEvent
-		if legacyErr := reminder.Data.UnmarshalTo(&legacy); legacyErr != nil {
-			return fmt.Errorf("failed to decode activity reminder (new format: %v; legacy: %w)", err, legacyErr)
-		}
-		invocation.HistoryEvent = &legacy
+	// Cross-namespace result-ship reminders fire on this activity actor
+	// when a completion needs to travel back to a parent workflow in
+	// another namespace. Route them to the xns handler before the
+	// normal activity-execution path runs.
+	if strings.HasPrefix(reminder.Name, common.ReminderPrefixXNSResult) {
+		return a.handleXNSResultReminder(ctx, reminder)
 	}
 
+	invocation, err := a.decodeReminderInvocation(reminder)
+	if err != nil {
+		return err
+	}
 	if invocation.GetHistoryEvent() == nil {
 		return errors.New("activity reminder missing history event")
 	}
 
-	err := a.executeActivity(ctx, reminder.Name, &invocation)
+	err = a.executeActivity(ctx, reminder.Name, invocation)
 
 	// Returning nil signals that we want the execution to be retried in the next
 	// period interval

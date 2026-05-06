@@ -68,6 +68,14 @@ const (
 	// history events are signed using the app's X.509 SVID identity,
 	// creating a verifiable chain of signatures. Disabled by default.
 	WorkflowHistorySigning Feature = "WorkflowHistorySigning"
+
+	// WorkflowCrossNamespace enables cross-namespace workflow and activity
+	// invocation via the in-cluster service-invocation bridge. The bridge
+	// is gated by both this feature flag and an explicit WorkflowAccessPolicy
+	// rule on the target sidecar; with the flag off, the cross-namespace
+	// gRPC handlers return Unimplemented and any in-flight dispatch
+	// reminder fails terminally rather than retrying.
+	WorkflowCrossNamespace Feature = "WorkflowCrossNamespace"
 )
 
 // end feature flags section

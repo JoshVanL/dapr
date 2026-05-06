@@ -15,37 +15,89 @@ package orchestrator
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	workflowacl "github.com/dapr/dapr/pkg/acl/workflow"
 	actorapi "github.com/dapr/dapr/pkg/actors/api"
 	"github.com/dapr/dapr/pkg/actors/targets/workflow/common"
+	xnscommon "github.com/dapr/dapr/pkg/actors/targets/workflow/common/xns"
+	diag "github.com/dapr/dapr/pkg/diagnostics"
 	invokev1 "github.com/dapr/dapr/pkg/messaging/v1"
+	commonv1pb "github.com/dapr/dapr/pkg/proto/common/v1"
 	internalsv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 	"github.com/dapr/dapr/pkg/runtime/wfengine/todo"
 	"github.com/dapr/durabletask-go/api/protos"
 	"github.com/dapr/durabletask-go/backend"
 )
 
-// XNSHop identifies which leg of a cross-namespace exchange a deterministic
-// key is keyed to. Dispatch = caller → target, Result = target → caller.
-type XNSHop string
+const (
+	// xnsRetryInterval is the inter-retry interval for cross-namespace
+	// dispatch and result reminders.
+	xnsRetryInterval = 30 * time.Second
+
+	// xnsMaxRetries bounds how many times the failure policy will retry a
+	// cross-namespace hop before giving up. With xnsRetryInterval = 30s,
+	// 60 retries gives a ~30-minute window which tolerates rolling
+	// restarts and transient network blips without indefinitely holding a
+	// reminder against a permanently-unreachable peer.
+	xnsMaxRetries uint32 = 60
+)
+
+// xnsFailurePolicy is the bounded failure policy used by cross-namespace
+// dispatch and result reminders. Constant interval, capped retry count.
+func xnsFailurePolicy() *commonv1pb.JobFailurePolicy {
+	max := xnsMaxRetries
+	return &commonv1pb.JobFailurePolicy{
+		Policy: &commonv1pb.JobFailurePolicy_Constant{
+			Constant: &commonv1pb.JobFailurePolicyConstant{
+				Interval:   durationpb.New(xnsRetryInterval),
+				MaxRetries: &max,
+			},
+		},
+	}
+}
+
+// createXNSReminder schedules a cross-namespace bridge reminder with the
+// bounded failure policy. Wraps actorapi.CreateReminderRequest construction
+// so all xns-prefix reminders share the same retry and durability shape.
+func (o *orchestrator) createXNSReminder(ctx context.Context, name string, payload proto.Message) error {
+	data, err := anypb.New(payload)
+	if err != nil {
+		return err
+	}
+	return common.CreateReminderWithRetry(ctx, o.reminders, &actorapi.CreateReminderRequest{
+		ActorType:     o.actorType,
+		ActorID:       o.actorID,
+		Name:          name,
+		Data:          data,
+		DueTime:       time.Now().UTC().Format(time.RFC3339),
+		FailurePolicy: xnsFailurePolicy(),
+	})
+}
+
+// Re-exports of the shared cross-namespace primitives. Kept here so
+// existing call sites in this package don't need to drag the xnscommon
+// import into every file that already deals in orchestrator-only logic.
+type XNSHop = xnscommon.Hop
 
 const (
-	XNSHopDispatch XNSHop = "dispatch"
-	XNSHopResult   XNSHop = "result"
+	XNSHopDispatch = xnscommon.HopDispatch
+	XNSHopResult   = xnscommon.HopResult
 )
+
+// XNSDispatcher is re-exported from common/xns; concrete implementations
+// live in pkg/runtime/wfengine/xns.
+type XNSDispatcher = xnscommon.Dispatcher
 
 // RoutingKind classifies how a scheduling/history event should be routed.
 // It is the single enumeration consulted by the scheduling code paths so
@@ -89,42 +141,10 @@ func (o *orchestrator) classifyRouting(r *protos.TaskRouter) RoutingKind {
 	}
 }
 
-// XNSDispatcher performs the sidecar-to-sidecar service invocation portion
-// of a cross-namespace workflow or activity call. It is split out from the
-// orchestrator actor so that the actor does not directly depend on the
-// gRPC manager / name resolver, keeping unit tests mockable and confining
-// the cross-ns wiring to a single assembly point.
-type XNSDispatcher interface {
-	// DispatchWorkflow sends a CrossNSDispatchRequest to the target sidecar
-	// addressed as targetAppID in targetNamespace. Returns the gRPC status
-	// error from the target so callers can special-case PermissionDenied /
-	// Unimplemented / AlreadyExists without unwrapping.
-	DispatchWorkflow(ctx context.Context, targetNamespace, targetAppID string, req *internalsv1pb.CrossNSDispatchRequest) error
-
-	// DeliverResult ships a CrossNSResultRequest back to the parent
-	// orchestrator's sidecar.
-	DeliverResult(ctx context.Context, parentNamespace, parentAppID string, req *internalsv1pb.CrossNSResultRequest) error
-}
-
-// DeterministicXNSKey derives an idempotency key for a cross-namespace hop.
-// Including both parent and child executionIds ensures that a
-// terminate+purge+rerun of the parent with the same instanceID produces a
-// distinct key, preventing stale target-side reminders from colliding with
-// the fresh run and preventing stale results from delivering into the new
-// run's inbox.
+// DeterministicXNSKey is a thin alias for the shared key derivation in
+// common/xns. Kept here for orchestrator call sites.
 func DeterministicXNSKey(sourceNs, sourceAppID, parentOrchID, parentExecID, childInstanceID, childExecID string, taskID int32, hop XNSHop) string {
-	h := sha256.New()
-	for _, part := range []string{
-		sourceNs, sourceAppID,
-		parentOrchID, parentExecID,
-		childInstanceID, childExecID,
-		strconv.FormatInt(int64(taskID), 10),
-		string(hop),
-	} {
-		h.Write([]byte(part))
-		h.Write([]byte{0})
-	}
-	return hex.EncodeToString(h.Sum(nil))
+	return xnscommon.DeterministicKey(sourceNs, sourceAppID, parentOrchID, parentExecID, childInstanceID, childExecID, taskID, hop)
 }
 
 // dispatchCrossNS creates a durable caller-side dispatch reminder whose data
@@ -166,7 +186,7 @@ func (o *orchestrator) dispatchCrossNS(
 	}
 
 	reminderName := common.ReminderPrefixXNSDispatch + key
-	if _, err := o.createReminderWithName(ctx, reminderName, req, time.Now(), o.actorType, nil); err != nil {
+	if err := o.createXNSReminder(ctx, reminderName, req); err != nil {
 		return fmt.Errorf("failed to create cross-ns dispatch reminder: %w", err)
 	}
 	log.Debugf("Workflow actor '%s': scheduled cross-ns dispatch to '%s/%s' method=%s key=%s", o.actorID, targetNamespace, targetAppID, method, key)
@@ -204,8 +224,11 @@ func (o *orchestrator) handleXNSDispatchReminder(ctx context.Context, reminder *
 	}
 	targetAppID := req.GetTargetAppId()
 
+	start := time.Now()
 	err := o.xnsDispatcher.DispatchWorkflow(ctx, targetNs, targetAppID, &req)
+	elapsed := diag.ElapsedSince(start)
 	if err == nil {
+		diag.DefaultWorkflowMonitoring.WorkflowOperationEvent(ctx, diag.XNSDispatch, diag.StatusSuccess, elapsed)
 		return o.deleteXNSReminder(ctx, reminder.Name)
 	}
 
@@ -213,21 +236,26 @@ func (o *orchestrator) handleXNSDispatchReminder(ctx context.Context, reminder *
 	switch code {
 	case codes.AlreadyExists:
 		// Target already has a reminder for this key — the hop is durable.
+		diag.DefaultWorkflowMonitoring.WorkflowOperationEvent(ctx, diag.XNSDispatch, diag.StatusSuccess, elapsed)
 		return o.deleteXNSReminder(ctx, reminder.Name)
 	case codes.PermissionDenied:
 		log.Warnf("Workflow actor '%s': cross-ns dispatch to '%s/%s' denied by policy: %v", o.actorID, targetNs, targetAppID, err)
+		diag.DefaultWorkflowMonitoring.WorkflowOperationEvent(ctx, diag.XNSDispatch, diag.StatusFailed, elapsed)
 		if ferr := o.failXNSDispatch(ctx, &req, "WorkflowAccessPolicyDenied"); ferr != nil {
 			return fmt.Errorf("failed to signal xns policy denial: %w", ferr)
 		}
 		return o.deleteXNSReminder(ctx, reminder.Name)
 	case codes.Unimplemented:
 		log.Errorf("Workflow actor '%s': cross-ns dispatch to '%s/%s' rejected: target sidecar does not support cross-namespace workflow invocation", o.actorID, targetNs, targetAppID)
+		diag.DefaultWorkflowMonitoring.WorkflowOperationEvent(ctx, diag.XNSDispatch, diag.StatusFailed, elapsed)
 		if ferr := o.failXNSDispatch(ctx, &req, "CrossNamespaceUnsupported"); ferr != nil {
 			return fmt.Errorf("failed to signal xns unsupported: %w", ferr)
 		}
 		return o.deleteXNSReminder(ctx, reminder.Name)
 	default:
-		// Transient. Leave the reminder in place; failure policy retries.
+		// Transient. Leave the reminder in place; failure policy retries
+		// up to xnsMaxRetries before the scheduler stops firing it.
+		diag.DefaultWorkflowMonitoring.WorkflowOperationEvent(ctx, diag.XNSDispatch, diag.StatusRecoverable, elapsed)
 		log.Warnf("Workflow actor '%s': cross-ns dispatch transient failure to '%s/%s': %v (will retry)", o.actorID, targetNs, targetAppID, err)
 		return err
 	}
@@ -252,21 +280,27 @@ func (o *orchestrator) handleXNSResultReminder(ctx context.Context, reminder *ac
 	parentNs := req.GetSource().GetNamespace()
 	parentAppID := req.GetTargetAppId()
 
+	start := time.Now()
 	err := o.xnsDispatcher.DeliverResult(ctx, parentNs, parentAppID, &req)
+	elapsed := diag.ElapsedSince(start)
 	if err == nil {
+		diag.DefaultWorkflowMonitoring.WorkflowOperationEvent(ctx, diag.XNSResult, diag.StatusSuccess, elapsed)
 		return o.deleteXNSReminder(ctx, reminder.Name)
 	}
 
 	code := status.Code(err)
 	switch code {
 	case codes.AlreadyExists, codes.OK:
+		diag.DefaultWorkflowMonitoring.WorkflowOperationEvent(ctx, diag.XNSResult, diag.StatusSuccess, elapsed)
 		return o.deleteXNSReminder(ctx, reminder.Name)
 	case codes.PermissionDenied, codes.Unimplemented, codes.NotFound:
 		// Terminal: parent refuses / is gone. Drop rather than retry
 		// indefinitely.
+		diag.DefaultWorkflowMonitoring.WorkflowOperationEvent(ctx, diag.XNSResult, diag.StatusFailed, elapsed)
 		log.Warnf("Workflow actor '%s': cross-ns result to '%s/%s' dropped: %v", o.actorID, parentNs, parentAppID, err)
 		return o.deleteXNSReminder(ctx, reminder.Name)
 	default:
+		diag.DefaultWorkflowMonitoring.WorkflowOperationEvent(ctx, diag.XNSResult, diag.StatusRecoverable, elapsed)
 		log.Warnf("Workflow actor '%s': cross-ns result transient failure to '%s/%s': %v (will retry)", o.actorID, parentNs, parentAppID, err)
 		return err
 	}
@@ -288,14 +322,22 @@ func (o *orchestrator) handleXNSResultInReminder(ctx context.Context, reminder *
 		return o.deleteXNSReminder(ctx, reminder.Name)
 	}
 
-	// ExecutionId isolation: compare the carried parent executionId to the
-	// current loaded state. A mismatch means the parent was purged and
-	// re-created; drop the stale result rather than corrupting the new run.
+	// ExecutionId isolation:
+	//   - Parent state missing entirely → parent was purged before the
+	//     result returned; drop the result rather than calling
+	//     addWorkflowEvent on a non-existent state (which would create a
+	//     phantom inbox entry on a workflow nobody is waiting for).
+	//   - Parent state present but executionId mismatch → parent was
+	//     terminate+purge+re-created with a fresh run. Drop, since the
+	//     new run never dispatched this child.
+	state, _, lerr := o.loadInternalState(ctx)
+	if lerr == nil && state == nil {
+		log.Warnf("Workflow actor '%s': dropping cross-ns result: parent instance no longer exists", o.actorID)
+		return o.deleteXNSReminder(ctx, reminder.Name)
+	}
 	currentExecID := ""
-	if _, _, lerr := o.loadInternalState(ctx); lerr == nil {
-		if rs := o.rstate; rs != nil {
-			currentExecID = rs.GetStartEvent().GetWorkflowInstance().GetExecutionId().GetValue()
-		}
+	if rs := o.rstate; rs != nil {
+		currentExecID = rs.GetStartEvent().GetWorkflowInstance().GetExecutionId().GetValue()
 	}
 	if currentExecID != "" && req.GetParentExecutionId() != "" && currentExecID != req.GetParentExecutionId() {
 		log.Warnf("Workflow actor '%s': dropping stale cross-ns result (executionId '%s' != current '%s')", o.actorID, req.GetParentExecutionId(), currentExecID)
@@ -412,7 +454,7 @@ func (o *orchestrator) shipCrossNSResult(ctx context.Context, event *backend.His
 	}
 
 	name := common.ReminderPrefixXNSResult + key
-	if _, err := o.createReminderWithName(ctx, name, req, time.Now(), o.actorType, nil); err != nil {
+	if err := o.createXNSReminder(ctx, name, req); err != nil {
 		return fmt.Errorf("failed to create cross-ns result reminder: %w", err)
 	}
 	log.Debugf("Workflow actor '%s': scheduled cross-ns result to '%s/%s' key=%s", o.actorID, parentNamespace, parentAppID, key)

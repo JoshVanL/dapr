@@ -39,6 +39,8 @@ const (
 	GetWorkflow       = "get_workflow"
 	AddEvent          = "add_event"
 	PurgeWorkflow     = "purge_workflow"
+	XNSDispatch       = "xns_dispatch"
+	XNSResult         = "xns_result"
 
 	WorkflowEvent = "event"
 	Timer         = "timer"
