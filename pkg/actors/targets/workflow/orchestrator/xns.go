@@ -31,6 +31,7 @@ import (
 	actorapi "github.com/dapr/dapr/pkg/actors/api"
 	"github.com/dapr/dapr/pkg/actors/targets/workflow/common"
 	xnscommon "github.com/dapr/dapr/pkg/actors/targets/workflow/common/xns"
+	wfaclapi "github.com/dapr/dapr/pkg/apis/workflowaccesspolicy/v1alpha1"
 	diag "github.com/dapr/dapr/pkg/diagnostics"
 	invokev1 "github.com/dapr/dapr/pkg/messaging/v1"
 	commonv1pb "github.com/dapr/dapr/pkg/proto/common/v1"
@@ -183,6 +184,10 @@ func (o *orchestrator) dispatchCrossNS(
 			ExecutionId:    parentExecID,
 			TaskId:         taskID,
 		},
+		// Stamp the deadline so the reminder handler can detect a budget
+		// exhaustion and synthesize a child-failure event rather than
+		// silently dropping the dispatch when the scheduler stops firing.
+		CallerDeadlineUnixNano: time.Now().Add(xnsRetryInterval * time.Duration(xnsMaxRetries)).UnixNano(),
 	}
 
 	reminderName := common.ReminderPrefixXNSDispatch + key
@@ -210,6 +215,20 @@ func (o *orchestrator) handleXNSDispatchReminder(ctx context.Context, reminder *
 	}
 	if err := proto.Unmarshal(reminder.Data.GetValue(), &req); err != nil {
 		log.Errorf("Workflow actor '%s': cross-ns dispatch reminder '%s' has malformed payload: %v", o.actorID, reminder.Name, err)
+		return o.deleteXNSReminder(ctx, reminder.Name)
+	}
+
+	// Deadline check: if the caller's retry budget is exhausted, surface
+	// a synthetic failure event to the parent orchestrator so the
+	// workflow doesn't hang waiting on a dispatch that will never
+	// succeed. The reminder is then deleted and the budget exhaustion
+	// metric is emitted.
+	if dl := req.GetCallerDeadlineUnixNano(); dl > 0 && time.Now().UnixNano() > dl {
+		log.Warnf("Workflow actor '%s': cross-ns dispatch reminder '%s' exceeded retry budget; synthesizing failure", o.actorID, reminder.Name)
+		diag.DefaultWorkflowMonitoring.WorkflowOperationEvent(ctx, diag.XNSDispatch, diag.StatusFailed, 0)
+		if ferr := o.failXNSDispatch(ctx, &req, "CrossNamespaceDispatchTimeout"); ferr != nil {
+			return fmt.Errorf("failed to signal xns dispatch timeout: %w", ferr)
+		}
 		return o.deleteXNSReminder(ctx, reminder.Name)
 	}
 
@@ -370,6 +389,21 @@ func (o *orchestrator) handleXNSExecReminder(ctx context.Context, reminder *acto
 		return o.deleteXNSReminder(ctx, reminder.Name)
 	}
 
+	// Re-evaluate the WorkflowAccessPolicy at fire time. The ingress
+	// handler (CallWorkflowCrossNamespace) checked it before scheduling
+	// this reminder, but a policy reload between ingress and reminder
+	// fire could revoke the caller's permission — and an xns-dispatch
+	// reminder may sit in retry for up to xnsRetryInterval * xnsMaxRetries
+	// before firing here. The check uses the SPIFFE-stamped caller
+	// identity carried on the reminder's Source, not arbitrary metadata.
+	if denied, err := o.xnsExecPolicyDenied(&req); err != nil {
+		log.Errorf("Workflow actor '%s': cross-ns exec policy check failed: %v", o.actorID, err)
+		return o.deleteXNSReminder(ctx, reminder.Name)
+	} else if denied {
+		log.Warnf("Workflow actor '%s': cross-ns exec denied by policy at fire time (caller %s/%s)", o.actorID, req.GetSource().GetNamespace(), req.GetSource().GetAppId())
+		return o.deleteXNSReminder(ctx, reminder.Name)
+	}
+
 	invocation := internalsv1pb.
 		NewInternalInvokeRequest(req.GetMethod()).
 		WithActor(req.GetActorType(), req.GetActorId()).
@@ -380,14 +414,81 @@ func (o *orchestrator) handleXNSExecReminder(ctx context.Context, reminder *acto
 	// dispatched method to (the target child workflow/activity). Routing
 	// through the local router would re-enter this actor's lock — which
 	// we already hold via InvokeReminder — and deadlock. Invoke the handler
-	// directly instead; the security check (WorkflowAccessPolicy) was
-	// already enforced at the cross-ns ingress on the target sidecar
-	// (CallWorkflowCrossNamespace), so re-checking here would be redundant.
+	// directly instead. Security is enforced at two points: ingress
+	// (CallWorkflowCrossNamespace) and again above at fire time, both
+	// against the SPIFFE-stamped caller identity carried on req.Source.
 	if _, err := o.handleInvoke(ctx, invocation); err != nil {
 		log.Warnf("Workflow actor '%s': cross-ns exec local call failed: %v", o.actorID, err)
 		return err
 	}
 	return o.deleteXNSReminder(ctx, reminder.Name)
+}
+
+// xnsExecPolicyDenied re-evaluates the WorkflowAccessPolicy at xns-exec
+// fire time. Returns (denied, error). When the policy holder is nil, the
+// answer is "denied" (cross-namespace requires an explicit policy on this
+// sidecar). When the caller identity is missing from the request, the
+// answer is also "denied" — the ingress already verified SPIFFE identity,
+// so an absent Source would only happen on a malformed reminder.
+func (o *orchestrator) xnsExecPolicyDenied(req *internalsv1pb.CrossNSDispatchRequest) (bool, error) {
+	if o.workflowAccessPolicies == nil {
+		return true, nil
+	}
+	policies := o.workflowAccessPolicies.Load()
+	if policies == nil {
+		return true, nil
+	}
+	caller := req.GetSource()
+	if caller == nil || caller.GetAppId() == "" {
+		return true, nil
+	}
+
+	opType, _, _, ok := workflowacl.SplitActorType(req.GetActorType())
+	if !ok {
+		return true, nil
+	}
+	op, err := xnsExecOperation(req.GetMethod())
+	if err != nil {
+		return true, err
+	}
+	opName, err := xnsExecOpName(opType, req.GetMethod(), req.GetPayload())
+	if err != nil {
+		return true, err
+	}
+	allowed := policies.Evaluate(caller.GetAppId(), caller.GetNamespace(), opType, op, opName)
+	return !allowed, nil
+}
+
+// xnsExecOperation maps the inner method dispatched cross-namespace onto the
+// WorkflowOperation used by the policy. Mirrors the ingress-side logic in
+// pkg/api/grpc/workflow_xns.go so the two checkpoints behave identically.
+func xnsExecOperation(method string) (wfaclapi.WorkflowOperation, error) {
+	switch method {
+	case todo.CreateWorkflowInstanceMethod, todo.ExecuteActivityMethod:
+		return wfaclapi.WorkflowOperationSchedule, nil
+	case todo.RecursivePurgeWorkflowStateMethod:
+		return wfaclapi.WorkflowOperationPurge, nil
+	default:
+		return "", fmt.Errorf("unsupported cross-ns method %q", method)
+	}
+}
+
+// xnsExecOpName extracts the workflow or activity name from the dispatched
+// payload so the policy can match per-name rules at exec time. Recursive
+// purge has only an instanceID at this layer (the workflow name lives in
+// the local state, which we deliberately do not load at policy-check
+// time); it falls back to "*" so only wildcard rules apply.
+func xnsExecOpName(opType workflowacl.OperationType, method string, payload []byte) (string, error) {
+	switch method {
+	case todo.CreateWorkflowInstanceMethod:
+		return workflowacl.WorkflowNameFromCreateRequest(payload)
+	case todo.ExecuteActivityMethod:
+		return workflowacl.ActivityNameFromExecute(method, payload)
+	case todo.RecursivePurgeWorkflowStateMethod:
+		return "*", nil
+	default:
+		return "", fmt.Errorf("unsupported cross-ns method %q", method)
+	}
 }
 
 // deleteXNSReminder removes a completed xns reminder from the scheduler so

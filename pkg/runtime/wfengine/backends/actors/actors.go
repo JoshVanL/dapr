@@ -516,10 +516,18 @@ func (abe *Actors) AddNewWorkflowEvent(ctx context.Context, id api.InstanceID, e
 	// If the event carries a router targeting a foreign app in the same
 	// namespace (e.g. a recursive ExecutionTerminated for a cross-app
 	// sub-orchestrator), the event must reach the workflow actor in that
-	// other app rather than the local one. Cross-namespace dispatch is
-	// handled at the orchestrator-actor level, not here.
+	// other app rather than the local one. Cross-namespace events arrive
+	// here only when the recursive-terminate driver in durabletask-go
+	// posts events at children whose router carries TargetAppNamespace —
+	// the orchestrator-actor scheduling paths route via the bridge
+	// directly. We don't yet have a bridge entry from this layer, so
+	// surface a loud error rather than letting placement silently fail.
 	actorType := abe.workflowActorType
 	if router := e.GetRouter(); router != nil {
+		if ns := router.GetTargetAppNamespace(); ns != "" && ns != abe.namespace {
+			return fmt.Errorf("AddNewWorkflowEvent: cross-namespace event delivery to '%s/%s' is not supported via this layer (instance %q); the recursive-terminate driver does not yet bridge cross-namespace children",
+				ns, router.GetTargetAppID(), id)
+		}
 		if target := router.GetTargetAppID(); target != "" && target != abe.appID {
 			actorType = common.NewActorTypeBuilder(abe.namespace).Workflow(target)
 		}

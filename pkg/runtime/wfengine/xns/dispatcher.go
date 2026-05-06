@@ -59,7 +59,19 @@ type Options struct {
 	InternalGRPCPort int
 }
 
-// Dispatcher implements orchestrator.XNSDispatcher.
+// Dispatcher implements xnscommon.Dispatcher.
+//
+// Connection pooling is delegated to the dial factory: the runtime supplies
+// grpc.Manager.GetGRPCConnection, which returns cached connections per
+// (address, app, namespace) tuple and increments a refcount on each call.
+// We pass `done(false)` (don't destroy) so the manager keeps the conn for
+// the next call. Each cross-ns hop therefore pays a resolver lookup but
+// not a fresh dial.
+//
+// TODO: add a small TTL'd resolution cache if name resolution becomes a
+// hotspot under high cross-ns hop volume; today every hop calls the
+// resolver. For mDNS / Kubernetes resolvers this is cheap; for slower
+// resolvers (e.g. external DNS with deep caches) it may matter.
 type Dispatcher struct {
 	mu            sync.RWMutex
 	resolver      nr.Resolver

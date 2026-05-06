@@ -117,6 +117,13 @@ message CrossNSDispatchRequest {
 
   // Informational caller context.
   CrossNSSource source = 7;
+
+  // caller_deadline_unix_nano is the wall-clock instant (UnixNano) by which
+  // the caller-side reminder must succeed before being abandoned. Set by
+  // the caller to (now + total retry budget). The receiver ignores it; the
+  // caller-side reminder handler reads it on each fire and synthesizes a
+  // child-failure event when exceeded.
+  int64 caller_deadline_unix_nano = 8;
 }
 
 // CrossNSResultRequest carries a completion event back to the parent

@@ -44,19 +44,25 @@ func xnsOperationFromMethod(method string, payload []byte) (wfaclapi.WorkflowOpe
 	switch method {
 	case todo.CreateWorkflowInstanceMethod, todo.ExecuteActivityMethod:
 		return wfaclapi.WorkflowOperationSchedule, nil
+	case todo.RecursivePurgeWorkflowStateMethod:
+		return wfaclapi.WorkflowOperationPurge, nil
 	default:
 		return "", errors.New("unsupported cross-ns method " + method)
 	}
 }
 
 // xnsOpName extracts the workflow or activity name from the inner payload
-// so policy evaluation can match per-name rules.
+// so policy evaluation can match per-name rules. Recursive purge across
+// namespaces carries only an instanceID, so it falls back to "*" — only
+// wildcard rules can authorise it.
 func xnsOpName(opType workflowacl.OperationType, method string, payload []byte) (string, error) {
 	switch method {
 	case todo.CreateWorkflowInstanceMethod:
 		return workflowacl.WorkflowNameFromCreateRequest(payload)
 	case todo.ExecuteActivityMethod:
 		return workflowacl.ActivityNameFromExecute(method, payload)
+	case todo.RecursivePurgeWorkflowStateMethod:
+		return "*", nil
 	default:
 		return "", errors.New("unsupported cross-ns method " + method)
 	}
