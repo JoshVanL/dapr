@@ -132,6 +132,12 @@ type WorkflowCaller struct {
 	// AppID is the Dapr app ID of the caller.
 	// +kubebuilder:validation:MinLength=1
 	AppID string `json:"appID"`
+
+	// Namespace is the Dapr namespace of the caller. nil matches callers
+	// from the policy's own namespace only. Set explicitly to permit
+	// cross-namespace callers.
+	// +optional
+	Namespace *string `json:"namespace,omitempty"`
 }
 
 // WorkflowOperation is the specific workflow operation being controlled.

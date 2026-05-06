@@ -40,9 +40,11 @@ func (o *orchestrator) checkAccessPolicy(ctx context.Context, method string, dat
 		return nil
 	}
 
-	// Self-calls are exempt: the policy is a cross-app gate.
+	// Self-calls are exempt: the policy is a cross-app gate. Same-app from
+	// a different namespace does not count as self.
 	callerAppID := workflowacl.CallerAppID(md)
-	if callerAppID == o.appID {
+	callerNamespace := workflowacl.CallerNamespace(md)
+	if callerAppID == o.appID && callerNamespace == o.actorTypeBuilder.Namespace() {
 		return nil
 	}
 
@@ -72,7 +74,7 @@ func (o *orchestrator) checkAccessPolicy(ctx context.Context, method string, dat
 		return status.Error(codes.Internal, "failed to evaluate workflow access policy")
 	}
 
-	if !policies.Evaluate(callerAppID, workflowacl.OperationTypeWorkflow, operation, name) {
+	if !policies.Evaluate(callerAppID, callerNamespace, workflowacl.OperationTypeWorkflow, operation, name) {
 		log.Warnf("Workflow actor '%s': workflow access policy denied app '%s' operation '%s' on '%s'", o.actorID, callerAppID, operation, name)
 		diag.DefaultMonitoring.WorkflowACLActionDenied(callerAppID, string(workflowacl.OperationTypeWorkflow), string(operation))
 		return status.Errorf(codes.PermissionDenied, "%s: app '%s' operation '%s' on workflow '%s' (instance '%s')", workflowACLDeniedMsg, callerAppID, operation, name, o.actorID)

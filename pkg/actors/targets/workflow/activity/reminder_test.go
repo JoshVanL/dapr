@@ -51,7 +51,7 @@ func Test_ReminderPayload_PreservesPropagation(t *testing.T) {
 				}},
 			},
 			Chunks: []*protos.PropagatedHistoryChunk{
-				{AppId: "app0", InstanceId: "wf-1", WorkflowName: "parentWf", StartEventIndex: 0, EventCount: 2},
+				{Router: &protos.TaskRouter{SourceAppID: "app0"}, InstanceId: "wf-1", WorkflowName: "parentWf", StartEventIndex: 0, EventCount: 2},
 			},
 		},
 	}
@@ -73,7 +73,7 @@ func Test_ReminderPayload_PreservesPropagation(t *testing.T) {
 	assert.Equal(t, protos.HistoryPropagationScope_HISTORY_PROPAGATION_SCOPE_LINEAGE, ph.GetScope())
 	require.Len(t, ph.GetEvents(), 2, "propagated events should be preserved")
 	require.Len(t, ph.GetChunks(), 1, "propagated chunks should be preserved")
-	assert.Equal(t, "app0", ph.GetChunks()[0].GetAppId())
+	assert.Equal(t, "app0", ph.GetChunks()[0].GetRouter().GetSourceAppID())
 	assert.Equal(t, "parentWf", ph.GetChunks()[0].GetWorkflowName())
 }
 

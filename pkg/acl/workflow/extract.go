@@ -76,7 +76,7 @@ func WorkflowOperationFromMethod(method string, parsedAddEvent *backend.HistoryE
 	case todo.PurgeWorkflowStateMethod:
 		return wfaclapi.WorkflowOperationPurge, nil
 
-	case todo.WaitForRuntimeStatus:
+	case todo.WaitForRuntimeStatus, todo.GetWorkflowMetadataMethod:
 		return wfaclapi.WorkflowOperationGet, nil
 
 	case todo.ForkWorkflowHistory, todo.RerunWorkflowInstance:

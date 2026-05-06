@@ -62,13 +62,30 @@ func (o *orchestrator) forkWorkflowHistory(ctx context.Context, request []byte) 
 
 	defer o.deactivate(o)
 
+	// When the rerun targets a different app in the same namespace, the new
+	// instance must land on that app's workflow actor type. Cross-namespace
+	// rerun goes through the xns bridge and is rejected here.
+	targetActorType := o.actorType
+	targetAppID := o.appID
+	targetActivityActorType := o.activityActorType
+	if r := rerunReq.GetRouter(); r != nil {
+		if ns := r.GetTargetAppNamespace(); ns != "" && ns != o.actorTypeBuilder.Namespace() {
+			return status.Errorf(codes.InvalidArgument, "cross-namespace rerun must go through the xns bridge")
+		}
+		if t := r.GetTargetAppID(); t != "" && t != o.appID {
+			targetActorType = o.actorTypeBuilder.Workflow(t)
+			targetActivityActorType = o.actorTypeBuilder.Activity(t)
+			targetAppID = t
+		}
+	}
+
 	fork := fork.New(fork.Options{
 		InstanceID:                 o.actorID,
 		NewInstanceID:              rerunReq.GetNewInstanceID(),
 		NewChildWorkflowInstanceID: rerunReq.NewChildWorkflowInstanceID,
-		AppID:                      o.appID,
-		ActorType:                  o.actorType,
-		ActivityActorType:          o.activityActorType,
+		AppID:                      targetAppID,
+		ActorType:                  targetActorType,
+		ActivityActorType:          targetActivityActorType,
 		//nolint:gosec
 		TargetEventID: int32(rerunReq.GetEventID()),
 
@@ -87,10 +104,11 @@ func (o *orchestrator) forkWorkflowHistory(ctx context.Context, request []byte) 
 		return err
 	}
 
-	// Call target instance ID to execute workflow rerun.
+	// Call target instance ID to execute workflow rerun. Cross-app routes
+	// to the target app's workflow actor type.
 	_, err = o.router.Call(ctx, internalsv1pb.
 		NewInternalInvokeRequest(todo.RerunWorkflowInstance).
-		WithActor(o.actorType, rerunReq.GetNewInstanceID()).
+		WithActor(targetActorType, rerunReq.GetNewInstanceID()).
 		WithData(data).
 		WithContentType(invokev1.ProtobufContentType),
 	)
@@ -173,8 +191,8 @@ func (o *orchestrator) rerunWorkflowInstanceRequest(ctx context.Context, request
 	// discarded. Non-propagating tasks stay non-propagating & propagating
 	// tasks are re-issued with a chunk reflecting the rerunning workflow's
 	// current state plus whatever lineage it received from its parent.
-	outgoingActPropHist := buildRerunOutgoingHistory(activities, newState, o.actorID, o.appID, taskScheduledScope)
-	outgoingChildPropHist := buildRerunOutgoingHistory(childWFs, newState, o.actorID, o.appID, childWorkflowCreatedScope)
+	outgoingActPropHist := buildRerunOutgoingHistory(activities, newState, o.actorID, o.appID, o.actorTypeBuilder.Namespace(), taskScheduledScope)
+	outgoingChildPropHist := buildRerunOutgoingHistory(childWFs, newState, o.actorID, o.appID, o.actorTypeBuilder.Namespace(), childWorkflowCreatedScope)
 
 	if err = errors.Join(
 		o.callChildWorkflows(ctx, startedEvent.GetName(), childWFs, outgoingChildPropHist),
@@ -200,6 +218,7 @@ func buildRerunOutgoingHistory(
 	state *wfenginestate.State,
 	instanceID string,
 	appID string,
+	namespace string,
 	scopeOf func(*protos.HistoryEvent) protos.HistoryPropagationScope,
 ) map[int32]*protos.PropagatedHistory {
 	var out map[int32]*protos.PropagatedHistory
@@ -212,7 +231,7 @@ func buildRerunOutgoingHistory(
 		if rt == nil {
 			rt = runtimestate.NewWorkflowRuntimeState(instanceID, nil, state.History)
 		}
-		chunk := runtimestate.AssembleProtoPropagatedHistory(rt, scope, state.IncomingHistory, appID)
+		chunk := runtimestate.AssembleProtoPropagatedHistory(rt, scope, state.IncomingHistory, appID, namespace)
 		if chunk == nil {
 			continue
 		}

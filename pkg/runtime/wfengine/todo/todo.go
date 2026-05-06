@@ -28,6 +28,7 @@ const (
 	AddWorkflowEventMethod            = "AddWorkflowEvent"
 	PurgeWorkflowStateMethod          = "PurgeWorkflowState"
 	RecursivePurgeWorkflowStateMethod = "RecursivePurgeWorkflowState"
+	GetWorkflowMetadataMethod         = "GetWorkflowMetadata"
 	WaitForRuntimeStatus              = "WaitForRuntimeStatus"
 	ForkWorkflowHistory               = "ForkWorkflowHistory"
 	RerunWorkflowInstance             = "RerunWorkflowInstance"

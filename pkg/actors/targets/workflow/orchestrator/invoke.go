@@ -110,6 +110,9 @@ func (o *orchestrator) executeMethod(ctx context.Context, methodName string, met
 	case todo.RecursivePurgeWorkflowStateMethod:
 		return o.recursivePurgeWorkflowState(ctx, meta)
 
+	case todo.GetWorkflowMetadataMethod:
+		return o.getWorkflowMetadata(ctx)
+
 	case todo.ForkWorkflowHistory:
 		return nil, backoff.Permanent(o.forkWorkflowHistory(ctx, request))
 

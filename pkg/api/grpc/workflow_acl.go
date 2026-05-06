@@ -51,10 +51,11 @@ func (a *api) callActorValidateWorkflowACL(ctx context.Context, in *internalv1pb
 		return nil
 	}
 
-	if nsErr := a.checkNamespace(callerNamespace); nsErr != nil {
-		return nsErr
-	}
-
+	// Cross-namespace callers are gated by per-actor checkAccessPolicy
+	// (a WorkflowAccessPolicy rule must list the caller's namespace
+	// explicitly). The receiving cross-namespace bridge endpoint
+	// stamps SPIFFE-extracted identity onto invocations before they
+	// reach the actor; here we simply forward the caller identity.
 	workflowacl.SetCallerIdentity(in, callerAppID, callerNamespace)
 	return nil
 }

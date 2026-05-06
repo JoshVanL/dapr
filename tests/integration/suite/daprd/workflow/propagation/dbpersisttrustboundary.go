@@ -166,7 +166,7 @@ func (d *dbpersisttrustboundary) Run(t *testing.T, ctx context.Context) {
 		// 1 chunk: App1's middleWf
 		require.Len(t, ph.GetChunks(), 1, "should have exactly 1 chunk (App1 only, App0 excluded by trust boundary)")
 		chunk := ph.GetChunks()[0]
-		assert.Equal(t, app1AppID, chunk.GetAppId(), "chunk.AppId should be App1, not App0")
+		assert.Equal(t, app1AppID, chunk.GetRouter().GetSourceAppID(), "chunk.Router.SourceAppID should be App1, not App0")
 		assert.Equal(t, "middleWf", chunk.GetWorkflowName(), "chunk.WorkflowName should be middleWf, not rootWf")
 		assert.Equal(t, int32(0), chunk.GetStartEventIndex(), "chunk.StartEventIndex")
 		assert.Equal(t, int32(len(ph.GetEvents())), chunk.GetEventCount(), //nolint:gosec
@@ -174,7 +174,7 @@ func (d *dbpersisttrustboundary) Run(t *testing.T, ctx context.Context) {
 
 		// No App0 chunk leaked
 		for _, c := range ph.GetChunks() {
-			assert.NotEqual(t, app0AppID, c.GetAppId(), "no chunk should have App0's AppID")
+			assert.NotEqual(t, app0AppID, c.GetRouter().GetSourceAppID(), "no chunk should have App0's source app ID")
 			assert.NotEqual(t, "rootWf", c.GetWorkflowName(), "no chunk should be rootWf")
 		}
 

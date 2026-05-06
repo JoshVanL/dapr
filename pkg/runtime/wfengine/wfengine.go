@@ -29,6 +29,7 @@ import (
 	workflowacl "github.com/dapr/dapr/pkg/acl/workflow"
 	"github.com/dapr/dapr/pkg/actors"
 	"github.com/dapr/dapr/pkg/actors/targets/workflow/orchestrator"
+	"github.com/dapr/dapr/pkg/actors/targets/workflow/xns"
 	"github.com/dapr/dapr/pkg/config"
 	runtimev1pb "github.com/dapr/dapr/pkg/proto/runtime/v1"
 	"github.com/dapr/dapr/pkg/resiliency"
@@ -80,6 +81,11 @@ type Options struct {
 
 	// May be nil when the WorkflowAccessPolicy feature is disabled.
 	WorkflowAccessPolicies *workflowacl.Holder
+
+	// XNSForwarder is the outbound side of the cross-namespace bridge. It
+	// is plugged in when the runtime configures cross-namespace service
+	// invocation. nil disables outbound cross-namespace ops.
+	XNSForwarder xns.Forwarder
 }
 
 type engine struct {
@@ -128,7 +134,14 @@ func New(opts Options) (Interface, error) {
 
 		EnableClusteredDeployment:       opts.EnableClusteredDeployment,
 		WorkflowsRemoteActivityReminder: opts.WorkflowsRemoteActivityReminder,
+
+		// Cross-namespace bridge wiring. Forwarder is plugged in by the
+		// runtime when service-invocation across namespaces is configured;
+		// Receiver always exists since the inbound leg only needs the
+		// local backend.
+		XNSForwarder: opts.XNSForwarder,
 	})
+	abackend.SetXNSReceiver(backendactors.NewXNSReceiver(abackend))
 
 	var (
 		getWorkItemsCount atomic.Int32

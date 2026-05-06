@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -260,6 +261,20 @@ func (o *orchestrator) ometaFromState(rstate *backend.WorkflowRuntimeState, star
 }
 
 // This method purges all the completed activity data from a workflow associated with the given actorID
+// getWorkflowMetadata returns the marshalled WorkflowMetadata for this
+// instance. Used by the cross-app GetWorkflowMetadataMethod handler so that
+// foreign daprd instances can read state via actor invocation.
+func (o *orchestrator) getWorkflowMetadata(ctx context.Context) ([]byte, error) {
+	_, ometa, err := o.loadInternalState(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if ometa == nil {
+		return nil, api.ErrInstanceNotFound
+	}
+	return proto.Marshal(ometa)
+}
+
 func (o *orchestrator) purgeWorkflowState(ctx context.Context, meta map[string]*internalsv1pb.ListStringValue) error {
 	defer o.deactivate(o)
 

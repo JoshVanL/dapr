@@ -34,9 +34,11 @@ func (a *activity) checkAccessPolicy(method string, data []byte, md map[string]*
 		return nil
 	}
 
-	// Self-calls are exempt: the policy is a cross-app gate.
+	// Self-calls are exempt: the policy is a cross-app gate. Same-app from
+	// a different namespace does not count as self.
 	callerAppID := workflowacl.CallerAppID(md)
-	if callerAppID == a.appID {
+	callerNamespace := workflowacl.CallerNamespace(md)
+	if callerAppID == a.appID && callerNamespace == a.actorTypeBuilder.Namespace() {
 		return nil
 	}
 
@@ -60,7 +62,7 @@ func (a *activity) checkAccessPolicy(method string, data []byte, md map[string]*
 		return status.Errorf(codes.PermissionDenied, "%s: caller identity missing on activity '%s' schedule", workflowACLDeniedMsg, name)
 	}
 
-	if !policies.Evaluate(callerAppID, workflowacl.OperationTypeActivity, wfaclapi.WorkflowOperationSchedule, name) {
+	if !policies.Evaluate(callerAppID, callerNamespace, workflowacl.OperationTypeActivity, wfaclapi.WorkflowOperationSchedule, name) {
 		log.Warnf("Activity actor '%s': workflow access policy denied app '%s' on activity '%s'", a.actorID, callerAppID, name)
 		diag.DefaultMonitoring.WorkflowACLActionDenied(callerAppID, string(workflowacl.OperationTypeActivity), string(wfaclapi.WorkflowOperationSchedule))
 		return status.Errorf(codes.PermissionDenied, "%s: app '%s' schedule on activity '%s'", workflowACLDeniedMsg, callerAppID, name)

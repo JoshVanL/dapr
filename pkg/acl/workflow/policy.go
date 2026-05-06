@@ -32,8 +32,15 @@ type CompiledPolicies struct {
 }
 
 type compiledRule struct {
-	callerAppIDs map[string]struct{}
-	operations   []compiledOp
+	// callers is a set of "{appID}/{namespace}" tuples that this rule
+	// matches. A rule with an empty Namespace at compile time is normalised
+	// to the policy's own namespace.
+	callers    map[string]struct{}
+	operations []compiledOp
+}
+
+func callerKey(appID, namespace string) string {
+	return appID + "/" + namespace
 }
 
 type compiledOp struct {
@@ -58,10 +65,14 @@ func Compile(policies []wfaclapi.WorkflowAccessPolicy) *CompiledPolicies {
 			}
 
 			cr := compiledRule{
-				callerAppIDs: make(map[string]struct{}, len(rule.Callers)),
+				callers: make(map[string]struct{}, len(rule.Callers)),
 			}
 			for _, caller := range rule.Callers {
-				cr.callerAppIDs[caller.AppID] = struct{}{}
+				ns := policy.Namespace
+				if caller.Namespace != nil {
+					ns = *caller.Namespace
+				}
+				cr.callers[callerKey(caller.AppID, ns)] = struct{}{}
 			}
 
 			for _, wf := range rule.Workflows {
@@ -107,16 +118,19 @@ func Compile(policies []wfaclapi.WorkflowAccessPolicy) *CompiledPolicies {
 
 // Evaluate returns true if any rule grants the caller access to perform the
 // operation on opName. A nil *CompiledPolicies means no policies are loaded
-// and all calls are allowed.
-func (cp *CompiledPolicies) Evaluate(callerAppID string, opType OperationType, operation wfaclapi.WorkflowOperation, opName string) bool {
+// and all calls are allowed. callerNamespace must be the SPIFFE-asserted
+// namespace of the caller; it is matched against rule callers compiled with
+// the policy's own namespace by default.
+func (cp *CompiledPolicies) Evaluate(callerAppID, callerNamespace string, opType OperationType, operation wfaclapi.WorkflowOperation, opName string) bool {
 	if cp == nil {
 		return true
 	}
 
+	key := callerKey(callerAppID, callerNamespace)
 	for i := range cp.rules {
 		rule := &cp.rules[i]
 
-		if _, ok := rule.callerAppIDs[callerAppID]; !ok {
+		if _, ok := rule.callers[key]; !ok {
 			continue
 		}
 

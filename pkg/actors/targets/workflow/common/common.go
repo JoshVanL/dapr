@@ -30,3 +30,15 @@ func (a *ActorTypeBuilder) Workflow(appID string) string {
 func (a *ActorTypeBuilder) Activity(appID string) string {
 	return "dapr.internal." + a.ns + "." + appID + ".activity"
 }
+
+// XNS returns the cross-namespace bridge actor type for the given app.
+// Instances of this actor own the durable forwarding/receiving reminders
+// that bridge cross-namespace workflow operations via service invocation.
+func (a *ActorTypeBuilder) XNS(appID string) string {
+	return "dapr.internal." + a.ns + "." + appID + ".workflow.xns"
+}
+
+// Namespace returns the namespace this builder was constructed with.
+func (a *ActorTypeBuilder) Namespace() string {
+	return a.ns
+}
