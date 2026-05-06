@@ -70,7 +70,7 @@ func (o *orchestrator) forkWorkflowHistory(ctx context.Context, request []byte) 
 	targetActivityActorType := o.activityActorType
 	if r := rerunReq.GetRouter(); r != nil {
 		if ns := r.GetTargetAppNamespace(); ns != "" && ns != o.actorTypeBuilder.Namespace() {
-			return status.Errorf(codes.InvalidArgument, "cross-namespace rerun must go through the xns bridge")
+			return status.Errorf(codes.InvalidArgument, "cross-namespace rerun is not supported")
 		}
 		if t := r.GetTargetAppID(); t != "" && t != o.appID {
 			targetActorType = o.actorTypeBuilder.Workflow(t)

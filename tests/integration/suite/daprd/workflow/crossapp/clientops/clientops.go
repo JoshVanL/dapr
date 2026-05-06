@@ -18,7 +18,6 @@ limitations under the License.
 package clientops
 
 import (
-	_ "github.com/dapr/dapr/tests/integration/suite/daprd/workflow/crossapp/clientops/crossnamespace"
 	_ "github.com/dapr/dapr/tests/integration/suite/daprd/workflow/crossapp/clientops/get"
 	_ "github.com/dapr/dapr/tests/integration/suite/daprd/workflow/crossapp/clientops/pauseresume"
 	_ "github.com/dapr/dapr/tests/integration/suite/daprd/workflow/crossapp/clientops/purge"

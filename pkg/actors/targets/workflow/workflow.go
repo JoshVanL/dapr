@@ -21,7 +21,6 @@ import (
 	"github.com/dapr/dapr/pkg/actors/targets/workflow/executor"
 	"github.com/dapr/dapr/pkg/actors/targets/workflow/orchestrator"
 	"github.com/dapr/dapr/pkg/actors/targets/workflow/retentioner"
-	"github.com/dapr/dapr/pkg/actors/targets/workflow/xns"
 )
 
 type Options struct {
@@ -29,15 +28,11 @@ type Options struct {
 	Activity     activity.Options
 	Retentioner  retentioner.Options
 	Executor     *executor.Options
-	// XNS hosts the cross-namespace bridge actor. Optional; when nil the
-	// bridge is disabled (cross-namespace ops will fail upstream).
-	XNS *xns.Options
 
 	WorkflowActorType  string
 	ActivityActorType  string
 	RetentionActorType string
 	ExecutorActorType  string
-	XNSActorType       string
 }
 
 func Factories(ctx context.Context, opts Options) ([]table.ActorTypeFactory, error) {
@@ -79,17 +74,6 @@ func Factories(ctx context.Context, opts Options) ([]table.ActorTypeFactory, err
 		factories = append(factories, table.ActorTypeFactory{
 			Factory: executorFactory,
 			Type:    opts.ExecutorActorType,
-		})
-	}
-
-	if opts.XNS != nil {
-		xnsFactory, err := xns.New(ctx, *opts.XNS)
-		if err != nil {
-			return nil, err
-		}
-		factories = append(factories, table.ActorTypeFactory{
-			Factory: xnsFactory,
-			Type:    opts.XNSActorType,
 		})
 	}
 

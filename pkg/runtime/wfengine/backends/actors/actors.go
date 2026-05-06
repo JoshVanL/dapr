@@ -17,8 +17,6 @@ package actors
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -44,7 +42,6 @@ import (
 	"github.com/dapr/dapr/pkg/actors/targets/workflow/executor"
 	"github.com/dapr/dapr/pkg/actors/targets/workflow/orchestrator"
 	"github.com/dapr/dapr/pkg/actors/targets/workflow/retentioner"
-	"github.com/dapr/dapr/pkg/actors/targets/workflow/xns"
 	"github.com/dapr/dapr/pkg/config"
 	diag "github.com/dapr/dapr/pkg/diagnostics"
 	invokev1 "github.com/dapr/dapr/pkg/messaging/v1"
@@ -72,7 +69,6 @@ const (
 	ActivityNameLabelKey    = "activity"
 	ExecutorNameLabelKey    = "executor"
 	RetentionerNameLabelKey = "retentioner"
-	XNSNameLabelKey         = "workflow.xns"
 	ActorTypePrefix         = "dapr.internal."
 )
 
@@ -109,12 +105,11 @@ type Options struct {
 	// May be nil when the WorkflowAccessPolicy feature is disabled.
 	WorkflowAccessPolicies *workflowacl.Holder
 
-	// XNSForwarder performs the outbound service-invocation step of the
-	// cross-namespace bridge. Optional; when nil, cross-namespace ops fail.
-	XNSForwarder xns.Forwarder
-	// XNSReceiver executes a forwarded op locally on the receiving side.
-	// Optional; required for the receiving sidecar to accept inbound forwards.
-	XNSReceiver xns.Receiver
+	// XNSDispatcher performs the sidecar-to-sidecar service-invocation hop
+	// for cross-namespace workflow and activity calls. Plumbed through to
+	// the orchestrator so that orchestration cross-ns hops can issue
+	// dispatch / result RPCs. nil disables outbound cross-namespace ops.
+	XNSDispatcher orchestrator.XNSDispatcher
 }
 
 type Actors struct {
@@ -124,7 +119,6 @@ type Actors struct {
 	activityActorType    string
 	retentionerActorType string
 	executorActorType    string
-	xnsActorType         string
 
 	pendingTasksBackend    PendingTasksBackend
 	resiliency             resiliency.Provider
@@ -139,8 +133,7 @@ type Actors struct {
 	enableClusteredDeployment       bool
 	workflowsRemoteActivityReminder bool
 
-	xnsForwarder xns.Forwarder
-	xnsReceiver  xns.Receiver
+	xnsDispatcher orchestrator.XNSDispatcher
 
 	orchestrationWorkItemChan chan *backend.WorkflowWorkItem
 	activityWorkItemChan      chan *backend.ActivityWorkItem
@@ -166,7 +159,6 @@ func New(opts Options) *Actors {
 		activityActorType:         todo.ActorTypePrefix + opts.Namespace + utils.DotDelimiter + opts.AppID + utils.DotDelimiter + ActivityNameLabelKey,
 		executorActorType:         todo.ActorTypePrefix + opts.Namespace + utils.DotDelimiter + opts.AppID + utils.DotDelimiter + ExecutorNameLabelKey,
 		retentionerActorType:      todo.ActorTypePrefix + opts.Namespace + utils.DotDelimiter + opts.AppID + utils.DotDelimiter + RetentionerNameLabelKey,
-		xnsActorType:              todo.ActorTypePrefix + opts.Namespace + utils.DotDelimiter + opts.AppID + utils.DotDelimiter + XNSNameLabelKey,
 		actors:                    opts.Actors,
 		resiliency:                opts.Resiliency,
 		pendingTasksBackend:       pendingTasksBackend,
@@ -181,17 +173,8 @@ func New(opts Options) *Actors {
 
 		enableClusteredDeployment:       opts.EnableClusteredDeployment,
 		workflowsRemoteActivityReminder: opts.WorkflowsRemoteActivityReminder,
-		xnsForwarder:                    opts.XNSForwarder,
-		xnsReceiver:                     opts.XNSReceiver,
+		xnsDispatcher:                   opts.XNSDispatcher,
 	}
-}
-
-// SetXNSReceiver wires the inbound-side xns Receiver after construction.
-// This avoids a constructor-time circular dependency: the default Receiver
-// (xnsReceiverImpl) needs a *Actors backend, which is what this constructor
-// produces. Call once before RegisterActors.
-func (abe *Actors) SetXNSReceiver(r xns.Receiver) {
-	abe.xnsReceiver = r
 }
 
 func (abe *Actors) RegisterActors(ctx context.Context) error {
@@ -224,6 +207,7 @@ func (abe *Actors) RegisterActors(ctx context.Context) error {
 		},
 		EventSink:        abe.eventSink,
 		ActorTypeBuilder: actorTypeBuilder,
+		XNSDispatcher:    abe.xnsDispatcher,
 	}
 
 	aopts := activity.Options{
@@ -263,18 +247,6 @@ func (abe *Actors) RegisterActors(ctx context.Context) error {
 		ActivityActorType:  abe.activityActorType,
 		RetentionActorType: abe.retentionerActorType,
 		ExecutorActorType:  abe.executorActorType,
-		XNSActorType:       abe.xnsActorType,
-	}
-
-	if abe.xnsForwarder != nil || abe.xnsReceiver != nil {
-		opts.XNS = &xns.Options{
-			AppID:     abe.appID,
-			Namespace: abe.namespace,
-			ActorType: abe.xnsActorType,
-			Actors:    abe.actors,
-			Forwarder: abe.xnsForwarder,
-			Receiver:  abe.xnsReceiver,
-		}
 	}
 
 	if abe.enableClusteredDeployment {
@@ -380,23 +352,10 @@ func (abe *Actors) CreateWorkflowInstance(ctx context.Context, e *backend.Histor
 		return fmt.Errorf("failed to marshal CreateWorkflowInstanceRequest: %w", err)
 	}
 
-	// Cross-namespace schedule rides the xns bridge — placement cannot
-	// reach foreign-namespace actors directly.
-	if r := e.GetRouter(); r != nil {
-		if ns := r.GetTargetAppNamespace(); ns != "" && ns != abe.namespace {
-			target := r.GetTargetAppID()
-			if target == "" {
-				return errors.New("CreateWorkflowInstance: router specifies targetAppNamespace without targetAppID")
-			}
-			if _, fwdErr := abe.xnsOutbound(ctx, internalsv1pb.WorkflowOpKind_WORKFLOW_OP_SCHEDULE, api.InstanceID(workflowInstanceID), target, ns, requestBytes); fwdErr != nil {
-				return fwdErr
-			}
-			return nil
-		}
-	}
-
 	// Choose the target actor type. Same-namespace cross-app rides
-	// existing placement.
+	// existing placement; cross-namespace is bridged at the orchestrator
+	// actor level (see callStateMessage / callChildWorkflows) and so does
+	// not reach this path with a foreign namespace router.
 	targetActorType := abe.workflowActorType
 	if r := e.GetRouter(); r != nil {
 		if t := r.GetTargetAppID(); t != "" && t != abe.appID {
@@ -448,30 +407,13 @@ func (abe *Actors) CreateWorkflowInstance(ctx context.Context, e *backend.Histor
 
 // GetWorkflowMetadata implements backend.Backend. When router targets a
 // foreign app in the same namespace, the call is dispatched to that app's
-// workflow actor. Cross-namespace routing is gated upstream and is not
-// handled here — placement cannot find foreign-namespace actors directly.
+// workflow actor. Cross-namespace metadata reads are not supported via this
+// path — they would require a request/response bridge separate from the
+// orchestration cross-namespace flow.
 func (abe *Actors) GetWorkflowMetadata(ctx context.Context, id api.InstanceID, router *protos.TaskRouter) (*backend.WorkflowMetadata, error) {
 	if router != nil {
 		if ns := router.GetTargetAppNamespace(); ns != "" && ns != abe.namespace {
-			target := router.GetTargetAppID()
-			if target == "" {
-				return nil, errors.New("GetWorkflowMetadata: router specifies targetAppNamespace without targetAppID")
-			}
-			// Cross-namespace metadata reads go through the xns bridge.
-			req := &protos.GetInstanceRequest{InstanceId: string(id), Router: router}
-			payload, err := proto.Marshal(req)
-			if err != nil {
-				return nil, err
-			}
-			resp, err := abe.xnsOutbound(ctx, internalsv1pb.WorkflowOpKind_WORKFLOW_OP_GET, id, target, ns, payload)
-			if err != nil {
-				return nil, err
-			}
-			out := new(backend.WorkflowMetadata)
-			if err := proto.Unmarshal(resp.GetPayload(), out); err != nil {
-				return nil, fmt.Errorf("failed to decode forwarded metadata: %w", err)
-			}
-			return out, nil
+			return nil, fmt.Errorf("cross-namespace GetWorkflowMetadata is not supported")
 		}
 		if target := router.GetTargetAppID(); target != "" && target != abe.appID {
 			return abe.getWorkflowMetadataRemote(ctx, id, target)
@@ -570,23 +512,13 @@ func (abe *Actors) AddNewWorkflowEvent(ctx context.Context, id api.InstanceID, e
 		return err
 	}
 
-	// If the event carries a router with a foreign target namespace, the
-	// event cannot be delivered via local placement (placement is per-ns).
-	// Hand it to the xns bridge actor which will service-invoke the target
-	// namespace's daprd. Otherwise, route by actor type prefix as before.
+	// If the event carries a router targeting a foreign app in the same
+	// namespace (e.g. a recursive ExecutionTerminated for a cross-app
+	// sub-orchestrator), the event must reach the workflow actor in that
+	// other app rather than the local one. Cross-namespace dispatch is
+	// handled at the orchestrator-actor level, not here.
 	actorType := abe.workflowActorType
 	if router := e.GetRouter(); router != nil {
-		if ns := router.GetTargetAppNamespace(); ns != "" && ns != abe.namespace {
-			target := router.GetTargetAppID()
-			if target == "" {
-				return errors.New("AddNewWorkflowEvent: router specifies targetAppNamespace without targetAppID")
-			}
-			op := workflowOpFromHistoryEvent(e)
-			if _, err := abe.xnsOutbound(ctx, op, id, target, ns, data); err != nil {
-				return err
-			}
-			return nil
-		}
 		if target := router.GetTargetAppID(); target != "" && target != abe.appID {
 			actorType = common.NewActorTypeBuilder(abe.namespace).Workflow(target)
 		}
@@ -718,32 +650,7 @@ func (abe *Actors) PurgeWorkflowState(ctx context.Context, id api.InstanceID, ro
 func (abe *Actors) purgeWorkflowState(ctx context.Context, id api.InstanceID, router *protos.TaskRouter, force bool) (int, error) {
 	if router != nil {
 		if ns := router.GetTargetAppNamespace(); ns != "" && ns != abe.namespace {
-			target := router.GetTargetAppID()
-			if target == "" {
-				return 0, errors.New("PurgeWorkflowState: router specifies targetAppNamespace without targetAppID")
-			}
-			// Cross-namespace purge rides the xns bridge.
-			req := &protos.PurgeInstancesRequest{
-				Request:   &protos.PurgeInstancesRequest_InstanceId{InstanceId: string(id)},
-				Recursive: true,
-				Router:    router,
-			}
-			if force {
-				req.Force = &force
-			}
-			payload, err := proto.Marshal(req)
-			if err != nil {
-				return 0, err
-			}
-			resp, err := abe.xnsOutbound(ctx, internalsv1pb.WorkflowOpKind_WORKFLOW_OP_PURGE, id, target, ns, payload)
-			if err != nil {
-				return 0, err
-			}
-			pr := new(protos.PurgeInstancesResponse)
-			if err := proto.Unmarshal(resp.GetPayload(), pr); err != nil {
-				return 0, fmt.Errorf("failed to decode forwarded purge response: %w", err)
-			}
-			return int(pr.GetDeletedInstanceCount()), nil
+			return 0, fmt.Errorf("cross-namespace PurgeWorkflowState is not supported")
 		}
 	}
 
@@ -762,77 +669,6 @@ func (abe *Actors) purgeWorkflowState(ctx context.Context, id api.InstanceID, ro
 	}
 
 	return 1, nil
-}
-
-// xnsOutbound dispatches an op via the local app's xns actor (outbound
-// direction). Used when the Router targets a foreign namespace; placement
-// cannot reach the foreign-namespace actor directly so the bridge takes
-// over.
-//
-// The actorID is forwardID, a deterministic hash of (op, instanceID,
-// targetAppID, targetNS, payload), so retries dedup naturally.
-func (abe *Actors) xnsOutbound(ctx context.Context, op internalsv1pb.WorkflowOpKind, instanceID api.InstanceID, targetAppID, targetNS string, payload []byte) (*internalsv1pb.ForwardOpResponse, error) {
-	forwardID := computeForwardID(op, string(instanceID), targetAppID, targetNS, payload)
-	fwd := &internalsv1pb.ForwardOpRequest{
-		Operation:          op,
-		InstanceId:         string(instanceID),
-		TargetAppId:        targetAppID,
-		TargetAppNamespace: targetNS,
-		Payload:             payload,
-		ForwardId:           forwardID,
-	}
-	body, err := proto.Marshal(fwd)
-	if err != nil {
-		return nil, err
-	}
-	router, err := abe.actors.Router(ctx)
-	if err != nil {
-		return nil, err
-	}
-	req := internalsv1pb.
-		NewInternalInvokeRequest(xns.ScheduleMethod).
-		WithActor(abe.xnsActorType, forwardID).
-		WithData(body).
-		WithContentType(invokev1.ProtobufContentType).
-		WithMetadata(map[string][]string{"direction": {string(xns.DirectionOutbound)}})
-	resp, err := router.Call(ctx, req)
-	if err != nil {
-		if strings.HasSuffix(err.Error(), api.ErrInstanceNotFound.Error()) {
-			return nil, api.ErrInstanceNotFound
-		}
-		return nil, err
-	}
-	out := new(internalsv1pb.ForwardOpResponse)
-	if err := proto.Unmarshal(resp.GetMessage().GetData().GetValue(), out); err != nil {
-		return nil, fmt.Errorf("failed to decode xns response: %w", err)
-	}
-	return out, nil
-}
-
-func computeForwardID(op internalsv1pb.WorkflowOpKind, instanceID, targetAppID, targetNS string, payload []byte) string {
-	h := sha256.New()
-	fmt.Fprintf(h, "%d/%s/%s/%s/", op, instanceID, targetAppID, targetNS)
-	h.Write(payload)
-	return hex.EncodeToString(h.Sum(nil))
-}
-
-// workflowOpFromHistoryEvent maps an event-bearing history event onto the
-// xns operation kind. Used by the AddNewWorkflowEvent → xns bridge.
-func workflowOpFromHistoryEvent(e *backend.HistoryEvent) internalsv1pb.WorkflowOpKind {
-	switch e.GetEventType().(type) {
-	case *protos.HistoryEvent_ExecutionStarted:
-		return internalsv1pb.WorkflowOpKind_WORKFLOW_OP_SCHEDULE
-	case *protos.HistoryEvent_ExecutionTerminated:
-		return internalsv1pb.WorkflowOpKind_WORKFLOW_OP_TERMINATE
-	case *protos.HistoryEvent_EventRaised:
-		return internalsv1pb.WorkflowOpKind_WORKFLOW_OP_RAISE
-	case *protos.HistoryEvent_ExecutionSuspended:
-		return internalsv1pb.WorkflowOpKind_WORKFLOW_OP_PAUSE
-	case *protos.HistoryEvent_ExecutionResumed:
-		return internalsv1pb.WorkflowOpKind_WORKFLOW_OP_RESUME
-	default:
-		return internalsv1pb.WorkflowOpKind_WORKFLOW_OP_UNSPECIFIED
-	}
 }
 
 // purgeWorkflowRemote dispatches a recursive-purge actor invocation to the

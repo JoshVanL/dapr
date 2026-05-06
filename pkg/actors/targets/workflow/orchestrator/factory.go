@@ -68,6 +68,13 @@ type Options struct {
 
 	// May be nil when the feature is disabled.
 	WorkflowAccessPolicies *workflowacl.Holder
+
+	// XNSDispatcher performs the sidecar-to-sidecar service-invocation hop
+	// for cross-namespace workflow and activity calls. When nil, cross-ns
+	// dispatch reminders that fire will error out — callers should only
+	// produce them when the WorkflowAccessPolicy feature is enabled and a
+	// dispatcher is wired.
+	XNSDispatcher XNSDispatcher
 }
 
 type factory struct {
@@ -87,6 +94,7 @@ type factory struct {
 	signer                 *signer.Signer
 	maxRequestBodySize     int
 	workflowAccessPolicies *workflowacl.Holder
+	xnsDispatcher          XNSDispatcher
 
 	scheduler todo.WorkflowScheduler
 
@@ -140,6 +148,7 @@ func New(ctx context.Context, opts Options) (targets.Factory, error) {
 		signer:                 opts.Signer,
 		maxRequestBodySize:     opts.MaxRequestBodySize,
 		workflowAccessPolicies: opts.WorkflowAccessPolicies,
+		xnsDispatcher:          opts.XNSDispatcher,
 		scheduler:              opts.Scheduler,
 		deactivateCh:           deactivateCh,
 	}, nil

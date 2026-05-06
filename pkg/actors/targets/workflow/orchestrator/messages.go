@@ -89,7 +89,21 @@ func (o *orchestrator) callStateMessage(ctx context.Context, m proto.Message, hi
 	}
 	actorType := o.actorType
 
-	if historyEvent != nil && historyEvent.GetRouter() != nil {
+	switch o.classifyRouting(historyEvent.GetRouter()) {
+	case RoutingCrossNS:
+		router := historyEvent.GetRouter()
+		switch msg := m.(type) {
+		case *backend.CreateWorkflowInstanceRequest:
+			return o.dispatchCrossNSCreate(ctx, router, msg, target, b)
+		case *backend.HistoryEvent:
+			switch {
+			case msg.GetChildWorkflowInstanceCompleted() != nil,
+				msg.GetChildWorkflowInstanceFailed() != nil:
+				return o.shipCrossNSResult(ctx, msg, router.GetTargetAppID(), router.GetTargetAppNamespace(), target, b)
+			}
+		}
+
+	case RoutingCrossApp:
 		router := historyEvent.GetRouter()
 		log.Debugf("Cross-app child workflow call: target appID=%s, source appID=%s", router.GetTargetAppID(), router.GetSourceAppID())
 
@@ -100,12 +114,13 @@ func (o *orchestrator) callStateMessage(ctx context.Context, m proto.Message, hi
 			}
 		case *backend.HistoryEvent:
 			var routeAppID string
-			if m.GetChildWorkflowInstanceCompleted() != nil || m.GetChildWorkflowInstanceFailed() != nil {
+			switch {
+			case m.GetChildWorkflowInstanceCompleted() != nil, m.GetChildWorkflowInstanceFailed() != nil:
 				if router.TargetAppID == nil {
 					return errors.New("child workflow completion events should have a target appID")
 				}
 				routeAppID = router.GetTargetAppID()
-			} else {
+			default:
 				routeAppID = router.GetSourceAppID()
 			}
 
@@ -113,6 +128,8 @@ func (o *orchestrator) callStateMessage(ctx context.Context, m proto.Message, hi
 				actorType = o.actorTypeBuilder.Workflow(routeAppID)
 			}
 		}
+
+	case RoutingLocal:
 	}
 
 	log.Debugf("Workflow actor '%s': invoking method '%s' on workflow actor '%s||%s'", o.actorID, method, actorType, target)
