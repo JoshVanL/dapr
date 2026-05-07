@@ -113,6 +113,7 @@ func (o *orchestrator) callActivity(ctx context.Context, e *backend.HistoryEvent
 			activityActorType, targetActorID,
 			todo.ExecuteActivityMethod,
 			invocationData,
+			nil,
 			parentExecID, o.actorID, parentExecID,
 			e.GetEventId(),
 		); xerr != nil {

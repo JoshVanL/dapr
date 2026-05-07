@@ -124,6 +124,14 @@ message CrossNSDispatchRequest {
   // caller-side reminder handler reads it on each fire and synthesizes a
   // child-failure event when exceeded.
   int64 caller_deadline_unix_nano = 8;
+
+  // Optional invocation metadata to stamp onto the inner actor invocation
+  // on the receiving side. Used by methods whose behaviour is gated by
+  // metadata flags rather than the payload (e.g. RecursivePurgeWorkflowState
+  // reads "force" from metadata). Restricted to a small allow-list at the
+  // receiving side to prevent metadata smuggling: only flags the bridge
+  // explicitly supports are forwarded into the local invocation.
+  map<string, ListStringValue> invocation_metadata = 9;
 }
 
 // CrossNSResultRequest carries a completion event back to the parent

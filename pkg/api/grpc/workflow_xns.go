@@ -20,6 +20,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	anypb "google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
 
@@ -32,6 +33,7 @@ import (
 	commonv1pb "github.com/dapr/dapr/pkg/proto/common/v1"
 	internalv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 	"github.com/dapr/dapr/pkg/runtime/wfengine/todo"
+	"github.com/dapr/durabletask-go/backend"
 )
 
 // wfaclapiSchedule is the schedule operation alias used for the result
@@ -39,29 +41,37 @@ import (
 var wfaclapiSchedule = wfaclapi.WorkflowOperationSchedule
 
 // xnsOperationFromMethod returns the WorkflowOperation associated with the
-// inner method dispatched across namespaces.
+// inner method dispatched across namespaces. AddWorkflowEvent's operation is
+// determined by the carried HistoryEvent type (terminate, raise, suspend,
+// resume), so the payload is required to resolve it.
 func xnsOperationFromMethod(method string, payload []byte) (wfaclapi.WorkflowOperation, error) {
 	switch method {
 	case todo.CreateWorkflowInstanceMethod, todo.ExecuteActivityMethod:
 		return wfaclapi.WorkflowOperationSchedule, nil
 	case todo.RecursivePurgeWorkflowStateMethod:
 		return wfaclapi.WorkflowOperationPurge, nil
+	case todo.AddWorkflowEventMethod:
+		var ev backend.HistoryEvent
+		if err := proto.Unmarshal(payload, &ev); err != nil {
+			return "", errors.New("failed to unmarshal AddWorkflowEvent payload: " + err.Error())
+		}
+		return workflowacl.OperationFromHistoryEvent(&ev)
 	default:
 		return "", errors.New("unsupported cross-ns method " + method)
 	}
 }
 
 // xnsOpName extracts the workflow or activity name from the inner payload
-// so policy evaluation can match per-name rules. Recursive purge across
-// namespaces carries only an instanceID, so it falls back to "*" — only
-// wildcard rules can authorise it.
+// so policy evaluation can match per-name rules. Recursive purge and
+// AddWorkflowEvent across namespaces carry only an instanceID, so they fall
+// back to "*"; only wildcard rules can authorise them.
 func xnsOpName(opType workflowacl.OperationType, method string, payload []byte) (string, error) {
 	switch method {
 	case todo.CreateWorkflowInstanceMethod:
 		return workflowacl.WorkflowNameFromCreateRequest(payload)
 	case todo.ExecuteActivityMethod:
 		return workflowacl.ActivityNameFromExecute(method, payload)
-	case todo.RecursivePurgeWorkflowStateMethod:
+	case todo.RecursivePurgeWorkflowStateMethod, todo.AddWorkflowEventMethod:
 		return "*", nil
 	default:
 		return "", errors.New("unsupported cross-ns method " + method)

@@ -22,9 +22,41 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"strconv"
+	"time"
 
 	internalv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 )
+
+const (
+	// RetryInterval is the inter-retry interval for cross-namespace
+	// dispatch and result reminders. Both the orchestrator-side dispatch
+	// and the actors-backend recursive-terminate bridge use this value so
+	// retry behaviour is uniform regardless of which path scheduled the
+	// reminder.
+	RetryInterval = 30 * time.Second
+
+	// MaxRetries bounds how many times the failure policy will retry a
+	// cross-namespace hop before the scheduler stops firing it. With
+	// RetryInterval = 30s, 60 retries is a ~30-minute window.
+	MaxRetries uint32 = 60
+
+	// deadlineHeadroom is how many retry intervals before MaxRetries the
+	// caller-side deadline expires. The dispatch handler uses the deadline
+	// to synthesize a CrossNamespaceDispatchTimeout failure when the
+	// budget is exhausted; the headroom guarantees the synthesizing fire
+	// runs strictly before the scheduler abandons the reminder.
+	deadlineHeadroom uint32 = 2
+)
+
+// CallerDeadline returns the absolute UnixNano instant by which a
+// caller-side dispatch reminder must succeed before being abandoned. The
+// dispatch handler stamps this on the request at create time and re-checks
+// it on every fire; failing it triggers a synthesized failure event so the
+// parent workflow does not hang on a permanently-unreachable peer.
+func CallerDeadline(now time.Time) int64 {
+	budget := RetryInterval * time.Duration(MaxRetries-deadlineHeadroom)
+	return now.Add(budget).UnixNano()
+}
 
 // Hop identifies which leg of a cross-namespace exchange a deterministic
 // key is keyed to. Dispatch = caller → target, Result = target → caller.

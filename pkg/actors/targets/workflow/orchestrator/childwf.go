@@ -107,6 +107,7 @@ func (o *orchestrator) callChildWorkflows(ctx context.Context, startEventName st
 				targetActorType, id,
 				todo.CreateWorkflowInstanceMethod,
 				reqP,
+				nil,
 				parentExecID, id, childExecID,
 				e.GetEventId(),
 			); xerr != nil {

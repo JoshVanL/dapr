@@ -90,7 +90,7 @@ func WorkflowOperationFromMethod(method string, parsedAddEvent *backend.HistoryE
 		if parsedAddEvent == nil {
 			return "", errors.New("AddWorkflowEvent: parsed event is required to derive the operation")
 		}
-		return operationFromHistoryEvent(parsedAddEvent)
+		return OperationFromHistoryEvent(parsedAddEvent)
 
 	case todo.PurgeWorkflowStateMethod:
 		return wfaclapi.WorkflowOperationPurge, nil
@@ -137,7 +137,11 @@ func WorkflowNameFromCreateRequest(data []byte) (string, error) {
 	return es.GetName(), nil
 }
 
-func operationFromHistoryEvent(ev *backend.HistoryEvent) (wfaclapi.WorkflowOperation, error) {
+// OperationFromHistoryEvent maps an AddWorkflowEvent payload's HistoryEvent
+// onto the WorkflowOperation a policy rule must allow. Used by the local
+// access policy check and by the cross-namespace bridge so both reach the
+// same authorization decision for the same payload.
+func OperationFromHistoryEvent(ev *backend.HistoryEvent) (wfaclapi.WorkflowOperation, error) {
 	switch {
 	case ev.GetExecutionTerminated() != nil:
 		return wfaclapi.WorkflowOperationTerminate, nil

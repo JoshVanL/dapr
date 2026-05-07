@@ -26,6 +26,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/cenkalti/backoff/v4"
@@ -39,12 +41,14 @@ import (
 	"github.com/dapr/dapr/pkg/actors/targets/workflow"
 	"github.com/dapr/dapr/pkg/actors/targets/workflow/activity"
 	"github.com/dapr/dapr/pkg/actors/targets/workflow/common"
+	xnscommon "github.com/dapr/dapr/pkg/actors/targets/workflow/common/xns"
 	"github.com/dapr/dapr/pkg/actors/targets/workflow/executor"
 	"github.com/dapr/dapr/pkg/actors/targets/workflow/orchestrator"
 	"github.com/dapr/dapr/pkg/actors/targets/workflow/retentioner"
 	"github.com/dapr/dapr/pkg/config"
 	diag "github.com/dapr/dapr/pkg/diagnostics"
 	invokev1 "github.com/dapr/dapr/pkg/messaging/v1"
+	commonv1pb "github.com/dapr/dapr/pkg/proto/common/v1"
 	internalsv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 	"github.com/dapr/dapr/pkg/resiliency"
 	"github.com/dapr/dapr/pkg/runtime/compstore"
@@ -414,7 +418,7 @@ func (abe *Actors) CreateWorkflowInstance(ctx context.Context, e *backend.Histor
 func (abe *Actors) GetWorkflowMetadata(ctx context.Context, id api.InstanceID, router *protos.TaskRouter) (*backend.WorkflowMetadata, error) {
 	if router != nil {
 		if ns := router.GetTargetAppNamespace(); ns != "" && ns != abe.namespace {
-			return nil, fmt.Errorf("cross-namespace GetWorkflowMetadata is not supported")
+			return nil, errors.New("cross-namespace GetWorkflowMetadata is not supported")
 		}
 		if target := router.GetTargetAppID(); target != "" && target != abe.appID {
 			return abe.getWorkflowMetadataRemote(ctx, id, target)
@@ -516,16 +520,15 @@ func (abe *Actors) AddNewWorkflowEvent(ctx context.Context, id api.InstanceID, e
 	// If the event carries a router targeting a foreign app in the same
 	// namespace (e.g. a recursive ExecutionTerminated for a cross-app
 	// sub-orchestrator), the event must reach the workflow actor in that
-	// other app rather than the local one. Cross-namespace events arrive
-	// here only when the recursive-terminate driver in durabletask-go
-	// posts events at children whose router carries TargetAppNamespace —
-	// the orchestrator-actor scheduling paths route via the bridge
-	// directly. We don't yet have a bridge entry from this layer, so
-	// surface a loud error rather than letting placement silently fail.
+	// other app rather than the local one. Cross-namespace events should
+	// have been routed through BridgeCrossNSChildEvent before reaching this
+	// path; if one slips through (a backend without a configured xns
+	// dispatcher, for example) surface a loud error rather than letting
+	// placement silently fail.
 	actorType := abe.workflowActorType
 	if router := e.GetRouter(); router != nil {
 		if ns := router.GetTargetAppNamespace(); ns != "" && ns != abe.namespace {
-			return fmt.Errorf("AddNewWorkflowEvent: cross-namespace event delivery to '%s/%s' is not supported via this layer (instance %q); the recursive-terminate driver does not yet bridge cross-namespace children",
+			return fmt.Errorf("AddNewWorkflowEvent: cross-namespace event delivery to '%s/%s' for instance %q must go through BridgeCrossNSChildEvent",
 				ns, router.GetTargetAppID(), id)
 		}
 		if target := router.GetTargetAppID(); target != "" && target != abe.appID {
@@ -557,6 +560,105 @@ func (abe *Actors) AddNewWorkflowEvent(ctx context.Context, id api.InstanceID, e
 	// successful request to ADD EVENT, record count and latency metrics.
 	diag.DefaultWorkflowMonitoring.WorkflowOperationEvent(ctx, diag.AddEvent, diag.StatusSuccess, elapsed)
 
+	return nil
+}
+
+// BridgeCrossNSChildEvent implements backend.Backend.
+//
+// Called by durabletask-go's recursive-terminate driver when a parent
+// workflow's ExecutionTerminated needs to be delivered to a child orchestrator
+// living in a different namespace. Same-namespace recursion rides
+// AddNewWorkflowEvent + placement; cross-namespace recursion has to traverse
+// the cross-namespace bridge because placement is namespace-scoped.
+//
+// The implementation creates a durable xns-dispatch reminder on the parent
+// orchestrator actor (the sidecar we already host). When the reminder fires,
+// the existing orchestrator-side handleXNSDispatchReminder performs the
+// service-invocation hop to the target sidecar's CallWorkflowCrossNamespace,
+// which then schedules an xns-exec reminder on the target child actor that
+// drives AddWorkflowEventMethod with the carried ExecutionTerminated event.
+//
+// Deterministic key: includes the parent's executionId and the child's
+// instanceId so retries collapse to the same reminder, and a parent
+// terminate+purge+rerun produces a fresh key.
+func (abe *Actors) BridgeCrossNSChildEvent(ctx context.Context, parentInstanceID api.InstanceID, parentExecutionID string, childInstanceID api.InstanceID, event *backend.HistoryEvent) error {
+	if abe.xnsDispatcher == nil {
+		return fmt.Errorf("BridgeCrossNSChildEvent: cross-namespace dispatcher not configured: %w", backend.ErrCrossNSNotSupported)
+	}
+	r := event.GetRouter()
+	targetNs := r.GetTargetAppNamespace()
+	targetAppID := r.GetTargetAppID()
+	if targetNs == "" || targetAppID == "" {
+		return fmt.Errorf("BridgeCrossNSChildEvent: event for child %q has no cross-ns router", childInstanceID)
+	}
+
+	payload, err := proto.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("BridgeCrossNSChildEvent: marshal event: %w", err)
+	}
+
+	targetActorType := common.NewActorTypeBuilder(abe.namespace).WorkflowNS(targetNs, targetAppID)
+	taskID := event.GetEventId()
+
+	key := xnscommon.DeterministicKey(
+		abe.namespace, abe.appID,
+		string(parentInstanceID), parentExecutionID,
+		string(childInstanceID), "",
+		taskID, xnscommon.HopDispatch,
+	)
+
+	req := &internalsv1pb.CrossNSDispatchRequest{
+		IdempotencyKey: key,
+		TargetAppId:    targetAppID,
+		ActorType:      targetActorType,
+		ActorId:        string(childInstanceID),
+		Method:         todo.AddWorkflowEventMethod,
+		Payload:        payload,
+		Source: &internalsv1pb.CrossNSSource{
+			Namespace:      abe.namespace,
+			AppId:          abe.appID,
+			OrchestratorId: string(parentInstanceID),
+			ExecutionId:    parentExecutionID,
+			TaskId:         taskID,
+		},
+		CallerDeadlineUnixNano: xnscommon.CallerDeadline(time.Now()),
+	}
+
+	data, err := anypb.New(req)
+	if err != nil {
+		return fmt.Errorf("BridgeCrossNSChildEvent: encode reminder payload: %w", err)
+	}
+
+	reminders, err := abe.actors.Reminders(ctx)
+	if err != nil {
+		return fmt.Errorf("BridgeCrossNSChildEvent: reminders client: %w", err)
+	}
+
+	maxRetries := xnscommon.MaxRetries
+	createErr := common.CreateReminderWithRetry(ctx, reminders, &actorsapi.CreateReminderRequest{
+		ActorType: abe.workflowActorType,
+		ActorID:   string(parentInstanceID),
+		Name:      common.ReminderPrefixXNSDispatch + key,
+		Data:      data,
+		DueTime:   time.Now().UTC().Format(time.RFC3339),
+		FailurePolicy: &commonv1pb.JobFailurePolicy{
+			Policy: &commonv1pb.JobFailurePolicy_Constant{
+				Constant: &commonv1pb.JobFailurePolicyConstant{
+					Interval:   durationpb.New(xnscommon.RetryInterval),
+					MaxRetries: &maxRetries,
+				},
+			},
+		},
+	})
+	if createErr != nil {
+		// AlreadyExists means the same hop is already scheduled for delivery,
+		// which is exactly the idempotency guarantee we want.
+		if status.Code(createErr) == codes.AlreadyExists {
+			return nil
+		}
+		return fmt.Errorf("BridgeCrossNSChildEvent: schedule xns-dispatch reminder: %w", createErr)
+	}
+	log.Debugf("Bridged cross-ns child event for parent %q to child %q at %s/%s key=%s", parentInstanceID, childInstanceID, targetNs, targetAppID, key)
 	return nil
 }
 
@@ -659,7 +761,7 @@ func (abe *Actors) PurgeWorkflowState(ctx context.Context, id api.InstanceID, ro
 func (abe *Actors) purgeWorkflowState(ctx context.Context, id api.InstanceID, router *protos.TaskRouter, force bool) (int, error) {
 	if router != nil {
 		if ns := router.GetTargetAppNamespace(); ns != "" && ns != abe.namespace {
-			return 0, fmt.Errorf("cross-namespace PurgeWorkflowState is not supported")
+			return 0, errors.New("cross-namespace PurgeWorkflowState is not supported")
 		}
 	}
 

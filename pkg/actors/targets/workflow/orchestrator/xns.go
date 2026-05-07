@@ -41,17 +41,11 @@ import (
 	"github.com/dapr/durabletask-go/backend"
 )
 
+// Retry budget constants are defined in xnscommon. Local aliases are kept
+// for readability at call sites in this file.
 const (
-	// xnsRetryInterval is the inter-retry interval for cross-namespace
-	// dispatch and result reminders.
-	xnsRetryInterval = 30 * time.Second
-
-	// xnsMaxRetries bounds how many times the failure policy will retry a
-	// cross-namespace hop before giving up. With xnsRetryInterval = 30s,
-	// 60 retries gives a ~30-minute window which tolerates rolling
-	// restarts and transient network blips without indefinitely holding a
-	// reminder against a permanently-unreachable peer.
-	xnsMaxRetries uint32 = 60
+	xnsRetryInterval = xnscommon.RetryInterval
+	xnsMaxRetries    = xnscommon.MaxRetries
 )
 
 // xnsFailurePolicy is the bounded failure policy used by cross-namespace
@@ -154,12 +148,19 @@ func DeterministicXNSKey(sourceNs, sourceAppID, parentOrchID, parentExecID, chil
 // the target sidecar. The reminder name is the deterministic idempotency
 // key so that replays of an identical hop (e.g. after a caller sidecar
 // restart) find the existing reminder and no-op at creation time.
+//
+// invocationMetadata is forwarded onto the inner actor invocation on the
+// receiving side. The receiving handler restricts which keys may flow
+// through to prevent a hostile peer from smuggling arbitrary metadata into
+// a local actor call. Pass nil when the dispatched method does not consume
+// metadata.
 func (o *orchestrator) dispatchCrossNS(
 	ctx context.Context,
 	targetNamespace, targetAppID string,
 	targetActorType, targetActorID string,
 	method string,
 	innerPayload []byte,
+	invocationMetadata map[string]*internalsv1pb.ListStringValue,
 	parentExecID, childInstanceID, childExecID string,
 	taskID int32,
 ) error {
@@ -187,7 +188,8 @@ func (o *orchestrator) dispatchCrossNS(
 		// Stamp the deadline so the reminder handler can detect a budget
 		// exhaustion and synthesize a child-failure event rather than
 		// silently dropping the dispatch when the scheduler stops firing.
-		CallerDeadlineUnixNano: time.Now().Add(xnsRetryInterval * time.Duration(xnsMaxRetries)).UnixNano(),
+		CallerDeadlineUnixNano: xnscommon.CallerDeadline(time.Now()),
+		InvocationMetadata:     invocationMetadata,
 	}
 
 	reminderName := common.ReminderPrefixXNSDispatch + key
@@ -223,7 +225,7 @@ func (o *orchestrator) handleXNSDispatchReminder(ctx context.Context, reminder *
 	// workflow doesn't hang waiting on a dispatch that will never
 	// succeed. The reminder is then deleted and the budget exhaustion
 	// metric is emitted.
-	if dl := req.GetCallerDeadlineUnixNano(); dl > 0 && time.Now().UnixNano() > dl {
+	if dl := req.GetCallerDeadlineUnixNano(); dl > 0 && time.Now().UnixNano() >= dl {
 		log.Warnf("Workflow actor '%s': cross-ns dispatch reminder '%s' exceeded retry budget; synthesizing failure", o.actorID, reminder.Name)
 		diag.DefaultWorkflowMonitoring.WorkflowOperationEvent(ctx, diag.XNSDispatch, diag.StatusFailed, 0)
 		if ferr := o.failXNSDispatch(ctx, &req, "CrossNamespaceDispatchTimeout"); ferr != nil {
@@ -410,10 +412,28 @@ func (o *orchestrator) handleXNSExecReminder(ctx context.Context, reminder *acto
 		WithData(req.GetPayload()).
 		WithContentType(invokev1.ProtobufContentType)
 
+	// Forward only the keys the bridge explicitly supports. A peer that
+	// stuffs arbitrary metadata into the dispatch request must not be able
+	// to influence local actor invocation behaviour beyond the well-known
+	// flags this bridge already documents (e.g. RecursivePurge's force).
+	if filtered := filterXNSInvocationMetadata(req.GetMethod(), req.GetInvocationMetadata()); len(filtered) > 0 {
+		invocation.Metadata = filtered
+	}
+
+	// Stamp the cross-ns caller's identity on the local invocation so the
+	// per-method access policy check inside handleInvoke evaluates against
+	// the actual caller (carried on req.Source) rather than seeing an empty
+	// identity. The Source itself was authenticated via SPIFFE on the
+	// CallWorkflowCrossNamespace ingress. Set after metadata so identity
+	// stamping is the last writer and cannot be overridden.
+	if src := req.GetSource(); src != nil {
+		workflowacl.SetCallerIdentity(invocation, src.GetAppId(), src.GetNamespace())
+	}
+
 	// The xns-exec reminder fires on the same actor we need to deliver the
 	// dispatched method to (the target child workflow/activity). Routing
-	// through the local router would re-enter this actor's lock — which
-	// we already hold via InvokeReminder — and deadlock. Invoke the handler
+	// through the local router would re-enter this actor's lock, which we
+	// already hold via InvokeReminder, and deadlock. Invoke the handler
 	// directly instead. Security is enforced at two points: ingress
 	// (CallWorkflowCrossNamespace) and again above at fire time, both
 	// against the SPIFFE-stamped caller identity carried on req.Source.
@@ -447,7 +467,7 @@ func (o *orchestrator) xnsExecPolicyDenied(req *internalsv1pb.CrossNSDispatchReq
 	if !ok {
 		return true, nil
 	}
-	op, err := xnsExecOperation(req.GetMethod())
+	op, err := xnsExecOperation(req.GetMethod(), req.GetPayload())
 	if err != nil {
 		return true, err
 	}
@@ -459,15 +479,55 @@ func (o *orchestrator) xnsExecPolicyDenied(req *internalsv1pb.CrossNSDispatchReq
 	return !allowed, nil
 }
 
+// xnsInvocationMetadataAllowList enumerates, per cross-namespace method,
+// the metadata keys the bridge will forward onto the local actor
+// invocation. Anything not listed here is dropped on the receiving side.
+// Adding a new key is a deliberate authorization decision: the receiving
+// app accepts the flag's effect on every dispatch from a permitted peer.
+var xnsInvocationMetadataAllowList = map[string]map[string]struct{}{
+	todo.RecursivePurgeWorkflowStateMethod: {
+		todo.MetadataPurgeForce: {},
+	},
+}
+
+// filterXNSInvocationMetadata returns a copy of md restricted to the keys
+// the bridge has authorized for method. Returns nil when there is nothing
+// to forward, so callers can leave the invocation's Metadata field unset.
+func filterXNSInvocationMetadata(method string, md map[string]*internalsv1pb.ListStringValue) map[string]*internalsv1pb.ListStringValue {
+	allowed, ok := xnsInvocationMetadataAllowList[method]
+	if !ok || len(md) == 0 {
+		return nil
+	}
+	out := make(map[string]*internalsv1pb.ListStringValue, len(allowed))
+	for k, v := range md {
+		if _, permitted := allowed[k]; !permitted {
+			continue
+		}
+		out[k] = v
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // xnsExecOperation maps the inner method dispatched cross-namespace onto the
 // WorkflowOperation used by the policy. Mirrors the ingress-side logic in
 // pkg/api/grpc/workflow_xns.go so the two checkpoints behave identically.
-func xnsExecOperation(method string) (wfaclapi.WorkflowOperation, error) {
+// AddWorkflowEvent's operation depends on the carried HistoryEvent type, so
+// the payload is required to resolve it.
+func xnsExecOperation(method string, payload []byte) (wfaclapi.WorkflowOperation, error) {
 	switch method {
 	case todo.CreateWorkflowInstanceMethod, todo.ExecuteActivityMethod:
 		return wfaclapi.WorkflowOperationSchedule, nil
 	case todo.RecursivePurgeWorkflowStateMethod:
 		return wfaclapi.WorkflowOperationPurge, nil
+	case todo.AddWorkflowEventMethod:
+		var ev backend.HistoryEvent
+		if err := proto.Unmarshal(payload, &ev); err != nil {
+			return "", fmt.Errorf("failed to unmarshal AddWorkflowEvent payload: %w", err)
+		}
+		return workflowacl.OperationFromHistoryEvent(&ev)
 	default:
 		return "", fmt.Errorf("unsupported cross-ns method %q", method)
 	}
@@ -475,16 +535,16 @@ func xnsExecOperation(method string) (wfaclapi.WorkflowOperation, error) {
 
 // xnsExecOpName extracts the workflow or activity name from the dispatched
 // payload so the policy can match per-name rules at exec time. Recursive
-// purge has only an instanceID at this layer (the workflow name lives in
-// the local state, which we deliberately do not load at policy-check
-// time); it falls back to "*" so only wildcard rules apply.
+// purge and AddWorkflowEvent only carry an instanceID at this layer (the
+// workflow name lives in the local state, which we deliberately do not load
+// at policy-check time); they fall back to "*" so only wildcard rules apply.
 func xnsExecOpName(opType workflowacl.OperationType, method string, payload []byte) (string, error) {
 	switch method {
 	case todo.CreateWorkflowInstanceMethod:
 		return workflowacl.WorkflowNameFromCreateRequest(payload)
 	case todo.ExecuteActivityMethod:
 		return workflowacl.ActivityNameFromExecute(method, payload)
-	case todo.RecursivePurgeWorkflowStateMethod:
+	case todo.RecursivePurgeWorkflowStateMethod, todo.AddWorkflowEventMethod:
 		return "*", nil
 	default:
 		return "", fmt.Errorf("unsupported cross-ns method %q", method)
@@ -590,6 +650,7 @@ func (o *orchestrator) dispatchCrossNSCreate(ctx context.Context, router *protos
 		targetActorType, childInstanceID,
 		todo.CreateWorkflowInstanceMethod,
 		marshaledReq,
+		nil,
 		parentExec, childInstanceID, childExec,
 		taskID,
 	)

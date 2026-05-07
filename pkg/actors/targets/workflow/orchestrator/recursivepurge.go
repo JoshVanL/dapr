@@ -75,22 +75,27 @@ func (o *orchestrator) recursivePurgeWorkflowState(ctx context.Context, meta map
 
 	for _, child := range collectChildren(state.History) {
 		// Cross-namespace child: dispatch the recursive purge through the
-		// bridge. The dispatch is fire-and-forget — the parent's purge
+		// bridge. The dispatch is fire-and-forget: the parent's purge
 		// returns its own deletion count but cannot include the child's
 		// (the count would only be known after the receiving side
-		// completes the purge asynchronously). force=true is also not
-		// propagated (no metadata field on the dispatch request); the
-		// child purge runs with force=false. These trade-offs are
-		// acceptable for the common case (terminal-state recursive
-		// cleanup) and documented for operators.
+		// completes the purge asynchronously). force is propagated via
+		// invocation metadata so a forced parent purge cascades into a
+		// forced child purge across the namespace boundary.
 		if child.targetAppNamespace != "" && child.targetAppNamespace != o.actorTypeBuilder.Namespace() {
 			targetActorType := o.actorTypeBuilder.WorkflowNS(child.targetAppNamespace, child.targetAppID)
+			var meta map[string]*internalsv1pb.ListStringValue
+			if force {
+				meta = map[string]*internalsv1pb.ListStringValue{
+					todo.MetadataPurgeForce: {Values: []string{"true"}},
+				}
+			}
 			if dErr := o.dispatchCrossNS(ctx,
 				child.targetAppNamespace, child.targetAppID,
 				targetActorType, child.instanceID,
 				todo.RecursivePurgeWorkflowStateMethod,
-				nil, // RecursivePurge takes no body; it reads metadata at the actor
-				parentExecID, child.instanceID, "", // child has no executionId at this layer
+				nil, // RecursivePurge takes no body; it reads metadata at the actor.
+				meta,
+				parentExecID, child.instanceID, "", // child has no executionId at this layer.
 				child.taskID,
 			); dErr != nil {
 				return nil, fmt.Errorf("failed to dispatch cross-namespace recursive purge for child %q in %q: %w", child.instanceID, child.targetAppNamespace, dErr)
