@@ -58,11 +58,10 @@ func TestStartWorkflowAPI(t *testing.T) {
 			expectedError:     messages.ErrInvalidInstanceID.WithFormat("invalid#12"),
 		},
 		{
-			testName:          "Too long instance ID provided in start request",
+			testName:          "Instance ID longer than the historical 64 char limit is accepted in start request",
 			workflowComponent: fakeComponentName,
 			workflowName:      fakeWorkflowName,
 			instanceID:        "this_is_a_very_long_instance_id_that_is_longer_than_64_characters_and_therefore_should_not_be_allowed",
-			expectedError:     messages.ErrInstanceIDTooLong.WithFormat(64),
 		},
 		{
 			testName:          "No instance ID provided in start request",

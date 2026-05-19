@@ -344,14 +344,12 @@ func (a *Universal) validateInstanceID(instanceID string, isCreate bool) error {
 	}
 
 	if isCreate {
-		// Limit the length of the instance ID to avoid potential conflicts with state stores that have restrictive key limits.
-		const maxInstanceIDLength = 64
-		if len(instanceID) > maxInstanceIDLength {
-			return messages.ErrInstanceIDTooLong.WithFormat(maxInstanceIDLength)
-		}
-
-		// Check to see if the instance ID contains invalid characters. Valid characters are letters, digits, dashes, and underscores.
-		// See https://github.com/dapr/dapr/issues/6156 for more context on why we check this.
+		// Reject characters that the scheduler's reminder job-name validation
+		// (RFC 1123 subdomain) cannot tolerate. The check is broader than RFC
+		// 1123 by design - long-standing usage permits uppercase letters and
+		// underscores, and tightening this further would be a breaking change.
+		// See https://github.com/dapr/dapr/issues/6156 for the original Cosmos
+		// DB '#' incident that motivated this guard.
 		for _, c := range instanceID {
 			if !unicode.IsLetter(c) && c != '_' && c != '-' && !unicode.IsDigit(c) {
 				return messages.ErrInvalidInstanceID.WithFormat(instanceID)
