@@ -292,16 +292,33 @@ func (o *orchestrator) runWorkflow(ctx context.Context, reminder *actorapi.Remin
 
 				if len(carryover) > 0 {
 					reminderName := events.EventReminderName(reminderPrefixNewEvent, carryover[0])
-					if err = o.createWorkflowReminder(ctx, reminderName, nil, time.Now(), o.appID, &workflowName); err != nil {
-						// The carryover is already durable in the inbox; a
-						// recoverable error FAILs this reminder invocation, so
-						// the driving reminder refires and the reloaded state
-						// re-runs the new generation normally. The cache is
-						// consistent with the store post-save, so it is not
-						// invalidated.
-						return todo.RunCompletedFalse, wferrors.NewRecoverable(err)
+					if o.localWakeFastPath {
+						// Fast path: janitor + local drive instead of the
+						// durable per-event reminder (falling back to it if
+						// the janitor cannot be ensured). The subsequent
+						// recoverable ErrExecutionAborted return also
+						// propagates to the wake goroutine driving THIS
+						// turn, whose escalation then re-arms a durable
+						// reminder for the original event; that re-arm is
+						// redundant with this drive but idempotent and
+						// self-cleaning (empty-inbox ack).
+						if jerr := o.ensureJanitor(ctx, state); jerr != nil {
+							if err = o.createWorkflowReminder(ctx, reminderName, nil, time.Now(), o.appID, &workflowName); err != nil {
+								return todo.RunCompletedFalse, wferrors.NewRecoverable(err)
+							}
+						}
+						o.localDrive(reminderName, time.Now(), workflowName)
+					} else {
+						if err = o.createWorkflowReminder(ctx, reminderName, nil, time.Now(), o.appID, &workflowName); err != nil {
+							// The carryover is already durable in the inbox; a
+							// recoverable error FAILs this reminder invocation, so
+							// the driving reminder refires and the reloaded state
+							// re-runs the new generation normally. The cache is
+							// consistent with the store post-save, so it is not
+							// invalidated.
+							return todo.RunCompletedFalse, wferrors.NewRecoverable(err)
+						}
 					}
-					o.maybeLocalWake(reminderName, time.Now())
 				}
 			} else {
 				o.rstate = rstateSnapshot
@@ -505,6 +522,12 @@ func (o *orchestrator) runWorkflow(ctx context.Context, reminder *actorapi.Remin
 			if err = o.deleteAllReminders(ctx); err != nil {
 				return todo.RunCompletedFalse, err
 			}
+		} else if o.janitorAsserted.Load() {
+			// The repeating janitor does not self-clean on ack like the
+			// one-shot reminders; remove it explicitly. Best-effort: a
+			// missed delete self-deletes on its next fire against the
+			// terminal state, and purge sweeps it on any binary version.
+			o.deleteJanitor(ctx)
 		}
 		return todo.RunCompletedTrue, nil
 	}

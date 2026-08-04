@@ -19,8 +19,12 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"os"
+	"sync"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	grpcstatus "google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -107,8 +111,121 @@ func (o *orchestrator) assertStartReminder(ctx context.Context, startEvent *back
 		return err
 	}
 
-	o.maybeLocalWake(reminderName, start)
+	o.localDrive(reminderName, start, workflowName)
 	return nil
+}
+
+// janitorReminderName is the per-instance repeating backstop reminder for the
+// local-drive fast path. The "new-event" prefix is deliberate: old daprd
+// binaries prefix-route any new-event* reminder to runWorkflowFromReminder,
+// so a janitor firing against an instance owned by an older host still
+// drives any pending inbox (mixed-version safety). It cannot collide with a
+// real event reminder: those are always new-event-<code>-<id> with fixed
+// short codes, never "janitor".
+const janitorReminderName = "new-event-janitor"
+
+// defaultJanitorPeriod is the janitor's repeat interval. It bounds the
+// worst-case recovery latency for an inbox row whose local drive AND
+// escalation were both lost (e.g. whole-process crash after the arming RPC
+// was acked).
+const defaultJanitorPeriod = 20 * time.Second
+
+// janitorPeriod resolves the janitor repeat interval once per process. The
+// DAPR_WORKFLOW_JANITOR_PERIOD environment variable override exists for
+// integration tests that exercise janitor-driven recovery without waiting
+// the production interval; it is not a supported production knob.
+var janitorPeriod = sync.OnceValue(func() time.Duration {
+	if v := os.Getenv("DAPR_WORKFLOW_JANITOR_PERIOD"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+		log.Warnf("Ignoring invalid DAPR_WORKFLOW_JANITOR_PERIOD %q", v)
+	}
+	return defaultJanitorPeriod
+})
+
+// driveNewEvent is the single dispatch point for waking the workflow after a
+// durable inbox save. With the WorkflowsLocalWakeFastPath preview off it is
+// exactly today's durable per-event reminder path. With it on, the per-event
+// reminder (and its job upsert + delete commit pair) is elided: the turn is
+// driven locally, backstopped by the per-instance janitor reminder plus
+// on-failure escalation to the durable reminder (see wake.go).
+//
+// Durability first: if the janitor cannot be ensured, fall back to the
+// durable per-event reminder path.
+func (o *orchestrator) driveNewEvent(ctx context.Context, e *backend.HistoryEvent, state *wfenginestate.State) error {
+	if !o.localWakeFastPath {
+		return o.assertNewEventReminder(ctx, e, state)
+	}
+
+	if err := o.ensureJanitor(ctx, state); err != nil {
+		log.Warnf("Workflow actor '%s': failed to ensure janitor reminder, falling back to a durable wake-up reminder: %v", o.actorID, err)
+		return o.assertNewEventReminder(ctx, e, state)
+	}
+
+	dueTime := e.GetTimestamp().AsTime()
+	if len(state.History) > 0 {
+		dueTime = state.History[0].GetTimestamp().AsTime()
+	}
+	wfName := o.getExecutionStartedEvent(state).GetName()
+	o.localDrive(events.EventReminderName(reminderPrefixNewEvent, e), dueTime, wfName)
+	return nil
+}
+
+// ensureJanitor asserts the per-instance janitor reminder once per actor
+// residency. Lazy per-residency (not per-instance-create) assertion means:
+// instances that never take the fast path cost nothing, instances started on
+// an old binary self-heal after migrating to a new one, and the create is
+// idempotent (deterministic name, scheduler overwrite-by-name).
+//
+// The janitor repeats every janitorPeriod with a Drop failure policy: its
+// periodicity IS its retry; a constant-retry policy would add ~1/s scheduler
+// traffic whenever a fire lands behind a long turn. Its fire is a no-op
+// (without deactivating) when the inbox is empty, drives a turn when inbox
+// rows are pending, and self-deletes against terminal or purged instances
+// (see runJanitor). It is deleted at the terminal turn and reaped by purge's
+// DeleteByActorID on any binary version.
+func (o *orchestrator) ensureJanitor(ctx context.Context, state *wfenginestate.State) error {
+	if o.janitorAsserted.Load() {
+		return nil
+	}
+
+	wfName := o.getExecutionStartedEvent(state).GetName()
+	err := common.CreateReminderWithRetry(ctx, o.reminders, &actorapi.CreateReminderRequest{
+		ActorType: o.actorTypeBuilder.Workflow(o.appID),
+		ActorID:   o.actorID,
+		Name:      janitorReminderName,
+		DueTime:   time.Now().Add(janitorPeriod()).UTC().Format(time.RFC3339Nano),
+		Period:    janitorPeriod().String(),
+		FailurePolicy: &commonv1pb.JobFailurePolicy{
+			Policy: &commonv1pb.JobFailurePolicy_Drop{
+				Drop: new(commonv1pb.JobFailurePolicyDrop),
+			},
+		},
+		ConcurrencyKey: &wfName,
+	})
+	if err != nil {
+		return err
+	}
+
+	o.janitorAsserted.Store(true)
+	return nil
+}
+
+// deleteJanitor removes the janitor reminder. NotFound is tolerated: the
+// janitor may never have been asserted (fast path never taken this
+// residency), or an older binary may already have swept it via
+// DeleteByActorID.
+func (o *orchestrator) deleteJanitor(ctx context.Context) {
+	if err := o.reminders.Delete(ctx, &actorapi.DeleteReminderRequest{
+		Name:      janitorReminderName,
+		ActorType: o.actorTypeBuilder.Workflow(o.appID),
+		ActorID:   o.actorID,
+	}); err != nil {
+		if s, ok := grpcstatus.FromError(err); !ok || s.Code() != codes.NotFound {
+			log.Debugf("Workflow actor '%s': failed to delete janitor reminder (it will self-delete on its next fire): %v", o.actorID, err)
+		}
+	}
 }
 
 // assertNewEventReminder creates (or overwrites by name) the deterministic
@@ -131,7 +248,7 @@ func (o *orchestrator) assertNewEventReminder(ctx context.Context, e *backend.Hi
 		return err
 	}
 
-	o.maybeLocalWake(reminderName, dueTime)
+	o.localDrive(reminderName, dueTime, wfName)
 	return nil
 }
 

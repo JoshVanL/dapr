@@ -67,8 +67,8 @@ func (o *orchestrator) addWorkflowEvent(ctx context.Context, e *backend.HistoryE
 	// firing twice during pod migration) would pin the workflow in a replay/spin
 	// loop.
 	if dedup.IsDuplicateCompletion(e, state.History, state.Inbox) {
-		log.Debugf("Workflow actor '%s': dropping duplicate completion event already present in history/inbox; re-asserting wake-up reminder so the inbox row is not stranded", o.actorID)
-		return o.assertNewEventReminder(ctx, e, state)
+		log.Debugf("Workflow actor '%s': dropping duplicate completion event already present in history/inbox; re-driving the wake-up so the inbox row is not stranded", o.actorID)
+		return o.driveNewEvent(ctx, e, state)
 	}
 
 	// Drop redelivered external events the same way: a RaiseEvent re-sent to
@@ -81,8 +81,8 @@ func (o *orchestrator) addWorkflowEvent(ctx context.Context, e *backend.HistoryE
 	// (Actors.uniqueEventTimestamp), so they fall through to be appended
 	// normally even when raced onto the same wall-clock nanosecond.
 	if dedup.IsDuplicateExternalEvent(e, state.History, state.Inbox) {
-		log.Debugf("Workflow actor '%s': dropping duplicate external event already present in history/inbox; re-asserting wake-up reminder so the inbox row is not stranded", o.actorID)
-		return o.assertNewEventReminder(ctx, e, state)
+		log.Debugf("Workflow actor '%s': dropping duplicate external event already present in history/inbox; re-driving the wake-up so the inbox row is not stranded", o.actorID)
+		return o.driveNewEvent(ctx, e, state)
 	}
 
 	if e.GetTaskCompleted() != nil || e.GetTaskFailed() != nil {
@@ -119,7 +119,11 @@ func (o *orchestrator) addWorkflowEvent(ctx context.Context, e *backend.HistoryE
 		}
 	}
 
-	// Save the inbox event BEFORE creating the wake-up reminder. The
+	// Save the inbox event BEFORE arming its wake-up (durable reminder or
+	// local drive; see driveNewEvent). Under the WorkflowsLocalWakeFastPath
+	// preview the recovery chain after this save is: local drive; on drive
+	// failure, escalation to the durable per-event reminder; and behind
+	// both, the per-instance janitor reminder (<= 1 period). The
 	// reminder's dueTime is anchored at the workflow's start timestamp
 	// (state.History[0].Timestamp), which is in the past, so the scheduler
 	// fires it immediately on Create. Under placement rebalance the firing
@@ -149,7 +153,7 @@ func (o *orchestrator) addWorkflowEvent(ctx context.Context, e *backend.HistoryE
 		return err
 	}
 
-	if err := o.assertNewEventReminder(ctx, e, state); err != nil {
+	if err := o.driveNewEvent(ctx, e, state); err != nil {
 		return err
 	}
 

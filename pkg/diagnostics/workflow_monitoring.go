@@ -34,14 +34,22 @@ var (
 )
 
 const (
-	StatusSuccess     = "success"
-	StatusFailed      = "failed"
-	StatusTerminated  = "terminated"
-	StatusRecoverable = "recoverable"
-	CreateWorkflow    = "create_workflow"
-	GetWorkflow       = "get_workflow"
-	AddEvent          = "add_event"
-	PurgeWorkflow     = "purge_workflow"
+	StatusSuccess = "success"
+	StatusFailed  = "failed"
+	// Local-wake fast path outcomes beyond success/failed: a failed drive
+	// escalated to a durable reminder (or that escalation itself failed,
+	// leaving the janitor as the net), and a janitor fire that found and
+	// drove a pending inbox (the recovery event; ~0 in healthy steady state).
+	StatusEscalated        = "escalated"
+	StatusEscalateFailed   = "escalate_failed"
+	StatusEscalateSkipped  = "escalate_skipped_shutdown"
+	StatusJanitorRecovered = "janitor_recovered"
+	StatusTerminated       = "terminated"
+	StatusRecoverable      = "recoverable"
+	CreateWorkflow         = "create_workflow"
+	GetWorkflow            = "get_workflow"
+	AddEvent               = "add_event"
+	PurgeWorkflow          = "purge_workflow"
 
 	WorkflowEvent = "event"
 	Timer         = "timer"
@@ -132,6 +140,11 @@ type workflowMetrics struct {
 	// routes; sustained wait_watch indicates broken co-location (e.g.
 	// placement churn or legacy-format reminders).
 	completionRouteCount *stats.Int64Measure
+	// localWakeDriveLatency records the time from a local drive being queued
+	// to its turn invocation returning, under the WorkflowsLocalWakeFastPath
+	// preview feature. Localizes where fixed-rate latency is spent when the
+	// scheduler trigger leg is elided.
+	localWakeDriveLatency *stats.Float64Measure
 	// localWakeCount records workflow wake-up reminders driven locally under
 	// the WorkflowsLocalWakeFastPath preview feature, tagged by status
 	// (success = turn ran locally and backstop deletion was attempted;
@@ -213,6 +226,10 @@ func newWorkflowMetrics() *workflowMetrics {
 			"runtime/workflow/local_wake/count",
 			"The number of workflow wake-up reminders driven locally by the WorkflowsLocalWakeFastPath preview feature, by status.",
 			stats.UnitDimensionless),
+		localWakeDriveLatency: stats.Float64(
+			"runtime/workflow/local_wake/drive_latency",
+			"The latency of locally-driven workflow wake-ups, from queueing the drive to the turn invocation returning.",
+			stats.UnitMilliseconds),
 	}
 }
 
@@ -237,6 +254,7 @@ func (w *workflowMetrics) Init(meter view.Meter, appID, namespace string, latenc
 		diagUtils.NewMeasureView(w.activityExecutionLatency, []tag.Key{appIDKey, namespaceKey, activityNameKey, statusKey}, workflowLatencyDistribution),
 		diagUtils.NewMeasureView(w.workflowExecutionLatency, []tag.Key{appIDKey, namespaceKey, workflowNameKey, statusKey}, workflowLatencyDistribution),
 		diagUtils.NewMeasureView(w.workflowSchedulingLatency, []tag.Key{appIDKey, namespaceKey, workflowNameKey}, latencyDistribution),
+		diagUtils.NewMeasureView(w.localWakeDriveLatency, []tag.Key{appIDKey, namespaceKey, statusKey}, latencyDistribution),
 		diagUtils.NewMeasureView(w.attestationGeneratedCount, []tag.Key{appIDKey, namespaceKey, attestationKindKey, statusKey}, view.Count()),
 		diagUtils.NewMeasureView(w.attestationVerifiedCount, []tag.Key{appIDKey, namespaceKey, attestationKindKey, attestationResultKey}, view.Count()),
 		diagUtils.NewMeasureView(w.attestationVerifyLatency, []tag.Key{appIDKey, namespaceKey, attestationKindKey, attestationResultKey}, latencyDistribution),
@@ -383,6 +401,18 @@ func (w *workflowMetrics) ActivityPayloadSizeRatio(ctx context.Context, workflow
 		stats.WithRecorder(w.meter),
 		stats.WithTags(diagUtils.WithTags(w.activityPayloadSizeRatio.Name(), appIDKey, w.appID, namespaceKey, w.namespace, workflowNameKey, workflowName, activityNameKey, activityName)...),
 		stats.WithMeasurements(w.activityPayloadSizeRatio.M(ratio)))
+}
+
+// WorkflowLocalWakeDrive records the duration of one locally-driven wake
+// (queue to turn-invocation return), by outcome status.
+func (w *workflowMetrics) WorkflowLocalWakeDrive(ctx context.Context, status string, elapsed float64) {
+	if !w.IsEnabled() {
+		return
+	}
+	stats.RecordWithOptions(ctx,
+		stats.WithRecorder(w.meter),
+		stats.WithTags(diagUtils.WithTags(w.localWakeDriveLatency.Name(), appIDKey, w.appID, namespaceKey, w.namespace, statusKey, status)...),
+		stats.WithMeasurements(w.localWakeDriveLatency.M(elapsed)))
 }
 
 // WorkflowLocalWake records a workflow wake-up reminder driven locally under

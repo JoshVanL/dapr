@@ -77,12 +77,15 @@ const (
 	// Preview feature; disabled by default.
 	SchedulerPlacement Feature = "SchedulerPlacement"
 
-	// WorkflowsLocalWakeFastPath eagerly drives freshly-armed workflow
-	// wake-up reminders on the arming host, cutting the scheduler
-	// trigger-delivery leg out of the workflow hot path. The scheduler entry
-	// remains as the crash backstop and is deleted after a successful local
-	// turn, so durability guarantees are unchanged. Preview feature;
-	// disabled by default.
+	// WorkflowsLocalWakeFastPath eagerly drives workflow wake-ups on the
+	// arming host instead of creating a per-event scheduler reminder,
+	// cutting both the scheduler trigger-delivery leg and the reminder job
+	// upsert/delete commit pair out of the workflow hot path. Durability
+	// moves to a per-instance repeating janitor reminder (bounded-latency
+	// crash backstop) plus on-failure escalation to the durable per-event
+	// reminder; delayed starts keep their scheduler due time and the start
+	// reminder remains durable. At-least-once execution is unchanged.
+	// Preview feature; disabled by default.
 	WorkflowsLocalWakeFastPath Feature = "WorkflowsLocalWakeFastPath"
 )
 

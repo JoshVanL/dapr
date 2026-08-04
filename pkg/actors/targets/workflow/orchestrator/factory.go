@@ -112,6 +112,15 @@ type factory struct {
 	wakeCancel        context.CancelFunc
 	wakeWG            sync.WaitGroup
 
+	// rootCtx bounds wake-failure escalation goroutines (see wake.go
+	// escalate): unlike wakeCtx it survives HaltAll, because a reminder
+	// create is host-agnostic and must be able to complete during the
+	// placement churn that cancels wakeCtx. escWG is waited nowhere on the
+	// churn path; the goroutines are rootCtx+timeout bounded.
+	rootCtx context.Context
+	escLock sync.Mutex
+	escWG   sync.WaitGroup
+
 	table sync.Map
 	lock  sync.Mutex
 
@@ -172,6 +181,7 @@ func New(ctx context.Context, opts Options) (targets.Factory, error) {
 		localWakeFastPath:      opts.LocalWakeFastPath,
 		wakeCtx:                wakeCtx,
 		wakeCancel:             wakeCancel,
+		rootCtx:                ctx,
 	}, nil
 }
 
@@ -191,6 +201,9 @@ func (f *factory) initOrchestrator(o any, actorID string) *orchestrator {
 	or.factory = f
 	or.actorID = actorID
 	or.closed.Store(false)
+	or.janitorAsserted.Store(false)
+	or.driveRunning.Store(false)
+	or.driveNotify = make(chan struct{}, 1)
 	or.lock.Init()
 
 	if or.streamFns == nil {

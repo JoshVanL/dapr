@@ -16,6 +16,7 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -51,6 +52,7 @@ type wakeHarness struct {
 
 	callReminderErr error
 	deleteErr       error
+	createErrFor    map[string]error
 	reminderGate    chan struct{} // when non-nil, CallReminder blocks on it (or ctx)
 
 	calls []*actorapi.Reminder
@@ -74,6 +76,9 @@ func newWakeHarness(t *testing.T, instanceID string, fastPath bool) *wakeHarness
 		WithCreate(func(_ context.Context, req *actorapi.CreateReminderRequest) error {
 			h.lock.Lock()
 			defer h.lock.Unlock()
+			if err, ok := h.createErrFor[req.Name]; ok {
+				return err
+			}
 			h.ops = append(h.ops, "create:"+req.Name)
 			return nil
 		}).
@@ -208,11 +213,13 @@ func Test_localWake_firesAfterCreateAndDeletesBackstop(t *testing.T) {
 
 	require.NoError(t, h.orch.addWorkflowEvent(t.Context(), taskCompletedEvent(7)))
 
-	want := []string{"save", "create:new-event-tc-7", "callReminder:new-event-tc-7", "delete:new-event-tc-7"}
+	// v2: the per-event reminder pair is elided entirely. The janitor is the
+	// durable backstop, the turn is driven locally, and nothing is deleted.
+	want := []string{"save", "create:new-event-janitor", "callReminder:new-event-tc-7"}
 	assert.EventuallyWithT(t, func(c *assert.CollectT) {
 		assert.Equal(c, want, h.snapshotOps())
 	}, time.Second*5, time.Millisecond*5,
-		"the local wake must fire strictly after save+create and delete the backstop on success")
+		"the local drive must fire strictly after save+janitor, with no per-event reminder and no delete")
 
 	h.lock.Lock()
 	defer h.lock.Unlock()
@@ -249,11 +256,14 @@ func Test_localWake_startPath(t *testing.T) {
 
 		assert.EventuallyWithT(t, func(c *assert.CollectT) {
 			ops := h.snapshotOps()
-			if assert.Len(c, ops, 4) {
+			// v2 keeps the durable start reminder (delayed starts and
+			// pending-start recovery need it) and no longer deletes it after
+			// a successful local drive: the stale one-shot self-cleans via
+			// its empty-inbox fire + ack.
+			if assert.Len(c, ops, 3) {
 				assert.Equal(c, "save", ops[0])
 				assert.Contains(c, ops[1], "create:start-es-")
 				assert.Contains(c, ops[2], "callReminder:start-es-")
-				assert.Contains(c, ops[3], "delete:start-es-")
 			}
 		}, time.Second*5, time.Millisecond*5)
 	})
@@ -286,9 +296,76 @@ func Test_localWake_callReminderErrorKeepsBackstop(t *testing.T) {
 
 	require.NoError(t, h.orch.addWorkflowEvent(t.Context(), taskCompletedEvent(7)))
 
-	time.Sleep(time.Millisecond * 100)
-	assert.Equal(t, []string{"save", "create:new-event-tc-7"}, h.snapshotOps(),
-		"a failed local wake must never delete the backstop; the scheduler drives the turn")
+	// v2: a failed drive ESCALATES to the durable per-event reminder so
+	// recovery is ~1s via the scheduler instead of a janitor period.
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.Equal(c, []string{"save", "create:new-event-janitor", "create:new-event-tc-7"}, h.snapshotOps())
+	}, time.Second*5, time.Millisecond*5,
+		"a failed local drive must escalate to the durable per-event reminder")
+}
+
+func Test_localWake_janitorOncePerResidency(t *testing.T) {
+	const instanceID = "test-wake-janitor-once"
+
+	h := newWakeHarness(t, instanceID, true)
+	h.primeRunning(t, instanceID, 7)
+	// Second outstanding task so the second completion passes dedup.
+	h.orch.state.AddToHistory(&protos.HistoryEvent{
+		EventId:   8,
+		Timestamp: timestamppb.Now(),
+		EventType: &protos.HistoryEvent_TaskScheduled{
+			TaskScheduled: &protos.TaskScheduledEvent{Name: "act2"},
+		},
+	})
+
+	require.NoError(t, h.orch.addWorkflowEvent(t.Context(), taskCompletedEvent(7)))
+	require.NoError(t, h.orch.addWorkflowEvent(t.Context(), taskCompletedEvent(8)))
+
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		janitors, wakes := 0, 0
+		for _, op := range h.snapshotOps() {
+			if op == "create:new-event-janitor" {
+				janitors++
+			}
+			if strings.HasPrefix(op, "callReminder:") {
+				wakes++
+			}
+		}
+		assert.Equal(c, 1, janitors, "the janitor is asserted once per residency")
+		// Concurrent drives coalesce (a drive drains the whole inbox), so
+		// two rapid events may produce one or two wakes, never zero.
+		assert.GreaterOrEqual(c, wakes, 1, "the events must be driven")
+	}, time.Second*5, time.Millisecond*5)
+}
+
+func Test_localWake_janitorCreateFailureFallsBack(t *testing.T) {
+	const instanceID = "test-wake-janitor-fail"
+
+	h := newWakeHarness(t, instanceID, true)
+	h.createErrFor = map[string]error{janitorReminderName: errors.New("scheduler down")}
+	h.primeRunning(t, instanceID, 7)
+
+	require.NoError(t, h.orch.addWorkflowEvent(t.Context(), taskCompletedEvent(7)))
+
+	// Durability first: without a janitor the durable per-event reminder is
+	// created exactly as with the feature off (and the drive still fires).
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.Equal(c, []string{"save", "create:new-event-tc-7", "callReminder:new-event-tc-7"}, h.snapshotOps())
+	}, time.Second*5, time.Millisecond*5)
+}
+
+func Test_janitor_terminalSelfDeletes(t *testing.T) {
+	const instanceID = "test-janitor-terminal"
+
+	h := newWakeHarness(t, instanceID, true)
+	h.primeRunning(t, instanceID, 7)
+	// Mark the runtime state completed: the janitor fire must self-delete.
+	h.orch.rstate.CompletedEvent = &protos.ExecutionCompletedEvent{
+		WorkflowStatus: protos.OrchestrationStatus_ORCHESTRATION_STATUS_COMPLETED,
+	}
+
+	require.NoError(t, h.orch.runJanitor(t.Context(), &actorapi.Reminder{Name: janitorReminderName}))
+	assert.Contains(t, h.snapshotOps(), "delete:new-event-janitor")
 }
 
 func Test_localWake_deleteNotFoundTolerated(t *testing.T) {
@@ -298,13 +375,10 @@ func Test_localWake_deleteNotFoundTolerated(t *testing.T) {
 	h.deleteErr = status.Error(codes.NotFound, "no such reminder")
 	h.primeRunning(t, instanceID, 7)
 
-	require.NoError(t, h.orch.addWorkflowEvent(t.Context(), taskCompletedEvent(7)))
+	// deleteJanitor must tolerate NotFound (never asserted this residency,
+	// or already swept by an old binary's DeleteByActorID).
+	h.orch.deleteJanitor(t.Context())
 
-	assert.EventuallyWithT(t, func(c *assert.CollectT) {
-		assert.Equal(c, []string{"save", "create:new-event-tc-7", "callReminder:new-event-tc-7"}, h.snapshotOps())
-	}, time.Second*5, time.Millisecond*5)
-
-	// Drain the goroutine to prove the NotFound did not wedge anything.
 	require.NoError(t, h.fact.HaltAll(t.Context()))
 }
 
@@ -329,7 +403,11 @@ func Test_localWake_haltAllDrainsGoroutines(t *testing.T) {
 		t.Fatal("HaltAll did not drain the parked wake goroutine")
 	}
 
-	// The cancelled wake must not have deleted the backstop.
+	// The cancelled wake must not delete anything, and must escalate to the
+	// durable per-event reminder (rootCtx-bounded, survives HaltAll).
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.Contains(c, h.snapshotOps(), "create:new-event-tc-7")
+	}, time.Second*5, time.Millisecond*5)
 	for _, op := range h.snapshotOps() {
 		assert.NotContains(t, op, "delete:")
 	}
@@ -339,4 +417,51 @@ func Test_localWake_haltAllDrainsGoroutines(t *testing.T) {
 	h.fact.wakeLock.Lock()
 	require.NoError(t, h.fact.wakeCtx.Err(), "wake context must be recreated after HaltAll")
 	h.fact.wakeLock.Unlock()
+}
+
+func Test_localWake_driveLoopLosslessUnderConcurrency(t *testing.T) {
+	const instanceID = "test-drive-lossless"
+
+	h := newWakeHarness(t, instanceID, true)
+	h.primeRunning(t, instanceID, 7)
+	// The janitor is asserted by driveNewEvent; here we exercise localDrive
+	// directly, so mark it asserted to keep the op log clean.
+	h.orch.janitorAsserted.Store(true)
+
+	// Hammer the drive from many goroutines. The buffered-1 notify channel
+	// coalesces, but the reclaim handshake must guarantee that after the
+	// LAST post there is always at least one subsequent turn: no post may
+	// be lost to a loop that exited concurrently.
+	var wg sync.WaitGroup
+	for range 50 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 20 {
+				h.orch.localDrive("new-event-tc-7", time.Now().Add(-time.Second), "TestWorkflow")
+			}
+		}()
+	}
+	wg.Wait()
+
+	// After quiescing: at least one wake ran, the loop wound down, and no
+	// notification is stranded in the channel with no loop to consume it.
+	assert.EventuallyWithT(t, func(c *assert.CollectT) {
+		wakes := 0
+		for _, op := range h.snapshotOps() {
+			if strings.HasPrefix(op, "callReminder:") {
+				wakes++
+			}
+		}
+		assert.GreaterOrEqual(c, wakes, 1)
+		if !h.orch.driveRunning.Load() {
+			select {
+			case <-h.orch.driveNotify:
+				c.Errorf("stranded notification with no running drive loop")
+			default:
+			}
+		}
+	}, time.Second*5, time.Millisecond*5)
+
+	require.NoError(t, h.fact.HaltAll(t.Context()))
 }

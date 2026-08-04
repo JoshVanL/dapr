@@ -45,9 +45,19 @@ type orchestrator struct {
 	ometa  *backend.WorkflowMetadata
 
 	activityResultAwaited atomic.Bool
-	lock                  *lock.Stallable
-	closed                atomic.Bool
-	wg                    sync.WaitGroup
+	// janitorAsserted tracks whether the per-instance janitor backstop
+	// reminder was ensured this actor residency (WorkflowsLocalWakeFastPath).
+	janitorAsserted atomic.Bool
+	// Drive-loop state (see wake.go localDrive/driveLoop): driveNotify is a
+	// buffered-1 coalescing notification channel, driveRunning guards the
+	// single loop, driveInfo carries the latest wake identity for the loop
+	// and its escalation.
+	driveNotify  chan struct{}
+	driveRunning atomic.Bool
+	driveInfo    atomic.Pointer[driveInfo]
+	lock         *lock.Stallable
+	closed       atomic.Bool
+	wg           sync.WaitGroup
 
 	streamFns map[int64]*streamFn
 	streamIDx int64
