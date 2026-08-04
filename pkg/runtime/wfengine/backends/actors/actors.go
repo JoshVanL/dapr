@@ -94,6 +94,7 @@ type Options struct {
 	// the workflow app is back online. Strongly recommended to always be enabled
 	// if using the same Dapr version on all daprds.
 	WorkflowsRemoteActivityReminder bool
+	WorkflowsLocalWakeFastPath      bool
 
 	RetentionPolicy *config.WorkflowStateRetentionPolicy
 	Signer          *signer.Signer
@@ -127,6 +128,7 @@ type Actors struct {
 
 	enableClusteredDeployment       bool
 	workflowsRemoteActivityReminder bool
+	workflowsLocalWakeFastPath      bool
 	pendingCompletions              *pending.Pending
 
 	orchestrationWorkItemChan chan *backend.WorkflowWorkItem
@@ -181,6 +183,7 @@ func New(opts Options) (*Actors, error) {
 
 		enableClusteredDeployment:       opts.EnableClusteredDeployment,
 		workflowsRemoteActivityReminder: opts.WorkflowsRemoteActivityReminder,
+		workflowsLocalWakeFastPath:      opts.WorkflowsLocalWakeFastPath,
 		pendingCompletions:              pendingCompletions,
 	}, nil
 }
@@ -204,6 +207,7 @@ func (abe *Actors) RegisterActors(ctx context.Context) error {
 		Signer:                 abe.signer,
 		MaxRequestBodySize:     abe.maxRequestBodySize,
 		WorkflowAccessPolicies: abe.workflowAccessPolicies,
+		LocalWakeFastPath:      abe.workflowsLocalWakeFastPath,
 		Scheduler: func(ctx context.Context, wi *backend.WorkflowWorkItem) error {
 			log.Debugf("%s: scheduling workflow execution with durabletask engine", wi.InstanceID)
 

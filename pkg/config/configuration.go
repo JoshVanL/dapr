@@ -76,6 +76,14 @@ const (
 	// owner host. Requires schedulers running with placement enabled.
 	// Preview feature; disabled by default.
 	SchedulerPlacement Feature = "SchedulerPlacement"
+
+	// WorkflowsLocalWakeFastPath eagerly drives freshly-armed workflow
+	// wake-up reminders on the arming host, cutting the scheduler
+	// trigger-delivery leg out of the workflow hot path. The scheduler entry
+	// remains as the crash backstop and is deleted after a successful local
+	// turn, so durability guarantees are unchanged. Preview feature;
+	// disabled by default.
+	WorkflowsLocalWakeFastPath Feature = "WorkflowsLocalWakeFastPath"
 )
 
 // end feature flags section

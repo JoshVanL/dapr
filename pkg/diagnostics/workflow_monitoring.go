@@ -132,10 +132,15 @@ type workflowMetrics struct {
 	// routes; sustained wait_watch indicates broken co-location (e.g.
 	// placement churn or legacy-format reminders).
 	completionRouteCount *stats.Int64Measure
-	appID                string
-	enabled              bool
-	namespace            string
-	meter                stats.Recorder
+	// localWakeCount records workflow wake-up reminders driven locally under
+	// the WorkflowsLocalWakeFastPath preview feature, tagged by status
+	// (success = turn ran locally and backstop deletion was attempted;
+	// failed = the scheduler backstop drives the turn instead).
+	localWakeCount *stats.Int64Measure
+	appID          string
+	enabled        bool
+	namespace      string
+	meter          stats.Recorder
 }
 
 func newWorkflowMetrics() *workflowMetrics {
@@ -204,6 +209,10 @@ func newWorkflowMetrics() *workflowMetrics {
 			"runtime/workflow/completion/route/count",
 			"The number of pending-task completions routed under clustered deployment, by task type and route.",
 			stats.UnitDimensionless),
+		localWakeCount: stats.Int64(
+			"runtime/workflow/local_wake/count",
+			"The number of workflow wake-up reminders driven locally by the WorkflowsLocalWakeFastPath preview feature, by status.",
+			stats.UnitDimensionless),
 	}
 }
 
@@ -234,7 +243,8 @@ func (w *workflowMetrics) Init(meter view.Meter, appID, namespace string, latenc
 		diagUtils.NewMeasureView(w.attestationCertCacheCount, []tag.Key{appIDKey, namespaceKey, certCacheOutcomeKey}, view.Count()),
 		diagUtils.NewMeasureView(w.workflowPayloadSizeRatio, []tag.Key{appIDKey, namespaceKey, workflowNameKey}, payloadRatioDistribution),
 		diagUtils.NewMeasureView(w.activityPayloadSizeRatio, []tag.Key{appIDKey, namespaceKey, workflowNameKey, activityNameKey}, payloadRatioDistribution),
-		diagUtils.NewMeasureView(w.completionRouteCount, []tag.Key{appIDKey, namespaceKey, taskTypeKey, completionRouteKey}, view.Count()))
+		diagUtils.NewMeasureView(w.completionRouteCount, []tag.Key{appIDKey, namespaceKey, taskTypeKey, completionRouteKey}, view.Count()),
+		diagUtils.NewMeasureView(w.localWakeCount, []tag.Key{appIDKey, namespaceKey, statusKey}, view.Count()))
 }
 
 // WorkflowOperationEvent records total number of Successful/Failed workflow Operations requests. It also records latency for those requests.
@@ -373,6 +383,18 @@ func (w *workflowMetrics) ActivityPayloadSizeRatio(ctx context.Context, workflow
 		stats.WithRecorder(w.meter),
 		stats.WithTags(diagUtils.WithTags(w.activityPayloadSizeRatio.Name(), appIDKey, w.appID, namespaceKey, w.namespace, workflowNameKey, workflowName, activityNameKey, activityName)...),
 		stats.WithMeasurements(w.activityPayloadSizeRatio.M(ratio)))
+}
+
+// WorkflowLocalWake records a workflow wake-up reminder driven locally under
+// the WorkflowsLocalWakeFastPath preview feature, by status.
+func (w *workflowMetrics) WorkflowLocalWake(ctx context.Context, status string) {
+	if !w.IsEnabled() {
+		return
+	}
+	stats.RecordWithOptions(ctx,
+		stats.WithRecorder(w.meter),
+		stats.WithTags(diagUtils.WithTags(w.localWakeCount.Name(), appIDKey, w.appID, namespaceKey, w.namespace, statusKey, status)...),
+		stats.WithMeasurements(w.localWakeCount.M(1)))
 }
 
 // WorkflowCompletionRoute records how a pending-task completion was routed

@@ -83,6 +83,34 @@ func (o *orchestrator) createRetentionReminder(ctx context.Context, name string,
 	})
 }
 
+// assertStartReminder creates (or overwrites by name) the deterministic start
+// wake-up reminder for the ExecutionStarted event. The name is derived from
+// the event's build-time timestamp (start-es-<unixnano>), so retries of the
+// same server-side create collapse onto a single scheduler entry. A CLIENT
+// retry of the same logical create regenerates the event timestamp, so
+// callers re-driving a saved-but-never-run instance MUST pass the SAVED inbox
+// event, not the incoming request's.
+//
+// The Create retry stays bounded (unlike assertNewEventReminder): the client
+// call is blocked while this runs, and a bounded give-up is safe because the
+// pending-start path in createIfCompleted lets any retry of the create
+// re-assert this reminder from the saved event.
+func (o *orchestrator) assertStartReminder(ctx context.Context, startEvent *backend.HistoryEvent) error {
+	start := startEvent.GetTimestamp().AsTime()
+	if ts := startEvent.GetExecutionStarted().GetScheduledStartTimestamp(); ts != nil {
+		start = ts.AsTime()
+	}
+
+	workflowName := startEvent.GetExecutionStarted().GetName()
+	reminderName := events.EventReminderName(reminderPrefixStart, startEvent)
+	if err := o.createWorkflowReminder(ctx, reminderName, nil, start, o.appID, &workflowName); err != nil {
+		return err
+	}
+
+	o.maybeLocalWake(reminderName, start)
+	return nil
+}
+
 // assertNewEventReminder creates (or overwrites by name) the deterministic
 // new-event wake-up reminder for the workflow actor that holds e in its inbox.
 func (o *orchestrator) assertNewEventReminder(ctx context.Context, e *backend.HistoryEvent, state *wfenginestate.State) error {
@@ -99,7 +127,12 @@ func (o *orchestrator) assertNewEventReminder(ctx context.Context, e *backend.Hi
 	// single scheduler entry. This is the workflow-actor-side durability that
 	// external events (RaiseEvent) lack on the sender side, unlike activity
 	// results.
-	return o.createWorkflowReminderForever(ctx, reminderName, nil, dueTime, o.appID, &wfName)
+	if err := o.createWorkflowReminderForever(ctx, reminderName, nil, dueTime, o.appID, &wfName); err != nil {
+		return err
+	}
+
+	o.maybeLocalWake(reminderName, dueTime)
+	return nil
 }
 
 // randomReminderName returns the prefix with a random suffix appended.

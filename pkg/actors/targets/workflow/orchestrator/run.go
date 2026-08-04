@@ -281,17 +281,27 @@ func (o *orchestrator) runWorkflow(ctx context.Context, reminder *actorapi.Remin
 					state.SetIncomingHistory(wi.IncomingHistory)
 				}
 
-				if len(carryover) > 0 {
-					reminderName := events.EventReminderName(reminderPrefixNewEvent, carryover[0])
-					if err = o.createWorkflowReminder(ctx, reminderName, nil, time.Now(), o.appID, &workflowName); err != nil {
-						o.invalidateCachedState()
-						return todo.RunCompletedFalse, err
-					}
-				}
-
+				// Save the carryover BEFORE creating its wake-up reminder,
+				// mirroring AddWorkflowEvent: a reminder created first can
+				// fire remotely against un-saved state, ack SUCCESS and be
+				// deleted, stranding the carryover once the save commits.
 				if err = o.signAndSaveState(ctx, state); err != nil {
 					o.rstate = rstateSnapshot
 					return todo.RunCompletedFalse, err
+				}
+
+				if len(carryover) > 0 {
+					reminderName := events.EventReminderName(reminderPrefixNewEvent, carryover[0])
+					if err = o.createWorkflowReminder(ctx, reminderName, nil, time.Now(), o.appID, &workflowName); err != nil {
+						// The carryover is already durable in the inbox; a
+						// recoverable error FAILs this reminder invocation, so
+						// the driving reminder refires and the reloaded state
+						// re-runs the new generation normally. The cache is
+						// consistent with the store post-save, so it is not
+						// invalidated.
+						return todo.RunCompletedFalse, wferrors.NewRecoverable(err)
+					}
+					o.maybeLocalWake(reminderName, time.Now())
 				}
 			} else {
 				o.rstate = rstateSnapshot

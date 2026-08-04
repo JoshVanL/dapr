@@ -69,6 +69,11 @@ type Options struct {
 
 	// May be nil when the feature is disabled.
 	WorkflowAccessPolicies *workflowacl.Holder
+
+	// LocalWakeFastPath eagerly drives freshly-armed workflow wake-up
+	// reminders on the arming host, using the scheduler entry only as a
+	// crash backstop (WorkflowsLocalWakeFastPath preview feature).
+	LocalWakeFastPath bool
 }
 
 type factory struct {
@@ -93,6 +98,19 @@ type factory struct {
 	scheduler todo.WorkflowScheduler
 
 	deactivateCh chan *orchestrator
+
+	// localWakeFastPath and the wake* fields drive the detached local wake
+	// goroutines (see wake.go). wakeCtx is factory-owned rather than scoped
+	// to the per-stream ctx given to New. HaltAll (which also fires on
+	// placement stream churn, not only shutdown) cancels and drains the
+	// in-flight wakes, then recreates the context for subsequent
+	// activations. wakeLock serializes spawns against that cancel/recreate
+	// cycle so the WaitGroup Add never races the Wait.
+	localWakeFastPath bool
+	wakeLock          sync.Mutex
+	wakeCtx           context.Context
+	wakeCancel        context.CancelFunc
+	wakeWG            sync.WaitGroup
 
 	table sync.Map
 	lock  sync.Mutex
@@ -130,6 +148,8 @@ func New(ctx context.Context, opts Options) (targets.Factory, error) {
 		}
 	}()
 
+	wakeCtx, wakeCancel := context.WithCancel(context.Background())
+
 	return &factory{
 		appID:                  opts.AppID,
 		namespace:              opts.Namespace,
@@ -149,6 +169,9 @@ func New(ctx context.Context, opts Options) (targets.Factory, error) {
 		workflowAccessPolicies: opts.WorkflowAccessPolicies,
 		scheduler:              opts.Scheduler,
 		deactivateCh:           deactivateCh,
+		localWakeFastPath:      opts.LocalWakeFastPath,
+		wakeCtx:                wakeCtx,
+		wakeCancel:             wakeCancel,
 	}, nil
 }
 
@@ -211,6 +234,14 @@ func (f *factory) HaltAll(ctx context.Context) error {
 	f.lock.Lock()
 	defer f.lock.Unlock()
 
+	// Cancel detached local wake goroutines BEFORE deactivating: a wake
+	// goroutine parked on an actor lock is released by the deactivation, and
+	// the cancelled wakeCtx stops it from doing further work. Wait for them
+	// only after the deactivation loop so neither side deadlocks.
+	f.wakeLock.Lock()
+	f.wakeCancel()
+	f.wakeLock.Unlock()
+
 	var wg sync.WaitGroup
 	errs := slice.New[error]()
 
@@ -224,6 +255,14 @@ func (f *factory) HaltAll(ctx context.Context) error {
 	})
 
 	wg.Wait()
+	f.wakeWG.Wait()
+
+	// HaltAll also fires on placement disconnection, after which this
+	// factory keeps serving new activations: recreate the wake context so
+	// the fast path survives the churn.
+	f.wakeLock.Lock()
+	f.wakeCtx, f.wakeCancel = context.WithCancel(context.Background())
+	f.wakeLock.Unlock()
 
 	return errors.Join(errs.Slice()...)
 }
