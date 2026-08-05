@@ -114,10 +114,18 @@ func (o *orchestrator) InvokeReminder(ctx context.Context, reminder *actorapi.Re
 	return o.handleReminder(ctx, reminder)
 }
 
+// lockWaitSampleCounter drives 1-in-16 sampling of the lock_wait histogram:
+// it runs on every orchestrator invocation and the distribution is what
+// matters, not every observation.
+var lockWaitSampleCounter atomic.Uint64
+
 // contextLockMeasured acquires the per-actor turn lock and records the wait
-// as the lock_wait histogram, splitting observed invocation latency into
-// queueing vs turn body.
+// as the lock_wait histogram (sampled 1-in-16), splitting observed
+// invocation latency into queueing vs turn body.
 func (o *orchestrator) contextLockMeasured(ctx context.Context, kind string) (context.CancelFunc, error) {
+	if lockWaitSampleCounter.Add(1)%16 != 0 {
+		return o.lock.ContextLock(ctx)
+	}
 	start := time.Now()
 	unlock, err := o.lock.ContextLock(ctx)
 	elapsed := float64(time.Since(start)) / float64(time.Millisecond)
