@@ -29,6 +29,7 @@ import (
 	diag "github.com/dapr/dapr/pkg/diagnostics"
 	internalsv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 	wfenginestate "github.com/dapr/dapr/pkg/runtime/wfengine/state"
+	"github.com/dapr/dapr/pkg/runtime/wfengine/todo"
 	"github.com/dapr/durabletask-go/backend"
 	"github.com/dapr/kit/logger"
 )
@@ -57,9 +58,14 @@ type orchestrator struct {
 	driveNotify  chan struct{}
 	driveRunning atomic.Bool
 	driveInfo    atomic.Pointer[driveInfo]
-	lock         *lock.Stallable
-	closed       atomic.Bool
-	wg           sync.WaitGroup
+	// foldPending holds sender-retried completions awaiting their folding
+	// turn (WorkflowsCompletionsFold; see fold.go). INVARIANT: only touched
+	// while holding the per-actor turn lock (submit, turn, janitor,
+	// Deactivate all hold it); waiters read their own done channel lock-free.
+	foldPending []*foldEntry
+	lock        *lock.Stallable
+	closed      atomic.Bool
+	wg          sync.WaitGroup
 
 	streamFns map[int64]*streamFn
 	streamIDx int64
@@ -78,6 +84,12 @@ type streamFn struct {
 func (o *orchestrator) InvokeMethod(ctx context.Context, req *internalsv1pb.InternalInvokeRequest) (*internalsv1pb.InternalInvokeResponse, error) {
 	o.wg.Add(1)
 	defer o.wg.Done()
+
+	// The completions fold manages its own lock lifecycle (early release
+	// before waiting on the folding turn's commit; see fold.go).
+	if o.completionsFold && req.GetMessage().GetMethod() == todo.AddWorkflowEventMethod {
+		return o.invokeAddEventFold(ctx, req)
+	}
 
 	unlock, err := o.contextLockMeasured(ctx, "method")
 	if err != nil {
@@ -148,6 +160,7 @@ func (o *orchestrator) Deactivate(ctx context.Context) error {
 	o.table.Delete(o.actorID)
 	o.invalidateCachedState()
 	o.lock.Close()
+	o.foldFlush()
 	for _, stream := range o.streamFns {
 		stream.errCh <- targeterrors.NewClosed("deactivated")
 	}

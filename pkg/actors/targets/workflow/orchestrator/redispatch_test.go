@@ -78,14 +78,14 @@ func Test_unresolvedScheduledTasks(t *testing.T) {
 	t.Run("no scheduled tasks", func(t *testing.T) {
 		state := testState(t)
 		state.AddToHistory(startedEvent())
-		assert.Empty(t, unresolvedScheduledTasks(state))
+		assert.Empty(t, unresolvedScheduledTasks(state, nil))
 	})
 
 	t.Run("pending task is unresolved", func(t *testing.T) {
 		state := testState(t)
 		state.AddToHistory(startedEvent())
 		state.AddToHistory(taskScheduledEvent(1))
-		assert.Equal(t, []int32{1}, ids(unresolvedScheduledTasks(state)))
+		assert.Equal(t, []int32{1}, ids(unresolvedScheduledTasks(state, nil)))
 	})
 
 	t.Run("resolution in history", func(t *testing.T) {
@@ -93,7 +93,7 @@ func Test_unresolvedScheduledTasks(t *testing.T) {
 		state.AddToHistory(startedEvent())
 		state.AddToHistory(taskScheduledEvent(1))
 		state.AddToHistory(taskCompletedEvent(1))
-		assert.Empty(t, unresolvedScheduledTasks(state))
+		assert.Empty(t, unresolvedScheduledTasks(state, nil))
 	})
 
 	t.Run("resolution pending in inbox", func(t *testing.T) {
@@ -101,7 +101,7 @@ func Test_unresolvedScheduledTasks(t *testing.T) {
 		state.AddToHistory(startedEvent())
 		state.AddToHistory(taskScheduledEvent(1))
 		state.AddToInbox(taskCompletedEvent(1))
-		assert.Empty(t, unresolvedScheduledTasks(state))
+		assert.Empty(t, unresolvedScheduledTasks(state, nil))
 	})
 
 	t.Run("failure counts as resolution", func(t *testing.T) {
@@ -109,7 +109,7 @@ func Test_unresolvedScheduledTasks(t *testing.T) {
 		state.AddToHistory(startedEvent())
 		state.AddToHistory(taskScheduledEvent(1))
 		state.AddToHistory(taskFailedEvent(1))
-		assert.Empty(t, unresolvedScheduledTasks(state))
+		assert.Empty(t, unresolvedScheduledTasks(state, nil))
 	})
 
 	t.Run("mixed: only the unresolved task is returned", func(t *testing.T) {
@@ -120,7 +120,7 @@ func Test_unresolvedScheduledTasks(t *testing.T) {
 		state.AddToHistory(taskScheduledEvent(3))
 		state.AddToHistory(taskCompletedEvent(1))
 		state.AddToInbox(taskFailedEvent(3))
-		assert.Equal(t, []int32{2}, ids(unresolvedScheduledTasks(state)))
+		assert.Equal(t, []int32{2}, ids(unresolvedScheduledTasks(state, nil)))
 	})
 
 	t.Run("timers and child workflows are not scheduled tasks", func(t *testing.T) {
@@ -140,7 +140,7 @@ func Test_unresolvedScheduledTasks(t *testing.T) {
 				ChildWorkflowInstanceCreated: &protos.ChildWorkflowInstanceCreatedEvent{Name: "child"},
 			},
 		})
-		assert.Empty(t, unresolvedScheduledTasks(state))
+		assert.Empty(t, unresolvedScheduledTasks(state, nil))
 	})
 
 	t.Run("timer resolution does not resolve a task with the same id", func(t *testing.T) {
@@ -154,6 +154,6 @@ func Test_unresolvedScheduledTasks(t *testing.T) {
 				TimerFired: &protos.TimerFiredEvent{TimerId: 4},
 			},
 		})
-		assert.Equal(t, []int32{4}, ids(unresolvedScheduledTasks(state)))
+		assert.Equal(t, []int32{4}, ids(unresolvedScheduledTasks(state, nil)))
 	})
 }

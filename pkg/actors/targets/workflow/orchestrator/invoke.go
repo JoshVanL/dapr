@@ -190,7 +190,10 @@ func (o *orchestrator) runJanitor(ctx context.Context, reminder *actorapi.Remind
 		// WorkflowsLocalActivityFastPath). Stalled workflows are excluded:
 		// re-dispatching would replay the condition that stalled them.
 		if o.rstate.GetStalled() == nil {
-			if unresolved := unresolvedScheduledTasks(state); len(unresolved) > 0 {
+			// Completions held for folding count as resolutions: their
+			// senders are alive and re-driving, so a re-dispatch would be
+			// redundant.
+			if unresolved := unresolvedScheduledTasks(state, o.foldEvents()); len(unresolved) > 0 {
 				o.redispatchActivities(ctx, state, unresolved)
 			}
 		}

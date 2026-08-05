@@ -100,6 +100,17 @@ const (
 	// At-least-once execution is unchanged. Preview feature; disabled by
 	// default.
 	WorkflowsLocalActivityFastPath Feature = "WorkflowsLocalActivityFastPath"
+
+	// WorkflowsCompletionsFold folds sender-retried completion events
+	// (activity and child-workflow results) straight into the next turn's
+	// single state commit instead of committing them to the durable inbox
+	// first: the completion is held in memory, the turn persists it into
+	// history, and the sender is acked only after that commit, making the
+	// sender's retry the durability. Removes one state commit per activity
+	// round trip. External raised events keep the durable inbox path.
+	// Requires WorkflowsLocalWakeFastPath; ignored otherwise. At-least-once
+	// execution is unchanged. Preview feature; disabled by default.
+	WorkflowsCompletionsFold Feature = "WorkflowsCompletionsFold"
 )
 
 // end feature flags section

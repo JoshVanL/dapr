@@ -89,34 +89,8 @@ func (o *orchestrator) addWorkflowEvent(ctx context.Context, e *backend.HistoryE
 		o.activityResultAwaited.CompareAndSwap(true, false)
 	}
 
-	// Verify any attestation on the incoming event against the signed history
-	// and Sentry trust anchors, then absorb the signer certificate into the
-	// ext-sigcert table and strip the companion cert from the event so the
-	// stored form is cert-free. On any verification failure the workflow is
-	// tombstoned. No-op when signing is disabled. Locally-authored synthetic
-	// failures (policy denials, occupied-ID rejections) are exempt: they have
-	// no attestation by design.
-	if !o.isLocalSyntheticFailure(e) {
-		if verr := o.signing.VerifyInboxAttestation(ctx, state, e); verr != nil {
-			log.Warnf("Workflow actor '%s': attestation verification failed, tombstoning workflow: %s", o.actorID, verr)
-			opts := wfenginestate.Options{
-				AppID:             o.appID,
-				Namespace:         o.namespace,
-				WorkflowActorType: o.actorType,
-				ActivityActorType: o.activityActorType,
-				Signer:            o.signer,
-			}
-			if _, _, terr := o.tombstoneTamperedState(ctx, opts, state, verr); terr != nil {
-				return terr
-			}
-			// Return ErrInstanceNotFound rather than the verification
-			// error so the activity actor on the sender side recognizes
-			// the workflow as gone and stops re-executing the activity.
-			// The reason for tombstoning is preserved in the workflow's
-			// FailureDetails (errorType=DAPR_WORKFLOW_HISTORY_TAMPERED,
-			// errorMessage=verr.Error()) for callers polling metadata.
-			return api.ErrInstanceNotFound
-		}
+	if err := o.verifyAndAbsorbAttestation(ctx, state, e); err != nil {
+		return err
 	}
 
 	// Save the inbox event BEFORE arming its wake-up (durable reminder or
@@ -158,4 +132,36 @@ func (o *orchestrator) addWorkflowEvent(ctx context.Context, e *backend.HistoryE
 	}
 
 	return nil
+}
+
+// verifyAndAbsorbAttestation verifies any attestation on the incoming event
+// against the signed history and Sentry trust anchors, then absorbs the
+// signer certificate into the ext-sigcert table and strips the companion
+// cert from the event so the stored form is cert-free. On any verification
+// failure the workflow is tombstoned and ErrInstanceNotFound is returned so
+// the activity actor on the sender side recognizes the workflow as gone and
+// stops re-executing (the tombstoning reason is preserved in the workflow's
+// FailureDetails). No-op when signing is disabled. Locally-authored
+// synthetic failures (policy denials, occupied-ID rejections) are exempt:
+// they have no attestation by design.
+func (o *orchestrator) verifyAndAbsorbAttestation(ctx context.Context, state *wfenginestate.State, e *backend.HistoryEvent) error {
+	if o.isLocalSyntheticFailure(e) {
+		return nil
+	}
+	verr := o.signing.VerifyInboxAttestation(ctx, state, e)
+	if verr == nil {
+		return nil
+	}
+	log.Warnf("Workflow actor '%s': attestation verification failed, tombstoning workflow: %s", o.actorID, verr)
+	opts := wfenginestate.Options{
+		AppID:             o.appID,
+		Namespace:         o.namespace,
+		WorkflowActorType: o.actorType,
+		ActivityActorType: o.activityActorType,
+		Signer:            o.signer,
+	}
+	if _, _, terr := o.tombstoneTamperedState(ctx, opts, state, verr); terr != nil {
+		return terr
+	}
+	return api.ErrInstanceNotFound
 }

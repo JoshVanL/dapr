@@ -51,12 +51,17 @@ const (
 	StatusJanitorRedispatched     = "janitor_redispatched"
 	StatusJanitorRedispatchBusy   = "janitor_redispatch_busy"
 	StatusJanitorRedispatchFailed = "janitor_redispatch_failed"
-	StatusTerminated              = "terminated"
-	StatusRecoverable             = "recoverable"
-	CreateWorkflow                = "create_workflow"
-	GetWorkflow                   = "get_workflow"
-	AddEvent                      = "add_event"
-	PurgeWorkflow                 = "purge_workflow"
+	// Completions-fold outcomes: a sender-retried completion committed
+	// inside its folding turn (folded), or was nacked back into the
+	// sender's retry chain (turn failure, timeout, deactivation).
+	StatusFolded      = "folded"
+	StatusFoldNacked  = "fold_nacked"
+	StatusTerminated  = "terminated"
+	StatusRecoverable = "recoverable"
+	CreateWorkflow    = "create_workflow"
+	GetWorkflow       = "get_workflow"
+	AddEvent          = "add_event"
+	PurgeWorkflow     = "purge_workflow"
 
 	WorkflowEvent = "event"
 	Timer         = "timer"
@@ -167,6 +172,12 @@ type workflowMetrics struct {
 	// (success/failed drives, escalations to the durable reminder, and
 	// janitor re-dispatch outcomes).
 	localActivityCount *stats.Int64Measure
+	// completionsFoldCount records sender-retried completions handled by the
+	// WorkflowsCompletionsFold preview feature, by outcome.
+	completionsFoldCount *stats.Int64Measure
+	// completionsFoldWait records how long a folding submit waited for its
+	// turn to commit (the sender-visible added latency of the fold).
+	completionsFoldWait *stats.Float64Measure
 	// lockWaitLatency records the time a workflow orchestrator invocation
 	// spends queued on the per-actor turn lock before it starts, tagged by
 	// invocation kind (method/reminder/stream). Splits observed invocation
@@ -260,6 +271,14 @@ func newWorkflowMetrics() *workflowMetrics {
 			"runtime/workflow/local_activity/drive_latency",
 			"The latency of one locally-driven activity execution attempt, including the app call.",
 			stats.UnitMilliseconds),
+		completionsFoldCount: stats.Int64(
+			"runtime/workflow/completions_fold/count",
+			"The number of sender-retried completions handled by the WorkflowsCompletionsFold preview feature, by outcome.",
+			stats.UnitDimensionless),
+		completionsFoldWait: stats.Float64(
+			"runtime/workflow/completions_fold/wait_latency",
+			"The time a folding completion submit waited for its turn to commit.",
+			stats.UnitMilliseconds),
 		lockWaitLatency: stats.Float64(
 			"runtime/workflow/lock_wait",
 			"The time a workflow orchestrator invocation spends queued on the per-actor turn lock, by invocation kind.",
@@ -299,7 +318,9 @@ func (w *workflowMetrics) Init(meter view.Meter, appID, namespace string, latenc
 		diagUtils.NewMeasureView(w.localWakeCount, []tag.Key{appIDKey, namespaceKey, statusKey}, view.Count()),
 		diagUtils.NewMeasureView(w.localActivityCount, []tag.Key{appIDKey, namespaceKey, statusKey}, view.Count()),
 		diagUtils.NewMeasureView(w.localActivityDriveLatency, []tag.Key{appIDKey, namespaceKey, statusKey}, latencyDistribution),
-		diagUtils.NewMeasureView(w.lockWaitLatency, []tag.Key{appIDKey, namespaceKey, operationKey}, latencyDistribution))
+		diagUtils.NewMeasureView(w.lockWaitLatency, []tag.Key{appIDKey, namespaceKey, operationKey}, latencyDistribution),
+		diagUtils.NewMeasureView(w.completionsFoldCount, []tag.Key{appIDKey, namespaceKey, statusKey}, view.Count()),
+		diagUtils.NewMeasureView(w.completionsFoldWait, []tag.Key{appIDKey, namespaceKey}, latencyDistribution))
 }
 
 // WorkflowOperationEvent records total number of Successful/Failed workflow Operations requests. It also records latency for those requests.
@@ -498,6 +519,30 @@ func (w *workflowMetrics) WorkflowLockWait(ctx context.Context, kind string, ela
 		stats.WithRecorder(w.meter),
 		stats.WithTags(diagUtils.WithTags(w.lockWaitLatency.Name(), appIDKey, w.appID, namespaceKey, w.namespace, operationKey, kind)...),
 		stats.WithMeasurements(w.lockWaitLatency.M(elapsed)))
+}
+
+// WorkflowCompletionsFold records a sender-retried completion handled under
+// the WorkflowsCompletionsFold preview feature, by outcome.
+func (w *workflowMetrics) WorkflowCompletionsFold(ctx context.Context, status string) {
+	if !w.IsEnabled() {
+		return
+	}
+	stats.RecordWithOptions(ctx,
+		stats.WithRecorder(w.meter),
+		stats.WithTags(diagUtils.WithTags(w.completionsFoldCount.Name(), appIDKey, w.appID, namespaceKey, w.namespace, statusKey, status)...),
+		stats.WithMeasurements(w.completionsFoldCount.M(1)))
+}
+
+// WorkflowCompletionsFoldWait records the sender-visible wait of one folding
+// completion submit.
+func (w *workflowMetrics) WorkflowCompletionsFoldWait(ctx context.Context, elapsed float64) {
+	if !w.IsEnabled() {
+		return
+	}
+	stats.RecordWithOptions(ctx,
+		stats.WithRecorder(w.meter),
+		stats.WithTags(diagUtils.WithTags(w.completionsFoldWait.Name(), appIDKey, w.appID, namespaceKey, w.namespace)...),
+		stats.WithMeasurements(w.completionsFoldWait.M(elapsed)))
 }
 
 // WorkflowCompletionRoute records how a pending-task completion was routed

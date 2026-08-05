@@ -96,6 +96,7 @@ type Options struct {
 	WorkflowsRemoteActivityReminder bool
 	WorkflowsLocalWakeFastPath      bool
 	WorkflowsLocalActivityFastPath  bool
+	WorkflowsCompletionsFold        bool
 
 	RetentionPolicy *config.WorkflowStateRetentionPolicy
 	Signer          *signer.Signer
@@ -131,6 +132,7 @@ type Actors struct {
 	workflowsRemoteActivityReminder bool
 	workflowsLocalWakeFastPath      bool
 	workflowsLocalActivityFastPath  bool
+	workflowsCompletionsFold        bool
 	pendingCompletions              *pending.Pending
 
 	orchestrationWorkItemChan chan *backend.WorkflowWorkItem
@@ -172,6 +174,14 @@ func New(opts Options) (*Actors, error) {
 		log.Warnf("WorkflowsLocalActivityFastPath is enabled without WorkflowsLocalWakeFastPath; ignoring it (the activity fast path requires the wake fast path's janitor backstop)")
 	}
 
+	// The completions fold drives the folding turn through the wake fast
+	// path's local drive; without it a folded completion would wait on a
+	// durable reminder that fires against an empty inbox and never acks.
+	completionsFold := opts.WorkflowsCompletionsFold && opts.WorkflowsLocalWakeFastPath
+	if opts.WorkflowsCompletionsFold && !opts.WorkflowsLocalWakeFastPath {
+		log.Warnf("WorkflowsCompletionsFold is enabled without WorkflowsLocalWakeFastPath; ignoring it (the fold requires the wake fast path's local drive)")
+	}
+
 	return &Actors{
 		appID:                     opts.AppID,
 		namespace:                 opts.Namespace,
@@ -195,6 +205,7 @@ func New(opts Options) (*Actors, error) {
 		workflowsRemoteActivityReminder: opts.WorkflowsRemoteActivityReminder,
 		workflowsLocalWakeFastPath:      opts.WorkflowsLocalWakeFastPath,
 		workflowsLocalActivityFastPath:  localActivityFastPath,
+		workflowsCompletionsFold:        completionsFold,
 		pendingCompletions:              pendingCompletions,
 	}, nil
 }
@@ -220,6 +231,7 @@ func (abe *Actors) RegisterActors(ctx context.Context) error {
 		WorkflowAccessPolicies: abe.workflowAccessPolicies,
 		LocalWakeFastPath:      abe.workflowsLocalWakeFastPath,
 		LocalActivityFastPath:  abe.workflowsLocalActivityFastPath,
+		CompletionsFold:        abe.workflowsCompletionsFold,
 		Scheduler: func(ctx context.Context, wi *backend.WorkflowWorkItem) error {
 			log.Debugf("%s: scheduling workflow execution with durabletask engine", wi.InstanceID)
 

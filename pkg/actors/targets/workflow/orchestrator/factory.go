@@ -82,6 +82,13 @@ type Options struct {
 	// (WorkflowsLocalActivityFastPath preview feature; requires
 	// LocalWakeFastPath).
 	LocalActivityFastPath bool
+
+	// CompletionsFold holds sender-retried completions in memory and
+	// persists them straight into the folding turn's single state commit,
+	// acking the sender only after that commit
+	// (WorkflowsCompletionsFold preview feature; requires
+	// LocalWakeFastPath).
+	CompletionsFold bool
 }
 
 type factory struct {
@@ -124,6 +131,9 @@ type factory struct {
 	// dispatch side (metadata certification in callActivity) and the janitor
 	// re-dispatch of unresolved scheduled tasks (redispatch.go).
 	localActivityFastPath bool
+
+	// completionsFold gates the in-memory completions fold (fold.go).
+	completionsFold bool
 
 	// rootCtx bounds wake-failure escalation goroutines (see wake.go
 	// escalate): unlike wakeCtx it survives HaltAll, because a reminder
@@ -193,6 +203,7 @@ func New(ctx context.Context, opts Options) (targets.Factory, error) {
 		deactivateCh:           deactivateCh,
 		localWakeFastPath:      opts.LocalWakeFastPath,
 		localActivityFastPath:  opts.LocalActivityFastPath && opts.LocalWakeFastPath,
+		completionsFold:        opts.CompletionsFold && opts.LocalWakeFastPath,
 		wakeCtx:                wakeCtx,
 		wakeCancel:             wakeCancel,
 		rootCtx:                ctx,

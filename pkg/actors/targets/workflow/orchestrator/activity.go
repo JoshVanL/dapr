@@ -185,7 +185,7 @@ func buildActivityActorID(workflowID string, taskID int32) string {
 // run-activity reminder of their own). Timers and child workflows use
 // different event kinds and cannot appear here; ContinueAsNew rewrites
 // history per generation, so stale previous-generation events cannot either.
-func unresolvedScheduledTasks(state *wfenginestate.State) []*backend.HistoryEvent {
+func unresolvedScheduledTasks(state *wfenginestate.State, pending []*backend.HistoryEvent) []*backend.HistoryEvent {
 	resolved := make(map[int32]struct{})
 	collect := func(events []*backend.HistoryEvent) {
 		for _, e := range events {
@@ -196,6 +196,7 @@ func unresolvedScheduledTasks(state *wfenginestate.State) []*backend.HistoryEven
 	}
 	collect(state.History)
 	collect(state.Inbox)
+	collect(pending)
 
 	var unresolved []*backend.HistoryEvent
 	for _, e := range state.History {

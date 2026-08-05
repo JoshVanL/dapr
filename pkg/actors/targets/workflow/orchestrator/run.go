@@ -37,8 +37,9 @@ import (
 	"github.com/dapr/durabletask-go/backend/runtimestate"
 )
 
-func (o *orchestrator) runWorkflow(ctx context.Context, reminder *actorapi.Reminder) (todo.RunCompleted, error) {
-	state, _, err := o.loadInternalState(ctx)
+func (o *orchestrator) runWorkflow(ctx context.Context, reminder *actorapi.Reminder) (completed todo.RunCompleted, err error) {
+	var state *wfenginestate.State
+	state, _, err = o.loadInternalState(ctx)
 	if err != nil {
 		// Treat load failures as recoverable so the reminder is retried.
 		// LoadWorkflowState already separates VerificationError (tombstoned
@@ -99,7 +100,7 @@ func (o *orchestrator) runWorkflow(ctx context.Context, reminder *actorapi.Remin
 		state.Inbox = append(state.Inbox, &cascadeEvent)
 	}
 
-	if len(state.Inbox) == 0 && !runtimestate.IsCompleted(o.rstate) {
+	if len(state.Inbox) == 0 && len(o.foldPending) == 0 && !runtimestate.IsCompleted(o.rstate) {
 		// The in-memory cache may be stale: during a placement cluster failure
 		// daprds will roll over the actor, so a peer host may have written a new
 		// inbox event to the store since our cache was last updated. Drop the
@@ -120,7 +121,7 @@ func (o *orchestrator) runWorkflow(ctx context.Context, reminder *actorapi.Remin
 		}
 	}
 
-	if len(state.Inbox) == 0 {
+	if len(state.Inbox) == 0 && len(o.foldPending) == 0 {
 		// This can happen after multiple events are processed in batches; there
 		// may still be reminders around for some of those already processed
 		// events.
@@ -159,10 +160,38 @@ func (o *orchestrator) runWorkflow(ctx context.Context, reminder *actorapi.Remin
 		}
 	}
 
+	// Take any held completions into this turn (WorkflowsCompletionsFold):
+	// they ride the turn's single Multi into history and their senders are
+	// acked only if that commit happens. Any outcome that does not commit
+	// them nacks the senders back into their retry chains. Overflow beyond
+	// the per-turn cap (and anything submitted after this take) re-arms a
+	// drive so it is folded by a follow-up turn.
+	folded := o.foldTake()
+	foldedCommitted := false
+	defer func() {
+		if foldedCommitted {
+			foldAck(folded)
+		} else {
+			foldNack(folded, err)
+		}
+		if len(o.foldPending) > 0 {
+			p := o.foldPending[0].event
+			o.localDrive(events.EventReminderName(reminderPrefixNewEvent, p), time.Now(), o.getExecutionStartedEvent(state).GetName())
+		}
+	}()
+
 	rs := o.rstate
+	newEvents := state.Inbox
+	if len(folded) > 0 {
+		newEvents = make([]*backend.HistoryEvent, 0, len(state.Inbox)+len(folded))
+		newEvents = append(newEvents, state.Inbox...)
+		for _, f := range folded {
+			newEvents = append(newEvents, f.event)
+		}
+	}
 	wi := &backend.WorkflowWorkItem{
 		InstanceID: api.InstanceID(rs.GetInstanceId()),
-		NewEvents:  state.Inbox,
+		NewEvents:  newEvents,
 		RetryCount: -1, // TODO
 		State:      rs,
 		Properties: make(map[string]any, 1),
@@ -289,6 +318,9 @@ func (o *orchestrator) runWorkflow(ctx context.Context, reminder *actorapi.Remin
 					o.rstate = rstateSnapshot
 					return todo.RunCompletedFalse, err
 				}
+				// The CAN save persisted the effect of every consumed event,
+				// including folded completions: their senders are acked.
+				foldedCommitted = true
 
 				if len(carryover) > 0 {
 					reminderName := events.EventReminderName(reminderPrefixNewEvent, carryover[0])
@@ -501,6 +533,9 @@ func (o *orchestrator) runWorkflow(ctx context.Context, reminder *actorapi.Remin
 	if err != nil {
 		return todo.RunCompletedFalse, err
 	}
+	// The turn's single Multi is durable: folded completions are now in
+	// history and their senders are acked (see the deferred fold handling).
+	foldedCommitted = true
 
 	rstatus := runtimestate.RuntimeStatus(rs)
 	if diagnoseStatus != "" {
