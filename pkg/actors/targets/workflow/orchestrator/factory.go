@@ -74,6 +74,14 @@ type Options struct {
 	// reminders on the arming host, using the scheduler entry only as a
 	// crash backstop (WorkflowsLocalWakeFastPath preview feature).
 	LocalWakeFastPath bool
+
+	// LocalActivityFastPath elides the per-activity run-activity reminder:
+	// activity dispatches carry a metadata certification that this
+	// orchestrator's janitor is armed, and the janitor re-dispatches
+	// unresolved scheduled tasks as the durable re-driver
+	// (WorkflowsLocalActivityFastPath preview feature; requires
+	// LocalWakeFastPath).
+	LocalActivityFastPath bool
 }
 
 type factory struct {
@@ -111,6 +119,11 @@ type factory struct {
 	wakeCtx           context.Context
 	wakeCancel        context.CancelFunc
 	wakeWG            sync.WaitGroup
+
+	// localActivityFastPath gates the activity-reminder elision on the
+	// dispatch side (metadata certification in callActivity) and the janitor
+	// re-dispatch of unresolved scheduled tasks (redispatch.go).
+	localActivityFastPath bool
 
 	// rootCtx bounds wake-failure escalation goroutines (see wake.go
 	// escalate): unlike wakeCtx it survives HaltAll, because a reminder
@@ -179,6 +192,7 @@ func New(ctx context.Context, opts Options) (targets.Factory, error) {
 		scheduler:              opts.Scheduler,
 		deactivateCh:           deactivateCh,
 		localWakeFastPath:      opts.LocalWakeFastPath,
+		localActivityFastPath:  opts.LocalActivityFastPath && opts.LocalWakeFastPath,
 		wakeCtx:                wakeCtx,
 		wakeCancel:             wakeCancel,
 		rootCtx:                ctx,

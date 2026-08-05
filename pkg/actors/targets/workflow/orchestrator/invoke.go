@@ -184,6 +184,16 @@ func (o *orchestrator) runJanitor(ctx context.Context, reminder *actorapi.Remind
 	}
 
 	if len(state.Inbox) == 0 {
+		// No pending inbox rows, but the instance may have in-flight
+		// activities whose only durable re-driver is this janitor (their
+		// run-activity reminder is elided under
+		// WorkflowsLocalActivityFastPath). Stalled workflows are excluded:
+		// re-dispatching would replay the condition that stalled them.
+		if o.rstate.GetStalled() == nil {
+			if unresolved := unresolvedScheduledTasks(state); len(unresolved) > 0 {
+				o.redispatchActivities(ctx, state, unresolved)
+			}
+		}
 		return nil
 	}
 

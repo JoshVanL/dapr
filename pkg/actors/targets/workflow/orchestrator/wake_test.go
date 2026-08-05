@@ -434,13 +434,11 @@ func Test_localWake_driveLoopLosslessUnderConcurrency(t *testing.T) {
 	// be lost to a loop that exited concurrently.
 	var wg sync.WaitGroup
 	for range 50 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range 20 {
 				h.orch.localDrive("new-event-tc-7", time.Now().Add(-time.Second), "TestWorkflow")
 			}
-		}()
+		})
 	}
 	wg.Wait()
 

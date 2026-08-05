@@ -432,8 +432,19 @@ func (o *orchestrator) runWorkflow(ctx context.Context, reminder *actorapi.Remin
 		}
 	}
 
-	// Dispatch activities and messages, collecting failures.
-	activityResult := o.callActivities(ctx, pendingTasks, state, rs, wi.OutgoingHistory)
+	// Dispatch activities and messages, collecting failures. Activity
+	// dispatches certify the reminder elision only when the janitor backstop
+	// is provably armed first (durability before the ack, mirroring
+	// driveNewEvent); on janitor failure the dispatch degrades to the durable
+	// run-activity reminder path.
+	elideActivityReminder := o.localActivityFastPath && len(pendingTasks) > 0
+	if elideActivityReminder {
+		if jerr := o.ensureJanitor(ctx, state); jerr != nil {
+			log.Warnf("Workflow actor '%s': failed to ensure janitor reminder, dispatching activities with durable reminders: %v", o.actorID, jerr)
+			elideActivityReminder = false
+		}
+	}
+	activityResult := o.callActivities(ctx, pendingTasks, state, rs, wi.OutgoingHistory, elideActivityReminder)
 	addResult := o.messages.CallAddEventStateMessage(ctx, addWorkflows)
 	createResult := o.messages.CallCreateWorkflowStateMessage(ctx, createWorkflows, rs.GetNewEvents())
 

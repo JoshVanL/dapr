@@ -95,6 +95,7 @@ type Options struct {
 	// if using the same Dapr version on all daprds.
 	WorkflowsRemoteActivityReminder bool
 	WorkflowsLocalWakeFastPath      bool
+	WorkflowsLocalActivityFastPath  bool
 
 	RetentionPolicy *config.WorkflowStateRetentionPolicy
 	Signer          *signer.Signer
@@ -129,6 +130,7 @@ type Actors struct {
 	enableClusteredDeployment       bool
 	workflowsRemoteActivityReminder bool
 	workflowsLocalWakeFastPath      bool
+	workflowsLocalActivityFastPath  bool
 	pendingCompletions              *pending.Pending
 
 	orchestrationWorkItemChan chan *backend.WorkflowWorkItem
@@ -162,6 +164,14 @@ func New(opts Options) (*Actors, error) {
 		pendingTasksBackend = local.NewTasksBackend()
 	}
 
+	// The activity fast path leans on the wake fast path's janitor backstop
+	// for its crash recovery; without the wake gate there is no janitor and
+	// eliding the activity reminder would drop the only durable re-driver.
+	localActivityFastPath := opts.WorkflowsLocalActivityFastPath && opts.WorkflowsLocalWakeFastPath
+	if opts.WorkflowsLocalActivityFastPath && !opts.WorkflowsLocalWakeFastPath {
+		log.Warnf("WorkflowsLocalActivityFastPath is enabled without WorkflowsLocalWakeFastPath; ignoring it (the activity fast path requires the wake fast path's janitor backstop)")
+	}
+
 	return &Actors{
 		appID:                     opts.AppID,
 		namespace:                 opts.Namespace,
@@ -184,6 +194,7 @@ func New(opts Options) (*Actors, error) {
 		enableClusteredDeployment:       opts.EnableClusteredDeployment,
 		workflowsRemoteActivityReminder: opts.WorkflowsRemoteActivityReminder,
 		workflowsLocalWakeFastPath:      opts.WorkflowsLocalWakeFastPath,
+		workflowsLocalActivityFastPath:  localActivityFastPath,
 		pendingCompletions:              pendingCompletions,
 	}, nil
 }
@@ -208,6 +219,7 @@ func (abe *Actors) RegisterActors(ctx context.Context) error {
 		MaxRequestBodySize:     abe.maxRequestBodySize,
 		WorkflowAccessPolicies: abe.workflowAccessPolicies,
 		LocalWakeFastPath:      abe.workflowsLocalWakeFastPath,
+		LocalActivityFastPath:  abe.workflowsLocalActivityFastPath,
 		Scheduler: func(ctx context.Context, wi *backend.WorkflowWorkItem) error {
 			log.Debugf("%s: scheduling workflow execution with durabletask engine", wi.InstanceID)
 
@@ -246,6 +258,7 @@ func (abe *Actors) RegisterActors(ctx context.Context) error {
 		WorkflowAccessPolicies:          abe.workflowAccessPolicies,
 		Signer:                          abe.signer,
 		WorkflowsRemoteActivityReminder: abe.workflowsRemoteActivityReminder,
+		LocalActivityFastPath:           abe.workflowsLocalActivityFastPath,
 	}
 
 	opts := workflow.Options{

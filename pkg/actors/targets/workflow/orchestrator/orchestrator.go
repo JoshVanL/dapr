@@ -19,12 +19,14 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	actorapi "github.com/dapr/dapr/pkg/actors/api"
 	targeterrors "github.com/dapr/dapr/pkg/actors/targets/errors"
 	"github.com/dapr/dapr/pkg/actors/targets/workflow/common/lock"
 	"github.com/dapr/dapr/pkg/actors/targets/workflow/orchestrator/messages"
 	"github.com/dapr/dapr/pkg/actors/targets/workflow/orchestrator/signing"
+	diag "github.com/dapr/dapr/pkg/diagnostics"
 	internalsv1pb "github.com/dapr/dapr/pkg/proto/internals/v1"
 	wfenginestate "github.com/dapr/dapr/pkg/runtime/wfengine/state"
 	"github.com/dapr/durabletask-go/backend"
@@ -77,7 +79,7 @@ func (o *orchestrator) InvokeMethod(ctx context.Context, req *internalsv1pb.Inte
 	o.wg.Add(1)
 	defer o.wg.Done()
 
-	unlock, err := o.lock.ContextLock(ctx)
+	unlock, err := o.contextLockMeasured(ctx, "method")
 	if err != nil {
 		return nil, fmt.Errorf("failed to invoke method for workflow '%s': %w", o.actorID, err)
 	}
@@ -91,13 +93,26 @@ func (o *orchestrator) InvokeReminder(ctx context.Context, reminder *actorapi.Re
 	o.wg.Add(1)
 	defer o.wg.Done()
 
-	unlock, err := o.lock.ContextLock(ctx)
+	unlock, err := o.contextLockMeasured(ctx, "reminder")
 	if err != nil {
 		return fmt.Errorf("failed to invoke reminder for workflow '%s': %w", o.actorID, err)
 	}
 	defer unlock()
 
 	return o.handleReminder(ctx, reminder)
+}
+
+// contextLockMeasured acquires the per-actor turn lock and records the wait
+// as the lock_wait histogram, splitting observed invocation latency into
+// queueing vs turn body.
+func (o *orchestrator) contextLockMeasured(ctx context.Context, kind string) (context.CancelFunc, error) {
+	start := time.Now()
+	unlock, err := o.lock.ContextLock(ctx)
+	elapsed := float64(time.Since(start)) / float64(time.Millisecond)
+	if err == nil {
+		diag.DefaultWorkflowMonitoring.WorkflowLockWait(ctx, kind, elapsed)
+	}
+	return unlock, err
 }
 
 // InvokeTimer implements actors.InternalActor
@@ -109,7 +124,7 @@ func (o *orchestrator) InvokeStream(ctx context.Context, req *internalsv1pb.Inte
 	o.wg.Add(1)
 	defer o.wg.Done()
 
-	unlock, err := o.lock.ContextLock(ctx)
+	unlock, err := o.contextLockMeasured(ctx, "stream")
 	if err != nil {
 		return fmt.Errorf("failed to invoke reminder for workflow '%s': %w", o.actorID, err)
 	}

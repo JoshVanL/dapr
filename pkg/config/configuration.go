@@ -87,6 +87,19 @@ const (
 	// reminder remains durable. At-least-once execution is unchanged.
 	// Preview feature; disabled by default.
 	WorkflowsLocalWakeFastPath Feature = "WorkflowsLocalWakeFastPath"
+
+	// WorkflowsLocalActivityFastPath elides the per-activity run-activity
+	// scheduler reminder: the dispatching orchestrator certifies (via
+	// invocation metadata) that its janitor backstop is armed, and the
+	// activity host drives the execution locally instead of creating the
+	// reminder, removing the job upsert/delete commit pair and the scheduler
+	// trigger round trip per activity. Recovery for an in-flight activity
+	// whose host crashes moves to the orchestrator's janitor, which
+	// re-dispatches unresolved scheduled tasks within one period. Requires
+	// WorkflowsLocalWakeFastPath to also be enabled; ignored otherwise.
+	// At-least-once execution is unchanged. Preview feature; disabled by
+	// default.
+	WorkflowsLocalActivityFastPath Feature = "WorkflowsLocalActivityFastPath"
 )
 
 // end feature flags section

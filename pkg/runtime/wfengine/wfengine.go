@@ -84,6 +84,7 @@ type Options struct {
 	EnableClusteredDeployment       bool
 	WorkflowsRemoteActivityReminder bool
 	WorkflowsLocalWakeFastPath      bool
+	WorkflowsLocalActivityFastPath  bool
 	WorkflowHistorySigning          bool
 
 	// MaxRequestBodySize is the gRPC server max message size in bytes. The
@@ -160,6 +161,7 @@ func New(opts Options) (Interface, error) {
 		EnableClusteredDeployment:       opts.EnableClusteredDeployment,
 		WorkflowsRemoteActivityReminder: opts.WorkflowsRemoteActivityReminder,
 		WorkflowsLocalWakeFastPath:      opts.WorkflowsLocalWakeFastPath,
+		WorkflowsLocalActivityFastPath:  opts.WorkflowsLocalActivityFastPath,
 	})
 	if err != nil {
 		return nil, err

@@ -153,11 +153,15 @@ func (o *orchestrator) driveLoop(wakeCtx context.Context) {
 		// Data is nil: wake-up reminders carry no payload; the turn reloads
 		// the durable inbox. The router resolves placement, so if the actor
 		// migrated between arming and wake the turn is delivered to the new
-		// owner host.
+		// owner host. SkipRetries: this loop owns its recovery (a failed
+		// drive escalates to a durable reminder within ~1s), so the router's
+		// blind 1s-backoff retries would only add tail latency before the
+		// same outcome.
 		err := o.router.CallReminder(ctx, &actorapi.Reminder{
-			Name:      info.reminderName,
-			ActorType: actorType,
-			ActorID:   actorID,
+			Name:        info.reminderName,
+			ActorType:   actorType,
+			ActorID:     actorID,
+			SkipRetries: true,
 		})
 		elapsed := float64(time.Since(start)) / float64(time.Millisecond)
 		cancel()

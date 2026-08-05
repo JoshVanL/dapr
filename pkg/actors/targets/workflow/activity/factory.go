@@ -57,6 +57,12 @@ type Options struct {
 	WorkflowAccessPolicies *workflowacl.Holder
 
 	WorkflowsRemoteActivityReminder bool
+
+	// LocalActivityFastPath drives certified activity executions locally
+	// instead of creating the durable run-activity reminder
+	// (WorkflowsLocalActivityFastPath preview feature). Only dispatches
+	// carrying the orchestrator's janitor certification metadata are elided.
+	LocalActivityFastPath bool
 }
 
 type factory struct {
@@ -89,6 +95,26 @@ type factory struct {
 	// selfCallerWarned ensures the "policy lists own appID" warning is only
 	// emitted once per factory lifetime instead of on every self-call.
 	selfCallerWarned atomic.Bool
+
+	// localActivityFastPath and the drive* fields power the detached local
+	// activity drives (see drive.go), mirroring the orchestrator factory's
+	// wake machinery: driveCtx is factory-owned, cancelled and drained by
+	// HaltAll (which also fires on placement churn) and then recreated;
+	// driveLock serializes spawns against that cancel/recreate cycle so the
+	// WaitGroup Add never races the Wait.
+	localActivityFastPath bool
+	driveLock             sync.Mutex
+	driveCtx              context.Context
+	driveCancel           context.CancelFunc
+	driveWG               sync.WaitGroup
+
+	// rootCtx bounds drive-failure escalation goroutines (see drive.go):
+	// unlike driveCtx it survives HaltAll, because a reminder create is
+	// host-agnostic and must be able to complete during the placement churn
+	// that cancels driveCtx.
+	rootCtx context.Context
+	escLock sync.Mutex
+	escWG   sync.WaitGroup
 }
 
 func New(ctx context.Context, opts Options) (targets.Factory, error) {
@@ -117,9 +143,15 @@ func New(ctx context.Context, opts Options) (targets.Factory, error) {
 		return nil, err
 	}
 
+	driveCtx, driveCancel := context.WithCancel(context.Background())
+
 	return &factory{
 		appID:                  opts.AppID,
 		actorType:              opts.ActivityActorType,
+		localActivityFastPath:  opts.LocalActivityFastPath,
+		driveCtx:               driveCtx,
+		driveCancel:            driveCancel,
+		rootCtx:                ctx,
 		router:                 router,
 		reminders:              sreminders,
 		scheduler:              opts.Scheduler,
@@ -154,11 +186,30 @@ func (f *factory) HaltAll(ctx context.Context) error {
 	f.lock.Lock()
 	defer f.lock.Unlock()
 
+	// Cancel detached local activity drives BEFORE deactivating: a drive
+	// parked on an activity actor lock aborts on the cancelled context, and
+	// one mid-execution hands its in-flight WorkItem to the detached
+	// publish watcher (runOwned) before returning. Wait for them only after
+	// the deactivation loop so neither side deadlocks.
+	f.driveLock.Lock()
+	f.driveCancel()
+	f.driveLock.Unlock()
+
 	f.table.Range(func(key, val any) bool {
 		val.(*activity).Deactivate(ctx)
 		return true
 	})
 	f.table.Clear()
+
+	f.driveWG.Wait()
+
+	// HaltAll also fires on placement disconnection, after which this
+	// factory keeps serving new activations: recreate the drive context so
+	// the fast path survives the churn.
+	f.driveLock.Lock()
+	f.driveCtx, f.driveCancel = context.WithCancel(context.Background())
+	f.driveLock.Unlock()
+
 	return nil
 }
 

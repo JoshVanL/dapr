@@ -44,12 +44,19 @@ const (
 	StatusEscalateFailed   = "escalate_failed"
 	StatusEscalateSkipped  = "escalate_skipped_shutdown"
 	StatusJanitorRecovered = "janitor_recovered"
-	StatusTerminated       = "terminated"
-	StatusRecoverable      = "recoverable"
-	CreateWorkflow         = "create_workflow"
-	GetWorkflow            = "get_workflow"
-	AddEvent               = "add_event"
-	PurgeWorkflow          = "purge_workflow"
+	// Local-activity fast path janitor re-dispatch outcomes: an unresolved
+	// TaskScheduled event was re-dispatched (the recovery event; ~0 in
+	// healthy steady state), found busy executing (benign), or the
+	// re-dispatch call failed (the next janitor period retries).
+	StatusJanitorRedispatched     = "janitor_redispatched"
+	StatusJanitorRedispatchBusy   = "janitor_redispatch_busy"
+	StatusJanitorRedispatchFailed = "janitor_redispatch_failed"
+	StatusTerminated              = "terminated"
+	StatusRecoverable             = "recoverable"
+	CreateWorkflow                = "create_workflow"
+	GetWorkflow                   = "get_workflow"
+	AddEvent                      = "add_event"
+	PurgeWorkflow                 = "purge_workflow"
 
 	WorkflowEvent = "event"
 	Timer         = "timer"
@@ -150,10 +157,25 @@ type workflowMetrics struct {
 	// (success = turn ran locally and backstop deletion was attempted;
 	// failed = the scheduler backstop drives the turn instead).
 	localWakeCount *stats.Int64Measure
-	appID          string
-	enabled        bool
-	namespace      string
-	meter          stats.Recorder
+	// localActivityDriveLatency records the duration of one locally-driven
+	// activity execution attempt (arming to the execution call returning,
+	// including the app call), under the WorkflowsLocalActivityFastPath
+	// preview feature.
+	localActivityDriveLatency *stats.Float64Measure
+	// localActivityCount records activity executions driven locally under
+	// the WorkflowsLocalActivityFastPath preview feature, tagged by status
+	// (success/failed drives, escalations to the durable reminder, and
+	// janitor re-dispatch outcomes).
+	localActivityCount *stats.Int64Measure
+	// lockWaitLatency records the time a workflow orchestrator invocation
+	// spends queued on the per-actor turn lock before it starts, tagged by
+	// invocation kind (method/reminder/stream). Splits observed invocation
+	// latency into lock queueing vs turn body.
+	lockWaitLatency *stats.Float64Measure
+	appID           string
+	enabled         bool
+	namespace       string
+	meter           stats.Recorder
 }
 
 func newWorkflowMetrics() *workflowMetrics {
@@ -230,6 +252,18 @@ func newWorkflowMetrics() *workflowMetrics {
 			"runtime/workflow/local_wake/drive_latency",
 			"The latency of locally-driven workflow wake-ups, from queueing the drive to the turn invocation returning.",
 			stats.UnitMilliseconds),
+		localActivityCount: stats.Int64(
+			"runtime/workflow/local_activity/count",
+			"The number of activity executions driven locally by the WorkflowsLocalActivityFastPath preview feature, by status.",
+			stats.UnitDimensionless),
+		localActivityDriveLatency: stats.Float64(
+			"runtime/workflow/local_activity/drive_latency",
+			"The latency of one locally-driven activity execution attempt, including the app call.",
+			stats.UnitMilliseconds),
+		lockWaitLatency: stats.Float64(
+			"runtime/workflow/lock_wait",
+			"The time a workflow orchestrator invocation spends queued on the per-actor turn lock, by invocation kind.",
+			stats.UnitMilliseconds),
 	}
 }
 
@@ -262,7 +296,10 @@ func (w *workflowMetrics) Init(meter view.Meter, appID, namespace string, latenc
 		diagUtils.NewMeasureView(w.workflowPayloadSizeRatio, []tag.Key{appIDKey, namespaceKey, workflowNameKey}, payloadRatioDistribution),
 		diagUtils.NewMeasureView(w.activityPayloadSizeRatio, []tag.Key{appIDKey, namespaceKey, workflowNameKey, activityNameKey}, payloadRatioDistribution),
 		diagUtils.NewMeasureView(w.completionRouteCount, []tag.Key{appIDKey, namespaceKey, taskTypeKey, completionRouteKey}, view.Count()),
-		diagUtils.NewMeasureView(w.localWakeCount, []tag.Key{appIDKey, namespaceKey, statusKey}, view.Count()))
+		diagUtils.NewMeasureView(w.localWakeCount, []tag.Key{appIDKey, namespaceKey, statusKey}, view.Count()),
+		diagUtils.NewMeasureView(w.localActivityCount, []tag.Key{appIDKey, namespaceKey, statusKey}, view.Count()),
+		diagUtils.NewMeasureView(w.localActivityDriveLatency, []tag.Key{appIDKey, namespaceKey, statusKey}, latencyDistribution),
+		diagUtils.NewMeasureView(w.lockWaitLatency, []tag.Key{appIDKey, namespaceKey, operationKey}, latencyDistribution))
 }
 
 // WorkflowOperationEvent records total number of Successful/Failed workflow Operations requests. It also records latency for those requests.
@@ -425,6 +462,42 @@ func (w *workflowMetrics) WorkflowLocalWake(ctx context.Context, status string) 
 		stats.WithRecorder(w.meter),
 		stats.WithTags(diagUtils.WithTags(w.localWakeCount.Name(), appIDKey, w.appID, namespaceKey, w.namespace, statusKey, status)...),
 		stats.WithMeasurements(w.localWakeCount.M(1)))
+}
+
+// WorkflowLocalActivityDrive records the duration of one locally-driven
+// activity execution attempt (including the app call), by outcome status.
+func (w *workflowMetrics) WorkflowLocalActivityDrive(ctx context.Context, status string, elapsed float64) {
+	if !w.IsEnabled() {
+		return
+	}
+	stats.RecordWithOptions(ctx,
+		stats.WithRecorder(w.meter),
+		stats.WithTags(diagUtils.WithTags(w.localActivityDriveLatency.Name(), appIDKey, w.appID, namespaceKey, w.namespace, statusKey, status)...),
+		stats.WithMeasurements(w.localActivityDriveLatency.M(elapsed)))
+}
+
+// WorkflowLocalActivity records an activity execution driven locally under
+// the WorkflowsLocalActivityFastPath preview feature, by status.
+func (w *workflowMetrics) WorkflowLocalActivity(ctx context.Context, status string) {
+	if !w.IsEnabled() {
+		return
+	}
+	stats.RecordWithOptions(ctx,
+		stats.WithRecorder(w.meter),
+		stats.WithTags(diagUtils.WithTags(w.localActivityCount.Name(), appIDKey, w.appID, namespaceKey, w.namespace, statusKey, status)...),
+		stats.WithMeasurements(w.localActivityCount.M(1)))
+}
+
+// WorkflowLockWait records the time an orchestrator invocation spent queued
+// on the per-actor turn lock, by invocation kind (method/reminder/stream).
+func (w *workflowMetrics) WorkflowLockWait(ctx context.Context, kind string, elapsed float64) {
+	if !w.IsEnabled() {
+		return
+	}
+	stats.RecordWithOptions(ctx,
+		stats.WithRecorder(w.meter),
+		stats.WithTags(diagUtils.WithTags(w.lockWaitLatency.Name(), appIDKey, w.appID, namespaceKey, w.namespace, operationKey, kind)...),
+		stats.WithMeasurements(w.lockWaitLatency.M(elapsed)))
 }
 
 // WorkflowCompletionRoute records how a pending-task completion was routed
