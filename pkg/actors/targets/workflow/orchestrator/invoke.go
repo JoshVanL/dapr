@@ -202,6 +202,17 @@ func (o *orchestrator) runJanitor(ctx context.Context, reminder *actorapi.Remind
 		// WorkflowsLocalActivityFastPath). Stalled workflows are excluded:
 		// re-dispatching would replay the condition that stalled them.
 		if o.rstate.GetStalled() == nil {
+			if o.redispatchSuppressed() {
+				// Recent life: in-flight activities are covered by their
+				// live executions and the next period re-checks. Firing the
+				// re-dispatch machinery against a merely-slow instance
+				// replays full-cost turns through the scheduler (the
+				// measured collapse amplifier); a genuinely idle-stalled
+				// instance goes stale within one period and re-dispatches
+				// below.
+				diag.DefaultWorkflowMonitoring.WorkflowLocalActivity(ctx, diag.StatusJanitorRedispatchSuppressed)
+				return nil
+			}
 			// Completions held for folding count as resolutions: their
 			// senders are alive and re-driving, so a re-dispatch would be
 			// redundant.

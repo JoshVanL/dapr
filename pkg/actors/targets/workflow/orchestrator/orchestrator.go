@@ -62,7 +62,13 @@ type orchestrator struct {
 	// stamped for the factory idle reaper. Also stamped at creation so a
 	// fresh actor is never reaped before its first turn.
 	lastActive atomic.Int64
-	driveInfo  atomic.Pointer[driveInfo]
+	// lastProgress is the UnixNano of the most recent durable state commit
+	// (stamped in signAndSaveState). Zero on a fresh activation, so an actor
+	// recreated after a crash reads as stalled and the durable backstops
+	// recover it. INVARIANT: never stamped by the janitor fire or by lock
+	// traffic; it distinguishes "alive and progressing" from "being polled".
+	lastProgress atomic.Int64
+	driveInfo    atomic.Pointer[driveInfo]
 	// foldPending holds sender-retried completions awaiting their folding
 	// turn (WorkflowsCompletionsFold; see fold.go). INVARIANT: only touched
 	// while holding the per-actor turn lock (submit, turn, janitor,

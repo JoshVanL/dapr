@@ -129,6 +129,12 @@ type factory struct {
 	wakeCancel        context.CancelFunc
 	wakeWG            sync.WaitGroup
 
+	// Escalation hysteresis schedule (see wake.go). Set once in New, before
+	// any drive loop can read them; fields rather than consts only so unit
+	// tests can compress the schedule per factory.
+	driveRetryBackoffs []time.Duration
+	driveAliveWindow   time.Duration
+
 	// localActivityFastPath gates the activity-reminder elision on the
 	// dispatch side (metadata certification in callActivity) and the janitor
 	// re-dispatch of unresolved scheduled tasks (redispatch.go).
@@ -204,6 +210,8 @@ func New(ctx context.Context, opts Options) (targets.Factory, error) {
 		completionsFold:        opts.CompletionsFold && opts.LocalWakeFastPath,
 		wakeCtx:                wakeCtx,
 		wakeCancel:             wakeCancel,
+		driveRetryBackoffs:     defaultDriveRetryBackoffs,
+		driveAliveWindow:       defaultDriveAliveWindow,
 		rootCtx:                ctx,
 	}
 
@@ -280,6 +288,10 @@ func (f *factory) initOrchestrator(o any, actorID string) *orchestrator {
 	or.actorID = actorID
 	or.closed.Store(false)
 	or.lastActive.Store(time.Now().UnixNano())
+	// Deliberately zero, not now: progress must only ever mean a durable
+	// commit by THIS residency, so a just-activated actor (e.g. the new
+	// owner after a crash) reads as stalled and the janitor recovers it.
+	or.lastProgress.Store(0)
 	or.janitorAsserted.Store(false)
 	or.driveRunning.Store(false)
 	or.driveNotify = make(chan struct{}, 1)

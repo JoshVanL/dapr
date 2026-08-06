@@ -18,6 +18,7 @@ import (
 	"time"
 
 	actorapi "github.com/dapr/dapr/pkg/actors/api"
+	targeterrors "github.com/dapr/dapr/pkg/actors/targets/errors"
 	diag "github.com/dapr/dapr/pkg/diagnostics"
 )
 
@@ -30,6 +31,66 @@ const localWakeTimeout = time.Minute
 // (overwrite-by-name) and host-agnostic, and the janitor remains the net if
 // it also fails.
 const escalateTimeout = 30 * time.Second
+
+// Escalation hysteresis defaults (factory fields so unit tests can compress
+// the schedule per factory without racing detached drive loops). A failed
+// drive against an instance that shows recent life is retried in place, and
+// if still failing is handed to the janitor rather than escalated: durable
+// per-event reminders carry a retry-forever-per-second failure policy, so
+// escalating en masse against actors that are alive but slow turns the
+// scheduler job stream into a re-drive storm of full-cost turns (the
+// measured cycle-12b collapse amplifier). Escalation is reserved for drives
+// that are LOST: hard errors (cancelled wake context, closed actor) or an
+// instance with no sign of life.
+//
+// The backoffs are the waits before each in-place retry of a failed drive.
+// Their sum MUST exceed the alive window so an instance that stops showing
+// life during the retries reads as stalled by the final escalation check.
+// The alive window is how recent an instance's last durable commit or
+// turn-lock traffic must be to count as alive: a fraction of the janitor
+// period, since suppression hands recovery to the janitor and the window
+// must sit well inside what one period can absorb.
+var defaultDriveRetryBackoffs = []time.Duration{time.Second, 2 * time.Second, 3 * time.Second}
+
+const defaultDriveAliveWindow = 3 * time.Second
+
+// aliveWithin reports whether the instance showed signs of life within
+// window: a durable commit (lastProgress) or turn-lock traffic (lastActive,
+// stamped by every invocation and at activation). Suitable for the drive
+// escalation decision only; the janitor gate must use progressWithin, since
+// its own fire stamps lastActive.
+func (o *orchestrator) aliveWithin(window time.Duration) bool {
+	cutoff := time.Now().Add(-window).UnixNano()
+	return o.lastProgress.Load() >= cutoff || o.lastActive.Load() >= cutoff
+}
+
+// progressWithin reports whether the instance durably committed state within
+// window. Zero lastProgress (fresh activation) is never within any window.
+func (o *orchestrator) progressWithin(window time.Duration) bool {
+	return o.lastProgress.Load() >= time.Now().Add(-window).UnixNano()
+}
+
+// driveLost reports the hard escalation cases that must never be suppressed
+// or retried locally: the wake context is cancelled (HaltAll on migration or
+// shutdown; the durable create is host-agnostic and the scheduler routes the
+// fire to the current owner) or the actor was closed under the call
+// (deactivation racing the drive). Both mean this host's drive machinery is
+// gone, not slow.
+func (o *orchestrator) driveLost(wakeCtx context.Context, err error) bool {
+	return wakeCtx.Err() != nil || o.closed.Load() || targeterrors.IsClosed(err)
+}
+
+// sleepWake waits d, or returns false early if wakeCtx is cancelled.
+func sleepWake(wakeCtx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-wakeCtx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
+}
 
 // driveInfo carries the identity of the latest wake so a drive (or its
 // escalation) can name the reminder it stands in for. Any new-event-prefixed
@@ -62,12 +123,16 @@ type driveInfo struct {
 //
 // The loop is detached (the arming invocation holds the actor lock the turn
 // needs) and scoped to the factory's wake context, drained in HaltAll. On a
-// drive error it ESCALATES by creating today's durable per-event reminder
+// drive error it first retries in place (bounded; see driveRetryBackoffs),
+// then either ESCALATES by creating today's durable per-event reminder
 // (deterministic name, idempotent) on a context bounded by the factory root
 // context, NOT wakeCtx: migration is exactly the case where wakeCtx is
 // cancelled, and the reminder create is host-agnostic (the scheduler routes
-// the fire to the current owner). If the escalation also fails, the janitor
-// drives recovery within one period.
+// the fire to the current owner); or, when the instance still shows recent
+// life, SUPPRESSES the escalation and leaves recovery to the janitor (see
+// driveLoop). Hard errors (cancelled wakeCtx, closed actor) always escalate.
+// If the escalation also fails, the janitor drives recovery within one
+// period.
 //
 // No-op when the WorkflowsLocalWakeFastPath preview feature is off or the
 // wake is scheduled in the future (delayed starts must keep their scheduler
@@ -114,8 +179,9 @@ func (o *orchestrator) localDrive(reminderName string, dueTime time.Time, wfName
 // driveLoop consumes drive notifications for this instance, running one turn
 // per notification. It never blocks on the notification channel (HaltAll
 // safety: cancellation surfaces through the turn call), exits when idle, and
-// on a failed turn hands over to the escalation path and exits: the durable
-// reminder (or janitor) owns recovery from there.
+// on a failed turn (after the bounded in-place retries) hands over to the
+// escalation decision and exits: the durable reminder (or janitor) owns
+// recovery from there.
 func (o *orchestrator) driveLoop(wakeCtx context.Context) {
 	defer o.wakeWG.Done()
 
@@ -148,36 +214,67 @@ func (o *orchestrator) driveLoop(wakeCtx context.Context) {
 
 		info := o.driveInfo.Load()
 
-		ctx, cancel := context.WithTimeout(wakeCtx, localWakeTimeout)
-		start := time.Now()
-		// Data is nil: wake-up reminders carry no payload; the turn reloads
-		// the durable inbox. The router resolves placement, so if the actor
-		// migrated between arming and wake the turn is delivered to the new
-		// owner host. SkipRetries: this loop owns its recovery (a failed
-		// drive escalates to a durable reminder within ~1s), so the router's
-		// blind 1s-backoff retries would only add tail latency before the
-		// same outcome.
-		err := o.router.CallReminder(ctx, &actorapi.Reminder{
-			Name:        info.reminderName,
-			ActorType:   actorType,
-			ActorID:     actorID,
-			SkipRetries: true,
-		})
-		elapsed := float64(time.Since(start)) / float64(time.Millisecond)
-		cancel()
+		err := o.driveOnce(wakeCtx, actorType, actorID, info)
 
-		if err != nil {
-			log.Debugf("Workflow actor '%s': local wake '%s' failed; escalating to a durable reminder: %v", actorID, info.reminderName, err)
-			diag.DefaultWorkflowMonitoring.WorkflowLocalWake(context.Background(), diag.StatusFailed)
-			diag.DefaultWorkflowMonitoring.WorkflowLocalWakeDrive(context.Background(), diag.StatusFailed, elapsed)
-			o.driveRunning.Store(false)
-			o.escalate(info)
-			return
+		// Bounded in-place retries: a live instance's failed drive is
+		// re-attempted here (same coverage, no scheduler involvement)
+		// instead of escalating on first failure. Retries stop early when
+		// the drive is lost outright or the instance stops showing life.
+		for attempt := 0; err != nil && attempt < len(o.driveRetryBackoffs); attempt++ {
+			if o.driveLost(wakeCtx, err) || !o.aliveWithin(o.driveAliveWindow) {
+				break
+			}
+			if !sleepWake(wakeCtx, o.driveRetryBackoffs[attempt]) {
+				break
+			}
+			err = o.driveOnce(wakeCtx, actorType, actorID, info)
 		}
 
-		diag.DefaultWorkflowMonitoring.WorkflowLocalWake(context.Background(), diag.StatusSuccess)
-		diag.DefaultWorkflowMonitoring.WorkflowLocalWakeDrive(context.Background(), diag.StatusSuccess, elapsed)
+		if err != nil {
+			o.driveRunning.Store(false)
+			if o.driveLost(wakeCtx, err) || !o.aliveWithin(o.driveAliveWindow) {
+				log.Debugf("Workflow actor '%s': local wake '%s' failed; escalating to a durable reminder: %v", actorID, info.reminderName, err)
+				o.escalate(info)
+			} else {
+				// Alive and slow: a durable reminder here would only add
+				// scheduler re-drive load against an actor that is already
+				// working. The janitor drives any stranded inbox row within
+				// one period; that is the recovery contract this suppression
+				// leans on.
+				log.Debugf("Workflow actor '%s': local wake '%s' failed but the instance shows recent progress; suppressing escalation, the janitor covers: %v", actorID, info.reminderName, err)
+				diag.DefaultWorkflowMonitoring.WorkflowLocalWake(context.Background(), diag.StatusEscalateSuppressed)
+			}
+			return
+		}
 	}
+}
+
+// driveOnce performs one wake attempt, recording the per-attempt metrics.
+// Data is nil: wake-up reminders carry no payload; the turn reloads the
+// durable inbox. The router resolves placement, so if the actor migrated
+// between arming and wake the turn is delivered to the new owner host.
+// SkipRetries: this loop owns its recovery (bounded in-place retries, then
+// escalation or the janitor), so the router's blind 1s-backoff retries would
+// only add tail latency before the same outcome.
+func (o *orchestrator) driveOnce(wakeCtx context.Context, actorType, actorID string, info *driveInfo) error {
+	ctx, cancel := context.WithTimeout(wakeCtx, localWakeTimeout)
+	start := time.Now()
+	err := o.router.CallReminder(ctx, &actorapi.Reminder{
+		Name:        info.reminderName,
+		ActorType:   actorType,
+		ActorID:     actorID,
+		SkipRetries: true,
+	})
+	elapsed := float64(time.Since(start)) / float64(time.Millisecond)
+	cancel()
+
+	status := diag.StatusSuccess
+	if err != nil {
+		status = diag.StatusFailed
+	}
+	diag.DefaultWorkflowMonitoring.WorkflowLocalWake(context.Background(), status)
+	diag.DefaultWorkflowMonitoring.WorkflowLocalWakeDrive(context.Background(), status, elapsed)
+	return err
 }
 
 // escalate creates the durable per-event wake-up reminder after a failed

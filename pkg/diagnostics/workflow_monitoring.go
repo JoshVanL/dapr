@@ -40,10 +40,14 @@ const (
 	// escalated to a durable reminder (or that escalation itself failed,
 	// leaving the janitor as the net), and a janitor fire that found and
 	// drove a pending inbox (the recovery event; ~0 in healthy steady state).
-	StatusEscalated        = "escalated"
-	StatusEscalateFailed   = "escalate_failed"
-	StatusEscalateSkipped  = "escalate_skipped_shutdown"
-	StatusJanitorRecovered = "janitor_recovered"
+	StatusEscalated       = "escalated"
+	StatusEscalateFailed  = "escalate_failed"
+	StatusEscalateSkipped = "escalate_skipped_shutdown"
+	// A failed drive against an instance that shows recent life was NOT
+	// escalated to a durable reminder: the janitor covers it within one
+	// period instead of the scheduler re-driving a merely-slow actor.
+	StatusEscalateSuppressed = "escalate_suppressed"
+	StatusJanitorRecovered   = "janitor_recovered"
 	// Local-activity fast path janitor re-dispatch outcomes: an unresolved
 	// TaskScheduled event was re-dispatched (the recovery event; ~0 in
 	// healthy steady state), found busy executing (benign), or the
@@ -51,6 +55,10 @@ const (
 	StatusJanitorRedispatched     = "janitor_redispatched"
 	StatusJanitorRedispatchBusy   = "janitor_redispatch_busy"
 	StatusJanitorRedispatchFailed = "janitor_redispatch_failed"
+	// The janitor skipped the re-dispatch check because the instance showed
+	// recent progress (fresh durable commit or a running drive loop); the
+	// next period re-checks.
+	StatusJanitorRedispatchSuppressed = "janitor_redispatch_suppressed"
 	// Completions-fold outcomes: a sender-retried completion committed
 	// inside its folding turn (folded), or was nacked back into the
 	// sender's retry chain (turn failure, timeout, deactivation).
