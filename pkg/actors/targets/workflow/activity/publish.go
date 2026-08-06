@@ -35,7 +35,7 @@ import (
 // detachedPublishTimeout bounds how long publishResult waits when the caller
 // ctx was already canceled before the SDK callback fired.
 // context.WithoutCancel strips the original deadline, so we apply a fresh one
-// to keep a misbehaving downstream from blocking the actor lock indefinitely.
+// to keep a misbehaving downstream from blocking the watcher indefinitely.
 const detachedPublishTimeout = 30 * time.Second
 
 // watchAndPublish runs on the factory (not the activity) so it cannot be

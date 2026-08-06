@@ -47,15 +47,12 @@ func (a *activity) InvokeMethod(ctx context.Context, req *internalsv1pb.Internal
 }
 
 // InvokeReminder implements actors.InternalActor and executes the activity logic.
+// The actor lock is scoped inside executeActivity to the claim of the
+// execution only (see claim): the app roundtrip and the delivery of the
+// result to the parent workflow run outside the lock, guarded by the
+// inflight entry. Holding the lock across those segments convoys Execute
+// dispatches behind arbitrary-length executions and the parent's turn lock.
 func (a *activity) InvokeReminder(ctx context.Context, reminder *actorapi.Reminder) error {
-	if !reminder.SkipLock {
-		unlock, err := a.lock.ContextLock(ctx)
-		if err != nil {
-			return err
-		}
-		defer unlock()
-	}
-
 	if err := a.handleReminder(ctx, reminder); err != nil {
 		return err
 	}

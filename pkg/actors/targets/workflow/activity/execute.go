@@ -25,7 +25,7 @@ import (
 	"github.com/dapr/durabletask-go/api/protos"
 )
 
-func (a *activity) executeActivity(ctx context.Context, name string, invocation *protos.ActivityInvocation) error {
+func (a *activity) executeActivity(ctx context.Context, name string, invocation *protos.ActivityInvocation, skipLock bool) error {
 	taskEvent := invocation.GetHistoryEvent()
 	activityName := ""
 	if ts := taskEvent.GetTaskScheduled(); ts != nil {
@@ -52,7 +52,10 @@ func (a *activity) executeActivity(ctx context.Context, name string, invocation 
 	}
 
 	key := inflight.Key(a.actorID, taskEvent)
-	call, owner := a.inflight.Acquire(key)
+	call, owner, err := a.claim(ctx, key, skipLock)
+	if err != nil {
+		return err
+	}
 	if !owner {
 		// A previous reminder for this activity scheduling is already in
 		// flight (or just finished and its outcome is still cached). Wait
@@ -70,6 +73,30 @@ func (a *activity) executeActivity(ctx context.Context, name string, invocation 
 	}
 
 	return a.runOwned(ctx, key, call, name, activityName, workflowID, taskEvent, invocation)
+}
+
+// claim acquires the inflight entry for key, taking the actor lock for the
+// claim only unless the caller asked to skip it (scheduler-stream fires
+// arrive with SkipLock set and already relied on the inflight entry alone).
+// The lock MUST NOT extend past the claim: the segments that follow are the
+// app roundtrip (arbitrary length) and the result delivery into the parent
+// workflow (contends on the parent's turn lock), and holding the per-actor
+// lock across either parks Execute dispatches mesh-wide behind slow parent
+// turns. Neither segment needs the actor's serialization: the inflight entry
+// dedups duplicate arrivals (they join as followers, locked or not), and a
+// crash mid-execution is recovered by the parent janitor re-dispatching the
+// unresolved TaskScheduled event.
+func (a *activity) claim(ctx context.Context, key string, skipLock bool) (*inflight.Call, bool, error) {
+	if !skipLock {
+		unlock, err := a.lock.ContextLock(ctx)
+		if err != nil {
+			return nil, false, err
+		}
+		defer unlock()
+	}
+
+	call, owner := a.inflight.Acquire(key)
+	return call, owner, nil
 }
 
 func (f *factory) actorNotReachable(ctx context.Context, wfActorType, workflowID string) bool {
