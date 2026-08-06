@@ -112,7 +112,8 @@ type factory struct {
 
 	scheduler todo.WorkflowScheduler
 
-	deactivateCh chan *orchestrator
+	deactivateCh  chan *orchestrator
+	deactivateCtx context.Context
 
 	// localWakeFastPath and the wake* fields drive the detached local wake
 	// goroutines (see wake.go). wakeCtx is factory-owned rather than scoped
@@ -173,12 +174,19 @@ func New(ctx context.Context, opts Options) (targets.Factory, error) {
 		return nil, err
 	}
 
-	deactivateCh := make(chan *orchestrator, 100)
-	go func() {
-		for orchestrator := range deactivateCh {
-			orchestrator.Deactivate(ctx)
-		}
-	}()
+	// Deactivations drain through a small worker pool: Deactivate takes the
+	// actor's turn lock and waits on its in-flight work, so a single serial
+	// consumer lets one busy actor wedge every producer behind a full
+	// channel (measured at the cycle-12 knee: thousands of drive-loop
+	// goroutines blocked on this send during collapse).
+	deactivateCh := make(chan *orchestrator, 1024)
+	for range 8 {
+		go func() {
+			for orchestrator := range deactivateCh {
+				orchestrator.Deactivate(ctx)
+			}
+		}()
+	}
 
 	wakeCtx, wakeCancel := context.WithCancel(context.Background())
 
@@ -201,6 +209,7 @@ func New(ctx context.Context, opts Options) (targets.Factory, error) {
 		workflowAccessPolicies: opts.WorkflowAccessPolicies,
 		scheduler:              opts.Scheduler,
 		deactivateCh:           deactivateCh,
+		deactivateCtx:          ctx,
 		localWakeFastPath:      opts.LocalWakeFastPath,
 		localActivityFastPath:  opts.LocalActivityFastPath && opts.LocalWakeFastPath,
 		completionsFold:        opts.CompletionsFold && opts.LocalWakeFastPath,
@@ -349,5 +358,14 @@ func (f *factory) deactivate(orchestrator *orchestrator) {
 	if !orchestrator.closed.CompareAndSwap(false, true) {
 		return
 	}
-	f.deactivateCh <- orchestrator
+	// Never block the caller (the drive loop exits through here): if the
+	// pool is saturated and the buffer full, deactivate on a dedicated
+	// goroutine instead. Overflow is bounded in practice by the completion
+	// rate, and a spawned goroutine is strictly cheaper than wedging a
+	// turn.
+	select {
+	case f.deactivateCh <- orchestrator:
+	default:
+		go orchestrator.Deactivate(f.deactivateCtx)
+	}
 }

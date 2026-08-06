@@ -218,7 +218,16 @@ func (o *orchestrator) runJanitor(ctx context.Context, reminder *actorapi.Remind
 
 func (o *orchestrator) runWorkflowFromReminder(ctx context.Context, reminder *actorapi.Reminder) error {
 	completed, err := o.runWorkflow(ctx, reminder)
-	if completed == todo.RunCompletedTrue {
+	if completed == todo.RunCompletedTrue && (o.rstate == nil || runtimestate.IsCompleted(o.rstate)) {
+		// Deactivate only terminal (or unknown-state) workflows. A live
+		// workflow acking an empty-inbox reminder (routine after batched
+		// turns) stays resident: its next event arrives shortly and the
+		// cached state saves a full history reload. Measured at the
+		// cycle-12 knee: turn-exit deactivation of hot actors was the
+		// throughput collapse mechanism (reactivation reload tax plus
+		// serialized deactivations wedging the drive loop). Residency is
+		// bounded by the engine's max concurrent workflow invocations;
+		// placement churn and host shutdown still halt resident actors.
 		defer o.deactivate(o)
 	}
 
