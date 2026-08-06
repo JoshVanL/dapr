@@ -57,7 +57,12 @@ type orchestrator struct {
 	// and its escalation.
 	driveNotify  chan struct{}
 	driveRunning atomic.Bool
-	driveInfo    atomic.Pointer[driveInfo]
+
+	// lastActive is the UnixNano of the most recent turn-lock acquisition,
+	// stamped for the factory idle reaper. Also stamped at creation so a
+	// fresh actor is never reaped before its first turn.
+	lastActive atomic.Int64
+	driveInfo  atomic.Pointer[driveInfo]
 	// foldPending holds sender-retried completions awaiting their folding
 	// turn (WorkflowsCompletionsFold; see fold.go). INVARIANT: only touched
 	// while holding the per-actor turn lock (submit, turn, janitor,
@@ -123,6 +128,7 @@ var lockWaitSampleCounter atomic.Uint64
 // as the lock_wait histogram (sampled 1-in-16), splitting observed
 // invocation latency into queueing vs turn body.
 func (o *orchestrator) contextLockMeasured(ctx context.Context, kind string) (context.CancelFunc, error) {
+	o.lastActive.Store(time.Now().UnixNano())
 	if lockWaitSampleCounter.Add(1)%16 != 0 {
 		return o.lock.ContextLock(ctx)
 	}

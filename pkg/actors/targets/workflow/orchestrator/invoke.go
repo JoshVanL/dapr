@@ -24,6 +24,10 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
 
+	"github.com/dapr/durabletask-go/api"
+	"github.com/dapr/durabletask-go/backend"
+	"github.com/dapr/durabletask-go/backend/runtimestate"
+
 	actorapi "github.com/dapr/dapr/pkg/actors/api"
 	"github.com/dapr/dapr/pkg/actors/targets/workflow/common"
 	diag "github.com/dapr/dapr/pkg/diagnostics"
@@ -34,9 +38,6 @@ import (
 	"github.com/dapr/dapr/pkg/resiliency"
 	wferrors "github.com/dapr/dapr/pkg/runtime/wfengine/errors"
 	"github.com/dapr/dapr/pkg/runtime/wfengine/todo"
-	"github.com/dapr/durabletask-go/api"
-	"github.com/dapr/durabletask-go/backend"
-	"github.com/dapr/durabletask-go/backend/runtimestate"
 )
 
 func (o *orchestrator) handleInvoke(ctx context.Context, req *internalsv1pb.InternalInvokeRequest) (*internalsv1pb.InternalInvokeResponse, error) {
@@ -218,7 +219,29 @@ func (o *orchestrator) runJanitor(ctx context.Context, reminder *actorapi.Remind
 
 func (o *orchestrator) runWorkflowFromReminder(ctx context.Context, reminder *actorapi.Reminder) error {
 	completed, err := o.runWorkflow(ctx, reminder)
-	if completed == todo.RunCompletedTrue {
+	if o.rstate != nil && completed != todo.RunCompletedTrue && runtimestate.IsCompleted(o.rstate) {
+		// The workflow completed on THIS turn (which reports
+		// RunCompletedFalse because it consumed events). Release the
+		// cached state graph right here: the history is the heavy part of
+		// a resident completed actor, and dropping it in-turn frees the
+		// memory with no teardown machinery, no channel, and no race with
+		// the drive-loop reclaim handshake (struct teardown on a
+		// RunCompletedFalse exit was measured to stall live workflows).
+		// The actor SHELL stays until swept by a follow-up empty-inbox
+		// ack or the factory's idle reaper; post-completion client calls
+		// (status, purge) reload the terminal state from the store.
+		o.invalidateCachedState()
+	}
+	if completed == todo.RunCompletedTrue && (o.rstate == nil || runtimestate.IsCompleted(o.rstate)) {
+		// Deactivate on empty-inbox acks only for terminal (or
+		// unknown-state) workflows. A LIVE workflow acking an empty-inbox
+		// reminder (routine after batched turns) stays resident: its next
+		// event arrives shortly and the cached state saves a full history
+		// reload; turn-exit deactivation of hot actors was the measured
+		// cycle-12 collapse mechanism. Residency is bounded by the
+		// engine's max concurrent workflow invocations, terminal turns
+		// releasing their state above, and the factory idle reaper;
+		// placement churn and host shutdown still halt resident actors.
 		defer o.deactivate(o)
 	}
 

@@ -18,6 +18,7 @@ import (
 	"errors"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	workflowacl "github.com/dapr/dapr/pkg/acl/workflow"
 	"github.com/dapr/dapr/pkg/actors"
@@ -112,7 +113,8 @@ type factory struct {
 
 	scheduler todo.WorkflowScheduler
 
-	deactivateCh chan *orchestrator
+	deactivateCh  chan *orchestrator
+	deactivateCtx context.Context
 
 	// localWakeFastPath and the wake* fields drive the detached local wake
 	// goroutines (see wake.go). wakeCtx is factory-owned rather than scoped
@@ -173,16 +175,11 @@ func New(ctx context.Context, opts Options) (targets.Factory, error) {
 		return nil, err
 	}
 
-	deactivateCh := make(chan *orchestrator, 100)
-	go func() {
-		for orchestrator := range deactivateCh {
-			orchestrator.Deactivate(ctx)
-		}
-	}()
+	deactivateCh := make(chan *orchestrator, 1024)
 
 	wakeCtx, wakeCancel := context.WithCancel(context.Background())
 
-	return &factory{
+	f := &factory{
 		appID:                  opts.AppID,
 		namespace:              opts.Namespace,
 		actorType:              opts.WorkflowActorType,
@@ -201,13 +198,69 @@ func New(ctx context.Context, opts Options) (targets.Factory, error) {
 		workflowAccessPolicies: opts.WorkflowAccessPolicies,
 		scheduler:              opts.Scheduler,
 		deactivateCh:           deactivateCh,
+		deactivateCtx:          ctx,
 		localWakeFastPath:      opts.LocalWakeFastPath,
 		localActivityFastPath:  opts.LocalActivityFastPath && opts.LocalWakeFastPath,
 		completionsFold:        opts.CompletionsFold && opts.LocalWakeFastPath,
 		wakeCtx:                wakeCtx,
 		wakeCancel:             wakeCancel,
 		rootCtx:                ctx,
-	}, nil
+	}
+
+	// Deactivations drain through a small worker pool: Deactivate takes the
+	// actor's turn lock and waits on its in-flight work, so a single serial
+	// consumer lets one busy actor wedge every producer behind a full
+	// channel (measured at the cycle-12 knee: thousands of drive-loop
+	// goroutines blocked on this send during collapse).
+	for range 8 {
+		go func() {
+			for orchestrator := range deactivateCh {
+				orchestrator.Deactivate(ctx)
+			}
+		}()
+	}
+
+	go f.reapIdle(ctx)
+
+	return f, nil
+}
+
+// Idle residency bound: live workflow actors stay resident between turns
+// (reload churn at the knee was the measured cycle-12 throughput wall), so
+// the factory table needs an eviction policy or resident actors accumulate
+// until GC scan cost eats the CPU (the measured failure of unbounded
+// residency). Actors idle longer than reaperIdleTTL are deactivated
+// through the pooled drain; the CAS in deactivate makes a race with a
+// just-arrived event a clean closed-actor retry, identical to placement
+// churn.
+const (
+	reaperScanInterval = 5 * time.Second
+	reaperIdleTTL      = 20 * time.Second
+)
+
+func (f *factory) reapIdle(ctx context.Context) {
+	t := time.NewTicker(reaperScanInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		cutoff := time.Now().Add(-reaperIdleTTL).UnixNano()
+		f.table.Range(func(_, v any) bool {
+			o, ok := v.(*orchestrator)
+			if !ok {
+				return true
+			}
+			// driveRunning actors are mid-drive by definition; their
+			// lastActive is refreshed on the next lock acquisition.
+			if o.lastActive.Load() < cutoff && !o.driveRunning.Load() {
+				f.deactivate(o)
+			}
+			return true
+		})
+	}
 }
 
 func (f *factory) GetOrCreate(actorID string) targets.Interface {
@@ -226,6 +279,7 @@ func (f *factory) initOrchestrator(o any, actorID string) *orchestrator {
 	or.factory = f
 	or.actorID = actorID
 	or.closed.Store(false)
+	or.lastActive.Store(time.Now().UnixNano())
 	or.janitorAsserted.Store(false)
 	or.driveRunning.Store(false)
 	or.driveNotify = make(chan struct{}, 1)
@@ -349,5 +403,14 @@ func (f *factory) deactivate(orchestrator *orchestrator) {
 	if !orchestrator.closed.CompareAndSwap(false, true) {
 		return
 	}
-	f.deactivateCh <- orchestrator
+	// Never block the caller (the drive loop exits through here): if the
+	// pool is saturated and the buffer full, deactivate on a dedicated
+	// goroutine instead. Overflow is bounded in practice by the completion
+	// rate, and a spawned goroutine is strictly cheaper than wedging a
+	// turn.
+	select {
+	case f.deactivateCh <- orchestrator:
+	default:
+		go orchestrator.Deactivate(f.deactivateCtx)
+	}
 }
