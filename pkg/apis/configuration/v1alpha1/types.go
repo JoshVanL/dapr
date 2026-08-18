@@ -174,6 +174,23 @@ type WorkflowSpec struct {
 	// instances will not be automatically purged.
 	// +optional
 	StateRetentionPolicy *WorkflowStateRetentionPolicy `json:"stateRetentionPolicy,omitempty"`
+
+	// HistorySigning configures workflow history signing behaviour. Only
+	// effective when the WorkflowHistorySigning feature is enabled.
+	// +optional
+	HistorySigning *WorkflowHistorySigningSpec `json:"historySigning,omitempty"`
+}
+
+// WorkflowHistorySigningSpec configures workflow history signing behaviour.
+type WorkflowHistorySigningSpec struct {
+	// AuditInterval is the interval at which resident workflow actors have
+	// their cached history re-read from the state store and re-verified
+	// against the signature chain, detecting state store tampering while the
+	// actor is in memory. Defaults to 5m when history signing is enabled. A
+	// value of "0s" disables the background audit. Accepts duration strings,
+	// e.g. "30s" or "5m".
+	// +optional
+	AuditInterval *metav1.Duration `json:"auditInterval,omitempty"`
 }
 
 // NamedConcurrencyLimit defines a per-name concurrency limit for a specific

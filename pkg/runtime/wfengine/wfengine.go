@@ -53,6 +53,11 @@ var (
 // and the gRPC executor routes names with this prefix to the in-process executor.
 const ReservedWorkflowNamePrefix = "dapr.internal."
 
+// defaultHistorySigningAuditInterval is the default interval at which resident
+// workflow actors have their cached history re-verified against the state
+// store when history signing is enabled.
+const defaultHistorySigningAuditInterval = 5 * time.Minute
+
 type Interface interface {
 	// Registrar is the consumer-side surface used by the processor to register
 	// internal workflows for managed resources (MCPServers, etc.).
@@ -143,6 +148,20 @@ func New(opts Options) (Interface, error) {
 		return nil, errors.New("WorkflowHistorySigning feature flag is enabled but mTLS is not configured; workflow history signing requires mTLS to be active")
 	}
 
+	// The background integrity audit only exists to catch state store tampering
+	// of history that a resident actor would otherwise trust from its in-memory
+	// cache, so it is only active when a signer is configured.
+	var auditInterval time.Duration
+	if s != nil {
+		auditInterval = defaultHistorySigningAuditInterval
+		if i := opts.Spec.GetHistorySigningAuditInterval(); i != nil {
+			if *i < 0 {
+				return nil, fmt.Errorf("workflow historySigning.auditInterval must not be negative, got %s", *i)
+			}
+			auditInterval = *i
+		}
+	}
+
 	// If no backend was initialized by the manager, create a backend backed by actors
 	abackend, err := backendactors.New(backendactors.Options{
 		AppID:                  opts.AppID,
@@ -153,6 +172,7 @@ func New(opts Options) (Interface, error) {
 		ComponentStore:         opts.ComponentStore,
 		RetentionPolicy:        retPolicy,
 		Signer:                 s,
+		SigningAuditInterval:   auditInterval,
 		MaxRequestBodySize:     opts.MaxRequestBodySize,
 		WorkflowAccessPolicies: opts.WorkflowAccessPolicies,
 

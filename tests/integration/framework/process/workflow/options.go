@@ -42,10 +42,11 @@ type daprdOptionConfig struct {
 }
 
 type options struct {
-	daprds          int
-	skipDB          bool
-	mtls            bool
-	signingDisabled []int
+	daprds               int
+	skipDB               bool
+	mtls                 bool
+	signingDisabled      []int
+	signingAuditInterval *string
 
 	orchestrators     []orchestratorConfig
 	activities        []activityConfig
@@ -126,6 +127,16 @@ func WithMTLS(t *testing.T) Option {
 func WithSigningDisabledN(index int) Option {
 	return func(o *options) {
 		o.signingDisabled = append(o.signingDisabled, index)
+	}
+}
+
+// WithSigningAuditInterval sets workflow.historySigning.auditInterval in the
+// signing Configuration applied to every signing-enabled daprd, controlling
+// how often resident workflow actors are re-verified against the state store
+// ("0s" disables the background audit). Has no effect without WithMTLS.
+func WithSigningAuditInterval(interval string) Option {
+	return func(o *options) {
+		o.signingAuditInterval = &interval
 	}
 }
 

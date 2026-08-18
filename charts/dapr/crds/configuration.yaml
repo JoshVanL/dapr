@@ -622,6 +622,21 @@ spec:
                       If omitted, no global maximum will be enforced.
                     format: int32
                     type: integer
+                  historySigning:
+                    description: |-
+                      HistorySigning configures workflow history signing behaviour. Only
+                      effective when the WorkflowHistorySigning feature is enabled.
+                    properties:
+                      auditInterval:
+                        description: |-
+                          AuditInterval is the interval at which resident workflow actors have
+                          their cached history re-read from the state store and re-verified
+                          against the signature chain, detecting state store tampering while the
+                          actor is in memory. Defaults to 5m when history signing is enabled. A
+                          value of "0s" disables the background audit. Accepts duration strings,
+                          e.g. "30s" or "5m".
+                        type: string
+                    type: object
                   maxConcurrentActivityInvocations:
                     description: |-
                       maxConcurrentActivityInvocations is the maximum number of concurrent activities that can be processed by a single Dapr instance.

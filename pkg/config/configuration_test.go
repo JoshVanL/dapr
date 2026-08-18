@@ -948,3 +948,56 @@ func TestWorkflowStateRetentionPolicyUnmarshalJSON(t *testing.T) {
 		assert.Error(t, json.Unmarshal([]byte(data), &p))
 	})
 }
+
+func TestWorkflowHistorySigningSpecUnmarshalJSON(t *testing.T) {
+	t.Run("audit interval with string duration", func(t *testing.T) {
+		data := `{"auditInterval":"30s"}`
+		var h WorkflowHistorySigningSpec
+		require.NoError(t, json.Unmarshal([]byte(data), &h))
+
+		require.NotNil(t, h.AuditInterval)
+		assert.Equal(t, 30*time.Second, *h.AuditInterval)
+	})
+
+	t.Run("zero disables", func(t *testing.T) {
+		data := `{"auditInterval":"0s"}`
+		var h WorkflowHistorySigningSpec
+		require.NoError(t, json.Unmarshal([]byte(data), &h))
+
+		require.NotNil(t, h.AuditInterval)
+		assert.Equal(t, time.Duration(0), *h.AuditInterval)
+	})
+
+	t.Run("empty object", func(t *testing.T) {
+		data := `{}`
+		var h WorkflowHistorySigningSpec
+		require.NoError(t, json.Unmarshal([]byte(data), &h))
+
+		assert.Nil(t, h.AuditInterval)
+	})
+
+	t.Run("invalid duration string", func(t *testing.T) {
+		data := `{"auditInterval":"notaduration"}`
+		var h WorkflowHistorySigningSpec
+		assert.Error(t, json.Unmarshal([]byte(data), &h))
+	})
+}
+
+func TestGetHistorySigningAuditInterval(t *testing.T) {
+	t.Run("nil spec", func(t *testing.T) {
+		var w *WorkflowSpec
+		assert.Nil(t, w.GetHistorySigningAuditInterval())
+	})
+
+	t.Run("nil history signing", func(t *testing.T) {
+		w := &WorkflowSpec{}
+		assert.Nil(t, w.GetHistorySigningAuditInterval())
+	})
+
+	t.Run("set interval", func(t *testing.T) {
+		interval := time.Minute
+		w := &WorkflowSpec{HistorySigning: &WorkflowHistorySigningSpec{AuditInterval: &interval}}
+		require.NotNil(t, w.GetHistorySigningAuditInterval())
+		assert.Equal(t, time.Minute, *w.GetHistorySigningAuditInterval())
+	})
+}

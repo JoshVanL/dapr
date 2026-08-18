@@ -18,6 +18,7 @@ import (
 	"errors"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	workflowacl "github.com/dapr/dapr/pkg/acl/workflow"
 	"github.com/dapr/dapr/pkg/actors"
@@ -29,6 +30,7 @@ import (
 	"github.com/dapr/dapr/pkg/actors/targets"
 	"github.com/dapr/dapr/pkg/actors/targets/workflow/common"
 	"github.com/dapr/dapr/pkg/actors/targets/workflow/common/lock"
+	"github.com/dapr/dapr/pkg/actors/targets/workflow/orchestrator/audit"
 	"github.com/dapr/dapr/pkg/actors/targets/workflow/orchestrator/messages"
 	"github.com/dapr/dapr/pkg/actors/targets/workflow/orchestrator/signing"
 	"github.com/dapr/dapr/pkg/config"
@@ -62,6 +64,12 @@ type Options struct {
 	// signing is disabled.
 	Signer *signer.Signer
 
+	// SigningAuditInterval is the interval at which resident orchestrator
+	// actors have their cached history re-read from the state store and
+	// re-verified against the signature chain. Zero disables the background
+	// audit. Only effective when Signer is set.
+	SigningAuditInterval time.Duration
+
 	// MaxRequestBodySize is the gRPC server max message size in bytes. The
 	// orchestrator stalls workflows whose history payload would exceed this
 	// limit on the GetWorkItems stream.
@@ -87,6 +95,7 @@ type factory struct {
 	actorTypeBuilder       *common.ActorTypeBuilder
 	retentionPolicy        *config.WorkflowStateRetentionPolicy
 	signer                 *signer.Signer
+	signingAuditInterval   time.Duration
 	maxRequestBodySize     int
 	workflowAccessPolicies *workflowacl.Holder
 
@@ -96,6 +105,7 @@ type factory struct {
 
 	table sync.Map
 	lock  sync.Mutex
+	wg    sync.WaitGroup
 
 	// selfCallerWarned ensures the "policy lists own appID" warning is only
 	// emitted once per factory lifetime instead of on every self-call.
@@ -130,7 +140,7 @@ func New(ctx context.Context, opts Options) (targets.Factory, error) {
 		}
 	}()
 
-	return &factory{
+	f := &factory{
 		appID:                  opts.AppID,
 		namespace:              opts.Namespace,
 		actorType:              opts.WorkflowActorType,
@@ -145,11 +155,31 @@ func New(ctx context.Context, opts Options) (targets.Factory, error) {
 		placement:              placement,
 		retentionPolicy:        opts.RetentionPolicy,
 		signer:                 opts.Signer,
+		signingAuditInterval:   opts.SigningAuditInterval,
 		maxRequestBodySize:     opts.MaxRequestBodySize,
 		workflowAccessPolicies: opts.WorkflowAccessPolicies,
 		scheduler:              opts.Scheduler,
 		deactivateCh:           deactivateCh,
-	}, nil
+	}
+
+	// The background integrity auditor stops when the actor runtime context
+	// given to this constructor is cancelled; the factory has no other
+	// lifecycle hook. Its goroutine is tracked on the factory WaitGroup and
+	// its sweeps join their workers before returning, so no audit work
+	// outlives Run.
+	if f.signer != nil && f.signingAuditInterval > 0 {
+		auditor := audit.New(audit.Options{
+			Interval: f.signingAuditInterval,
+			Targets:  f.auditTargets,
+		})
+		f.wg.Go(func() {
+			if err := auditor.Run(ctx); err != nil {
+				log.Errorf("Workflow integrity auditor stopped with error: %s", err)
+			}
+		})
+	}
+
+	return f, nil
 }
 
 func (f *factory) GetOrCreate(actorID string) targets.Interface {

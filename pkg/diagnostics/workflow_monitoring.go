@@ -31,6 +31,7 @@ var (
 	certCacheOutcomeKey  = tag.MustNewKey("cert_cache_outcome")
 	taskTypeKey          = tag.MustNewKey("task_type")
 	completionRouteKey   = tag.MustNewKey("route")
+	auditResultKey       = tag.MustNewKey("audit_result")
 )
 
 const (
@@ -81,6 +82,24 @@ const (
 	CompletionRouteWaitWatch     = "wait_watch"
 	CompletionRouteCompleteLocal = "complete_local"
 	CompletionRouteCompleteActor = "complete_actor"
+
+	// Background integrity audit outcomes for resident workflow actors.
+	// IntegrityAuditVerified tags a sweep that re-read the state store and
+	// found the persisted history consistent with the cached state.
+	IntegrityAuditVerified = "verified"
+	// IntegrityAuditTampered tags a sweep that detected state store
+	// tampering and tombstoned the workflow.
+	IntegrityAuditTampered = "tampered"
+	// IntegrityAuditDivergent tags a sweep that found the persisted state
+	// verifying but diverging from the cache under an unchanged metadata
+	// version; the cache is dropped and reloaded.
+	IntegrityAuditDivergent = "divergent"
+	// IntegrityAuditSkipped tags a sweep that could not audit an actor this
+	// cycle (busy, no cached state, terminal, or no version anchor).
+	IntegrityAuditSkipped = "skipped"
+	// IntegrityAuditError tags a sweep that failed on a transient store
+	// error.
+	IntegrityAuditError = "error"
 )
 
 type workflowMetrics struct {
@@ -132,10 +151,17 @@ type workflowMetrics struct {
 	// routes; sustained wait_watch indicates broken co-location (e.g.
 	// placement churn or legacy-format reminders).
 	completionRouteCount *stats.Int64Measure
-	appID                string
-	enabled              bool
-	namespace            string
-	meter                stats.Recorder
+	// integrityAuditCount records background integrity audit sweeps of
+	// resident workflow actors, tagged by result
+	// (verified/tampered/divergent/skipped/error).
+	integrityAuditCount *stats.Int64Measure
+	// integrityAuditLatency records the time taken to audit a single
+	// resident workflow actor (store read plus chain verification).
+	integrityAuditLatency *stats.Float64Measure
+	appID                 string
+	enabled               bool
+	namespace             string
+	meter                 stats.Recorder
 }
 
 func newWorkflowMetrics() *workflowMetrics {
@@ -204,6 +230,14 @@ func newWorkflowMetrics() *workflowMetrics {
 			"runtime/workflow/completion/route/count",
 			"The number of pending-task completions routed under clustered deployment, by task type and route.",
 			stats.UnitDimensionless),
+		integrityAuditCount: stats.Int64(
+			"runtime/workflow/integrity_audit/count",
+			"The number of background integrity audit sweeps of resident workflow actors, by result.",
+			stats.UnitDimensionless),
+		integrityAuditLatency: stats.Float64(
+			"runtime/workflow/integrity_audit/latency",
+			"The time taken to audit a single resident workflow actor against the state store.",
+			stats.UnitMilliseconds),
 	}
 }
 
@@ -234,7 +268,9 @@ func (w *workflowMetrics) Init(meter view.Meter, appID, namespace string, latenc
 		diagUtils.NewMeasureView(w.attestationCertCacheCount, []tag.Key{appIDKey, namespaceKey, certCacheOutcomeKey}, view.Count()),
 		diagUtils.NewMeasureView(w.workflowPayloadSizeRatio, []tag.Key{appIDKey, namespaceKey, workflowNameKey}, payloadRatioDistribution),
 		diagUtils.NewMeasureView(w.activityPayloadSizeRatio, []tag.Key{appIDKey, namespaceKey, workflowNameKey, activityNameKey}, payloadRatioDistribution),
-		diagUtils.NewMeasureView(w.completionRouteCount, []tag.Key{appIDKey, namespaceKey, taskTypeKey, completionRouteKey}, view.Count()))
+		diagUtils.NewMeasureView(w.completionRouteCount, []tag.Key{appIDKey, namespaceKey, taskTypeKey, completionRouteKey}, view.Count()),
+		diagUtils.NewMeasureView(w.integrityAuditCount, []tag.Key{appIDKey, namespaceKey, auditResultKey}, view.Count()),
+		diagUtils.NewMeasureView(w.integrityAuditLatency, []tag.Key{appIDKey, namespaceKey, auditResultKey}, latencyDistribution))
 }
 
 // WorkflowOperationEvent records total number of Successful/Failed workflow Operations requests. It also records latency for those requests.
@@ -334,6 +370,26 @@ func (w *workflowMetrics) AttestationVerified(ctx context.Context, kind, result 
 			stats.WithRecorder(w.meter),
 			stats.WithTags(diagUtils.WithTags(w.attestationVerifyLatency.Name(), appIDKey, w.appID, namespaceKey, w.namespace, attestationKindKey, kind, attestationResultKey, result)...),
 			stats.WithMeasurements(w.attestationVerifyLatency.M(elapsed)))
+	}
+}
+
+// WorkflowIntegrityAudit records one background integrity audit of a
+// resident workflow actor, tagged by result
+// (verified/tampered/divergent/skipped/error). Also records the time spent
+// reading and verifying when non-zero.
+func (w *workflowMetrics) WorkflowIntegrityAudit(ctx context.Context, result string, elapsed float64) {
+	if !w.IsEnabled() {
+		return
+	}
+	stats.RecordWithOptions(ctx,
+		stats.WithRecorder(w.meter),
+		stats.WithTags(diagUtils.WithTags(w.integrityAuditCount.Name(), appIDKey, w.appID, namespaceKey, w.namespace, auditResultKey, result)...),
+		stats.WithMeasurements(w.integrityAuditCount.M(1)))
+	if elapsed > 0 {
+		stats.RecordWithOptions(ctx,
+			stats.WithRecorder(w.meter),
+			stats.WithTags(diagUtils.WithTags(w.integrityAuditLatency.Name(), appIDKey, w.appID, namespaceKey, w.namespace, auditResultKey, result)...),
+			stats.WithMeasurements(w.integrityAuditLatency.M(elapsed)))
 	}
 }
 

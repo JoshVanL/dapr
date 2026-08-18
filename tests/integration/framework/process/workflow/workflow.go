@@ -99,8 +99,7 @@ func New(t *testing.T, fopts ...Option) *Workflow {
 	var signingDopts []daprd.Option
 	if sen != nil {
 		baseDopts = append(baseDopts, daprd.WithSentry(t, sen))
-		signingDopts = []daprd.Option{
-			daprd.WithConfigManifests(t, `apiVersion: dapr.io/v1alpha1
+		manifest := `apiVersion: dapr.io/v1alpha1
 kind: Configuration
 metadata:
   name: propagation-signing
@@ -108,7 +107,15 @@ spec:
   features:
   - name: WorkflowHistorySigning
     enabled: true
-`),
+`
+		if opts.signingAuditInterval != nil {
+			manifest += `  workflow:
+    historySigning:
+      auditInterval: ` + *opts.signingAuditInterval + `
+`
+		}
+		signingDopts = []daprd.Option{
+			daprd.WithConfigManifests(t, manifest),
 		}
 	}
 

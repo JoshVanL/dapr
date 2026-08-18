@@ -251,6 +251,27 @@ func (s *SQLite) FirstStateValue(t *testing.T, ctx context.Context, instanceID, 
 	return key, raw
 }
 
+// LastStateValue returns the (key, base64-decoded value) of the last row
+// matching the given instance ID and key prefix (e.g. "signature"), by key
+// order. Fails the test if no such row exists.
+func (s *SQLite) LastStateValue(t *testing.T, ctx context.Context, instanceID, keyPrefix string) (string, []byte) {
+	t.Helper()
+
+	var key, encoded string
+	err := s.GetConnection(t).QueryRowContext(ctx,
+		"SELECT key, value FROM "+s.tableName+" WHERE key LIKE ? ORDER BY key DESC LIMIT 1",
+		"%||"+instanceID+"||"+keyPrefix+"-%",
+	).Scan(&key, &encoded)
+	if errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("no %s-* row for instance %s", keyPrefix, instanceID)
+	}
+	require.NoError(t, err)
+
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	require.NoError(t, err)
+	return key, raw
+}
+
 // WriteStateValue base64-encodes and writes the given raw bytes to the state
 // store under the exact key provided. Uses INSERT OR REPLACE so it works for
 // both new rows and overwrites.

@@ -208,28 +208,33 @@ func (o *orchestrator) saveInternalState(ctx context.Context, state *wfenginesta
 	state.ResetChangeTracking()
 
 	// Refresh the metadata ETag for the next save. Multi does not return new
-	// ETags, so we read just the metadata row back. A read error here is
+	// ETags, so we read the metadata row back, plus the chain-head signature
+	// row when one exists so the next save can assert it is untouched (see
+	// the chain-head guard in GetSaveRequest). A read error here is
 	// non-fatal: the persisted save is durable, we just don't know the new
-	// version token; drop the cache and let the next operation reload. A nil
-	// response or nil ETag is fine: we record whatever the store returned
-	// and the next save proceeds with that (which falls through to a blind
-	// upsert if no ETag is known, the same semantics as a brand-new
-	// workflow).
+	// version tokens; drop the cache and let the next operation reload. A
+	// nil ETag is fine: we record whatever the store returned and the next
+	// save proceeds with that (a blind metadata upsert and a disabled
+	// chain-head guard, the same semantics as a brand-new workflow).
 	// TODO: @joshvanl: add etag support to Multi and remove this extra read.
-	metaRes, metaErr := o.actorState.Get(ctx, &actorsapi.GetStateRequest{
+	keys := []string{wfenginestate.MetadataKey}
+	headKey, hasHead := state.HeadSignatureKey()
+	if hasHead {
+		keys = append(keys, headKey)
+	}
+	bulkRes, metaErr := o.actorState.GetBulk(ctx, &actorsapi.GetBulkStateRequest{
 		ActorType: o.actorType,
 		ActorID:   o.actorID,
-		Key:       wfenginestate.MetadataKey,
+		Keys:      keys,
 	}, false)
 	if metaErr != nil {
-		log.Debugf("Workflow actor '%s': failed to refresh metadata etag after save (%v); next operation will reload", o.actorID, metaErr)
+		log.Debugf("Workflow actor '%s': failed to refresh etags after save (%v); next operation will reload", o.actorID, metaErr)
 		o.invalidateCachedState()
 		return nil
 	}
-	if metaRes != nil {
-		state.SetMetadataETag(metaRes.ETag)
-	} else {
-		state.SetMetadataETag(nil)
+	state.SetMetadataETag(bulkRes[wfenginestate.MetadataKey].ETag)
+	if hasHead {
+		state.SetHeadSignatureETag(bulkRes[headKey].ETag)
 	}
 
 	// Update cached state

@@ -172,6 +172,47 @@ type WorkflowSpec struct {
 	// state once a workflow reaches a terminal state. If not set, workflow
 	// instances will not be automatically purged.
 	StateRetentionPolicy *WorkflowStateRetentionPolicy `json:"stateRetentionPolicy,omitempty" yaml:"stateRetentionPolicy,omitempty"`
+
+	// HistorySigning configures workflow history signing behaviour. Only
+	// effective when the WorkflowHistorySigning feature is enabled.
+	HistorySigning *WorkflowHistorySigningSpec `json:"historySigning,omitempty" yaml:"historySigning,omitempty"`
+}
+
+// WorkflowHistorySigningSpec configures workflow history signing behaviour.
+type WorkflowHistorySigningSpec struct {
+	// AuditInterval is the interval at which resident workflow actors have
+	// their cached history re-read from the state store and re-verified
+	// against the signature chain, detecting state store tampering while the
+	// actor is in memory. Defaults to 5m when history signing is enabled. A
+	// value of "0s" disables the background audit.
+	AuditInterval *time.Duration `json:"auditInterval,omitempty" yaml:"auditInterval,omitempty"`
+}
+
+// UnmarshalJSON handles the Kubernetes CRD JSON format sent by the operator,
+// where durations are encoded as metav1.Duration strings (for example, "30s"
+// or "5m"). Standalone configuration files parsed via YAML use the YAML
+// unmarshaling path instead, which handles Go duration strings natively.
+func (h *WorkflowHistorySigningSpec) UnmarshalJSON(data []byte) error {
+	var crd configapi.WorkflowHistorySigningSpec
+	if err := json.Unmarshal(data, &crd); err != nil {
+		return err
+	}
+
+	if crd.AuditInterval != nil {
+		d := crd.AuditInterval.Duration
+		h.AuditInterval = &d
+	}
+
+	return nil
+}
+
+// GetHistorySigningAuditInterval returns the configured audit interval, or nil
+// when not set.
+func (w *WorkflowSpec) GetHistorySigningAuditInterval() *time.Duration {
+	if w == nil || w.HistorySigning == nil {
+		return nil
+	}
+	return w.HistorySigning.AuditInterval
 }
 
 // NamedConcurrencyLimit defines a per-name concurrency limit.

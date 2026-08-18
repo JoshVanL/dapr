@@ -99,6 +99,11 @@ type Options struct {
 	RetentionPolicy *config.WorkflowStateRetentionPolicy
 	Signer          *signer.Signer
 
+	// SigningAuditInterval is the interval at which resident workflow actors
+	// have their cached history re-verified against the state store. Zero
+	// disables the background audit. Only effective when Signer is set.
+	SigningAuditInterval time.Duration
+
 	// MaxRequestBodySize is the gRPC server max message size in bytes. The
 	// orchestrator uses it to detect and gracefully stall workflows whose
 	// history payload would exceed the GetWorkItems stream limit.
@@ -123,6 +128,7 @@ type Actors struct {
 	compStore              *compstore.ComponentStore
 	retentionPolicy        *config.WorkflowStateRetentionPolicy
 	signer                 *signer.Signer
+	signingAuditInterval   time.Duration
 	maxRequestBodySize     int
 	workflowAccessPolicies *workflowacl.Holder
 
@@ -177,6 +183,7 @@ func New(opts Options) (*Actors, error) {
 		eventSink:                 opts.EventSink,
 		retentionPolicy:           opts.RetentionPolicy,
 		signer:                    opts.Signer,
+		signingAuditInterval:      opts.SigningAuditInterval,
 		maxRequestBodySize:        opts.MaxRequestBodySize,
 		workflowAccessPolicies:    opts.WorkflowAccessPolicies,
 
@@ -203,6 +210,7 @@ func (abe *Actors) RegisterActors(ctx context.Context) error {
 		RetentionActorType:     abe.retentionerActorType,
 		RetentionPolicy:        abe.retentionPolicy,
 		Signer:                 abe.signer,
+		SigningAuditInterval:   abe.signingAuditInterval,
 		MaxRequestBodySize:     abe.maxRequestBodySize,
 		WorkflowAccessPolicies: abe.workflowAccessPolicies,
 		Scheduler: func(ctx context.Context, wi *backend.WorkflowWorkItem) error {

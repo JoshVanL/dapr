@@ -125,6 +125,16 @@ type State struct {
 	// only in the in-memory cache.
 	metadataETag *string
 
+	// headSignatureETag is the state store's row-version token for the last
+	// persisted signature row, captured at load time and refreshed after
+	// every successful save. Every save re-upserts that row with this ETag
+	// (see GetSaveRequest), so tampering with the chain head at the db level
+	// fails the next save with an ETagMismatch instead of going unnoticed
+	// while the actor trusts its cache. nil disables the guard (unsigned
+	// workflow, first signature, store without bulk ETags, or a tombstoned
+	// workflow). Not persisted; lives only in the in-memory cache.
+	headSignatureETag *string
+
 	// customStatusPersisted and propagatedHistoryPersisted are observed at load
 	// time from the state store's ETag for those keys. They are the source of
 	// truth for "does this optional key currently exist in the store" at purge
@@ -184,6 +194,7 @@ func (s *State) Reset() {
 	s.signaturesRemovedCount += len(s.Signatures)
 	s.Signatures = nil
 	s.RawSignatures = nil
+	s.headSignatureETag = nil
 	s.CustomStatus = nil
 	if s.IncomingHistory != nil {
 		s.IncomingHistory = nil
@@ -239,6 +250,30 @@ func (s *State) MetadataETag() *string {
 // the optimistic-concurrency check.
 func (s *State) SetMetadataETag(etag *string) {
 	s.metadataETag = etag
+}
+
+// HeadSignatureETag returns the cached row-version token of the last
+// persisted signature row, or nil if none is known. A nil value disables the
+// chain-head guard in [GetSaveRequest].
+func (s *State) HeadSignatureETag() *string {
+	return s.headSignatureETag
+}
+
+// SetHeadSignatureETag updates the cached chain-head signature ETag. Called
+// after a successful save to record the row-version token returned by the
+// follow-up read, so the next save can assert the chain head is untouched.
+func (s *State) SetHeadSignatureETag(etag *string) {
+	s.headSignatureETag = etag
+}
+
+// HeadSignatureKey returns the state-store key of the last persisted
+// signature row, or false when no signatures exist.
+func (s *State) HeadSignatureKey() (string, bool) {
+	if len(s.RawSignatures) == 0 {
+		return "", false
+	}
+	//nolint:gosec
+	return getMultiEntryKeyName(signatureKeyPrefix, uint64(len(s.RawSignatures)-1)), true
 }
 
 func (s *State) ApplyRuntimeStateChanges(rs *backend.WorkflowRuntimeState) {
@@ -467,6 +502,27 @@ func (s *State) GetSaveRequest(actorID string) (*api.TransactionalRequest, error
 
 	if err := addRawBytesStateOperations(req, signatureKeyPrefix, s.RawSignatures, s.signaturesAddedCount, s.signaturesRemovedCount); err != nil {
 		return nil, err
+	}
+
+	// Chain-head guard: re-upsert the previous last signature row with its
+	// known ETag so the save fails with an ETagMismatch if that row was
+	// modified at the db level while this actor trusted its in-memory cache.
+	// The caller's ETagMismatch handling then drops the cache and the next
+	// cold load runs full chain verification. Skipped when the chain was
+	// reset (continue-as-new), when there is no prior signature, when no ETag
+	// is known, and on tombstone saves: a tombstone must persist even over a
+	// tampered chain head, and the tamper marker already terminates the
+	// workflow.
+	if prevHead := len(s.RawSignatures) - s.signaturesAddedCount - 1; prevHead >= 0 &&
+		s.signaturesRemovedCount == 0 && s.headSignatureETag != nil && !hasTamperMarker(s) {
+		req.Operations = append(req.Operations, api.TransactionalOperation{
+			Operation: api.Upsert,
+			Request: api.TransactionalUpsert{
+				Key:   getMultiEntryKeyName(signatureKeyPrefix, uint64(prevHead)),
+				Value: s.RawSignatures[prevHead],
+				ETag:  s.headSignatureETag,
+			},
+		})
 	}
 
 	// We update the custom status only when the workflow itself has been updated, and not when
@@ -941,6 +997,12 @@ func loadWorkflowStateOnce(ctx context.Context, state state.Interface, actorID s
 		raw := make([]byte, len(bulkRes[key].Data))
 		copy(raw, bulkRes[key].Data)
 		wState.RawSignatures = append(wState.RawSignatures, raw)
+	}
+
+	// Capture the chain-head signature ETag for the save-time guard. nil when
+	// the store returns no bulk ETags, which leaves the guard disabled.
+	if signatureLen > 0 {
+		wState.headSignatureETag = bulkRes[getMultiEntryKeyName(signatureKeyPrefix, uint64(signatureLen-1))].ETag
 	}
 
 	if bulkRes[customStatusKey].ETag != nil {
