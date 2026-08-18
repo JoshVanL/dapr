@@ -15,6 +15,7 @@ package workflow
 
 import (
 	"context"
+	"os"
 	"runtime"
 	"testing"
 	"time"
@@ -32,7 +33,29 @@ import (
 	"github.com/dapr/durabletask-go/client"
 	"github.com/dapr/durabletask-go/task"
 	"github.com/dapr/durabletask-go/workflow"
+	kitstrings "github.com/dapr/kit/strings"
 )
+
+// ClusteredDeploymentConfig is a Configuration manifest enabling the
+// WorkflowsClusteredDeployment preview feature.
+const ClusteredDeploymentConfig = `
+apiVersion: dapr.io/v1alpha1
+kind: Configuration
+metadata:
+    name: workflowsclustereddeployment
+spec:
+    features:
+    - name: WorkflowsClusteredDeployment
+      enabled: true
+`
+
+// ClusteredDeploymentFromEnv reports whether the suite is running with
+// DAPR_INTEGRATION_WORKFLOW_CLUSTERED set truthy, which enables the
+// WorkflowsClusteredDeployment feature flag on every daprd built by this
+// harness unless a test overrides it with WithClusteredDeployment.
+func ClusteredDeploymentFromEnv() bool {
+	return kitstrings.IsTruthy(os.Getenv("DAPR_INTEGRATION_WORKFLOW_CLUSTERED"))
+}
 
 type Workflow struct {
 	taskregistry []*task.TaskRegistry
@@ -42,6 +65,7 @@ type Workflow struct {
 	ownsSched    bool
 	sentry       *sentry.Sentry
 	daprds       []*daprd.Daprd
+	clustered    bool
 }
 
 func New(t *testing.T, fopts ...Option) *Workflow {
@@ -59,6 +83,11 @@ func New(t *testing.T, fopts ...Option) *Workflow {
 	}
 
 	require.GreaterOrEqual(t, opts.daprds, 1, "at least one daprd instance is required")
+
+	clustered := ClusteredDeploymentFromEnv()
+	if opts.clustered != nil {
+		clustered = *opts.clustered
+	}
 
 	db := sqlite.New(t,
 		sqlite.WithActorStateStore(true),
@@ -94,6 +123,10 @@ func New(t *testing.T, fopts ...Option) *Workflow {
 
 	if !opts.skipDB {
 		baseDopts = append(baseDopts, daprd.WithResourceFiles(db.GetComponent(t)))
+	}
+
+	if clustered {
+		baseDopts = append(baseDopts, daprd.WithConfigManifests(t, ClusteredDeploymentConfig))
 	}
 
 	var signingDopts []daprd.Option
@@ -171,6 +204,7 @@ spec:
 		ownsSched:    ownsSched,
 		sentry:       sen,
 		daprds:       daprds,
+		clustered:    clustered,
 	}
 
 	for i := range workflow.taskregistry {
@@ -312,6 +346,23 @@ func (w *Workflow) GRPCClientN(t *testing.T, ctx context.Context, index int) rtv
 	t.Helper()
 	require.Less(t, index, len(w.daprds), "index out of range")
 	return w.daprds[index].GRPCClient(t, ctx)
+}
+
+// ClusteredDeployment reports whether every daprd in this workflow runs with
+// the WorkflowsClusteredDeployment feature flag enabled. Tests use this to
+// branch assertions which differ between the two modes.
+func (w *Workflow) ClusteredDeployment() bool {
+	return w.clustered
+}
+
+// ActorTypesCount returns the number of actor types a daprd in this workflow
+// registers when a worker is connected: workflow, activity and retentioner,
+// plus the executor rendezvous type in clustered deployment mode.
+func (w *Workflow) ActorTypesCount() int {
+	if w.clustered {
+		return 4
+	}
+	return 3
 }
 
 func (w *Workflow) Dapr() *daprd.Daprd {
