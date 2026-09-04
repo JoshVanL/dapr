@@ -34,10 +34,11 @@ func init() {
 	suite.Register(new(orphanrow))
 }
 
-// orphanrow plants a parent-notify row under a root workflow, as a purge on
-// a binary that did not know the key leaves behind after the id is reused.
-// A parentless instance owes nothing: the row must not read as pending, and
-// purge must drop it with the rest of the state.
+// orphanrow plants a parent-notify row and a creation-input row stamped for
+// another creation under a root workflow, as a purge on a binary that did not
+// know the keys leaves behind after the id is reused. A parentless instance
+// owes nothing and has no creation input: neither row may be read as this
+// instance's, and purge must drop both with the rest of the state.
 type orphanrow struct {
 	workflow *workflow.Workflow
 }
@@ -62,8 +63,9 @@ func (o *orphanrow) Run(t *testing.T, ctx context.Context) {
 
 	db := o.workflow.DB()
 	histKey, _ := db.FirstStateValue(t, ctx, string(id), "history")
-	rowKey := histKey[:strings.LastIndex(histKey, "||")+2] + "parent-notify"
-	db.WriteStateValue(t, ctx, rowKey, []byte{1})
+	prefix := histKey[:strings.LastIndex(histKey, "||")+2]
+	db.WriteStateValue(t, ctx, prefix+"parent-notify", []byte{1})
+	db.WriteStateValue(t, ctx, prefix+"creation-input", []byte(`{"parentInstance":"ghost","parentExecution":"ghost-exec","input":"\"bogus\""}`))
 
 	rows := func(suffix string) int {
 		var n int
@@ -71,6 +73,7 @@ func (o *orphanrow) Run(t *testing.T, ctx context.Context) {
 		return n
 	}
 	require.Equal(t, 1, rows("parent-notify"))
+	require.Equal(t, 1, rows("creation-input"))
 
 	// Complete through a fresh load of the planted row, then purge: a
 	// pending notification would refuse the purge, a parentless instance
