@@ -570,6 +570,22 @@ func (d *Daprd) Restart(t *testing.T, ctx context.Context) {
 	d.exec.Run(t, ctx)
 }
 
+// WaitUntilActorTypeHosted blocks until the actor runtime reports actorType
+// among its hosted types. A restarted daprd re-registers its actor types
+// after it becomes healthy, so an invocation right after WaitUntilRunning can
+// find the type unregistered.
+func (d *Daprd) WaitUntilActorTypeHosted(t *testing.T, ctx context.Context, actorType string) {
+	t.Helper()
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		for _, a := range d.GetMetaActorRuntime(c, ctx).ActiveActors {
+			if a.Type == actorType {
+				return
+			}
+		}
+		assert.Fail(c, "actor type not hosted yet", actorType)
+	}, time.Second*20, time.Millisecond*10)
+}
+
 // ReplaceArg sets `--<flag>=<value>` on the daprd command line for the next
 // Run/Restart, replacing any existing occurrence of that flag. Existing args
 // remain in place, so this is safe to call between Kill and Restart.

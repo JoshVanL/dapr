@@ -120,6 +120,9 @@ func (s *signatureStripped) scheduleAndComplete(t *testing.T, ctx context.Contex
 	})
 	client := dworkflow.NewClient(s.daprd.GRPCConn(t, ctx))
 	require.NoError(t, client.StartWorker(ctx, reg))
+	// A previous subtest restarted the sidecar: the worker connection above
+	// registers the actor types asynchronously, so wait for them.
+	s.daprd.WaitUntilActorTypeHosted(t, ctx, "dapr.internal."+s.daprd.Namespace()+"."+s.daprd.AppID()+".workflow")
 
 	id, err := client.ScheduleWorkflow(ctx, "sign-stripped")
 	require.NoError(t, err)
