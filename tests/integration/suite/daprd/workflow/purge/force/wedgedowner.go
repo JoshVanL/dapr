@@ -67,6 +67,9 @@ func (w *wedgedowner) Run(t *testing.T, ctx context.Context) {
 	hold := make(chan struct{})
 	scheduled := make(chan struct{})
 	reg := dworkflow.NewRegistry()
+	// The schedule's wait-for-start needs the turn lock, which the wedge turn
+	// takes as soon as this activity completes: hold the activity until the
+	// schedule has returned.
 	reg.AddActivityN("noop", func(dworkflow.ActivityContext) (any, error) {
 		select {
 		case <-scheduled:
@@ -75,8 +78,7 @@ func (w *wedgedowner) Run(t *testing.T, ctx context.Context) {
 		return nil, nil
 	})
 	// The second turn, after the activity completes, holds the turn lock
-	// until the test releases it. The schedule's wait-for-start needs that
-	// lock too, so the activity is held until the schedule has returned.
+	// until the test releases it.
 	reg.AddWorkflowN("wedge", func(ctx *dworkflow.WorkflowContext) (any, error) {
 		if err := ctx.CallActivity("noop").Await(nil); err != nil {
 			return nil, err
